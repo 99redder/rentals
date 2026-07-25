@@ -10713,13 +10713,15 @@ function fsRenderCard() {
           </div>
           <div style="font-size:.74rem;color:var(--text-muted);line-height:1.5">
             <p style="margin:0 0 .5rem"><strong>Fair share</strong> = the sum of Mom's portion of each shared bill${fs.roundDollar ? `: ${fmt(c.herShareExact)} → ${fmt(c.herShare)}` : `: ${fmt(c.herShare)}`}.</p>
-            <p style="margin:0 0 .5rem">Fair Share is added as a read-only line in Monthly Budget income and Mom Budget fixed expenses.</p>
+            <p style="margin:0 0 .5rem">Fair Share is added as a read-only line in Monthly Budget income and Mom Budget fixed expenses.</p>${c.housingAdj ? `
+            <p style="margin:0 0 .5rem"><strong>Housing:</strong> her housing share is her portion of the home's real carrying cost — owner-borne upkeep, a capital reserve, and structural depreciation — decoupled from the mortgage and held <strong>below the home's fair rental value</strong>. Carrying no return on the owners' capital or profit, it reimburses actual cost rather than functioning as rent: under 26&nbsp;U.S.C. §280A(d)(2) and IRS Pub.&nbsp;527, a home occupied by the owners' family member below fair rental value stays the owners' personal residence, creating no rental activity or taxable rental income.</p>` : ''}
             <p style="margin:0 0 .5rem"><strong>No gifts:</strong> transfers beyond her share of actual costs are uncompensated transfers under Medicaid's 5-year lookback and can create an eligibility penalty. Keep her payments to expense reimbursement only.</p>
             <p style="margin:0;font-size:.72rem">Keep the underlying bills and allocation method with your records. Her payments count as support she provides for herself, which matters if either of you claims her as a dependent. General information, not tax advice; confirm your specific setup with your CPA.</p>
             <div style="margin-top:.7rem;padding-top:.6rem;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:.35rem .85rem;font-size:.72rem">
               <strong style="color:var(--text)">Official references:</strong>
               <a href="${IRS_CAREGIVER_GUIDANCE_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);font-weight:700">IRS: parent expense reimbursements ↗</a>
-              <a href="${USDA_FOOD_COST_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);font-weight:700">USDA: Cost of Food reports ↗</a>
+              <a href="${USDA_FOOD_COST_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);font-weight:700">USDA: Cost of Food reports ↗</a>${c.housingAdj ? `
+              <a href="${IRS_PUB_527_URL}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);font-weight:700">IRS Pub. 527 &amp; §280A(d)(2): family use below fair rent ↗</a>` : ''}
             </div>
             <button class="btn btn-primary" style="width:100%;margin-top:.85rem" onclick="fsOpenAgreementModal()">📄 Generate Cost-Sharing Agreement</button>
             <div style="font-size:.66rem;color:var(--text-muted);margin-top:.3rem;text-align:center">Print-ready agreement + Exhibit A built from the shared bills above</div>

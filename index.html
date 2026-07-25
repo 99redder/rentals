@@ -5630,10 +5630,8 @@ function _renderBudgetHtml() {
            <div style="font-size:1.3rem;font-weight:700;color:var(--success)">${fmt(totalIncome)}</div></div>
       <div><div style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Monthly Expenses</div>
            <div style="font-size:1.3rem;font-weight:700;color:var(--danger)">${fmt(totalExpenses)}</div></div>
-      <div><div style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Monthly Net</div>
+      <div><div style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Monthly Leftover</div>
            <div style="font-size:1.3rem;font-weight:700;color:${netColor}">${net < 0 ? '−' : ''}${fmt(Math.abs(net))}</div></div>
-      <div><div style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Annual Net</div>
-           <div style="font-size:1.3rem;font-weight:700;color:${netColor}">${net < 0 ? '−' : ''}${fmt(Math.abs(net * 12))}</div></div>
     </div>`;
 
   // Income section

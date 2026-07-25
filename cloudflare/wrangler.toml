@@ -37,11 +37,11 @@ name = "PLAID_RATELIMIT"
 namespace_id = "1003"
 simple = { limit = 4, period = 60 }
 
-# Cloudflare cron is UTC. These two times cover 6:00 AM America/New_York
-# year-round; the scheduled handler checks Eastern local time so only the
-# correct trigger runs through EST/EDT changes.
+# Cloudflare cron is UTC. Paired triggers cover midnight and 6:00 AM
+# America/New_York year-round; the scheduled handler checks Eastern local
+# time so only the correct trigger runs through EST/EDT changes.
 [triggers]
-crons = ["0 10 * * *", "0 11 * * *"]
+crons = ["0 4 * * *", "0 5 * * *", "0 10 * * *", "0 11 * * *"]
 
 # Environment variables (set via: wrangler env.<env>.secret put KEY VALUE)
 # wrangler secret put ADMIN_PASSWORD

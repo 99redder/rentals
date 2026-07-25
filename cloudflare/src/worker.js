@@ -32,6 +32,8 @@ const MAX_API_OBJECT_KEYS = 2_000;
 const MAX_API_STRING_LENGTH = 100_000;
 const MAX_UPSTREAM_JSON_BYTES = 1_000_000;
 const MAX_USDA_PDF_BYTES = 5_000_000;
+const STOCK_STICKIES_HOLDINGS_CACHE_KEY = 'stock_stickies:plaid:robinhood:holdings';
+const STOCK_STICKIES_HOLDINGS_FALLBACK_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
@@ -77,16 +79,19 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    // Cloudflare cron expressions run in UTC. Two triggers cover 6:00 AM in
-    // both EST and EDT; only the one that is actually 6 AM in New York runs.
+    // Cloudflare cron expressions run in UTC. Paired triggers cover midnight
+    // and 6 AM in both EST and EDT; the Eastern-hour guard prevents duplicates.
     const easternHour = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/New_York',
       hour: '2-digit',
       hourCycle: 'h23',
     }).format(new Date(controller.scheduledTime));
-    if (easternHour !== '06') return;
-
-    ctx.waitUntil(runScheduledRobinhoodRefresh(env, controller.scheduledTime));
+    if (easternHour === '00') {
+      ctx.waitUntil(runScheduledStockStickiesHoldingsRefresh(env, controller.scheduledTime));
+    }
+    if (easternHour === '06') {
+      ctx.waitUntil(runScheduledRobinhoodRefresh(env, controller.scheduledTime));
+    }
   }
 };
 
@@ -2378,107 +2383,159 @@ async function handleStockStickiesPlaidLinkToken(env, corsHeaders) {
   }
 }
 
+function normalizeStockStickiesHoldings(payload, fetchedAt = new Date().toISOString()) {
+  const accounts = (Array.isArray(payload.accounts) ? payload.accounts : [])
+    .filter(account => account?.type === 'investment')
+    .map(account => ({
+      accountId: String(account.account_id || ''),
+      name: String(account.name || '').slice(0, 120),
+      officialName: String(account.official_name || '').slice(0, 160),
+      subtype: String(account.subtype || '').slice(0, 80),
+      stockStickiesAccount: stockStickiesAccountId(account),
+    }));
+  const accountMap = new Map(accounts.map(account => [account.accountId, account]));
+  const securityMap = new Map(
+    (Array.isArray(payload.securities) ? payload.securities : [])
+      .map(security => [String(security.security_id || ''), security])
+  );
+  const positions = (Array.isArray(payload.holdings) ? payload.holdings : [])
+    .slice(0, 500)
+    .map(holding => {
+      const securityId = String(holding.security_id || '');
+      const security = securityMap.get(securityId) || {};
+      const account = accountMap.get(String(holding.account_id || ''));
+      const isCrypto =
+        String(account?.subtype || '').toLowerCase().includes('crypto') ||
+        String(security.type || '').toLowerCase().includes('crypto') ||
+        String(security.subtype || '').toLowerCase().includes('crypto') ||
+        Boolean(holding.unofficial_currency_code || security.unofficial_currency_code);
+      const hasInstitutionPrice =
+        holding.institution_price !== null &&
+        holding.institution_price !== undefined &&
+        holding.institution_price !== '' &&
+        Number.isFinite(Number(holding.institution_price));
+      const hasClosePrice =
+        security.close_price !== null &&
+        security.close_price !== undefined &&
+        security.close_price !== '' &&
+        Number.isFinite(Number(security.close_price));
+      const institutionPrice = hasInstitutionPrice
+        ? Number(holding.institution_price)
+        : (hasClosePrice ? Number(security.close_price) : null);
+      return {
+        accountId: String(holding.account_id || ''),
+        accountName: account?.officialName || account?.name || '',
+        accountSubtype: account?.subtype || '',
+        stockStickiesAccount: account?.stockStickiesAccount || '',
+        securityId,
+        ticker: String(security.ticker_symbol || '').trim().toUpperCase().slice(0, 32),
+        name: String(security.name || '').slice(0, 200),
+        type: String(security.type || '').slice(0, 80),
+        subtype: String(security.subtype || '').slice(0, 80),
+        quantity: Number.isFinite(Number(holding.quantity)) ? Number(holding.quantity) : null,
+        institutionPrice,
+        institutionValue: Number.isFinite(Number(holding.institution_value)) ? Number(holding.institution_value) : null,
+        costBasis: Number.isFinite(Number(holding.cost_basis)) ? Number(holding.cost_basis) : null,
+        priceAsOf:
+          holding.institution_price_datetime ||
+          holding.institution_price_as_of ||
+          security.update_datetime ||
+          security.close_price_as_of ||
+          null,
+        isCashEquivalent: security.is_cash_equivalent === true,
+        optionContract: security.option_contract || null,
+        isCrypto,
+        unofficialCurrencyCode: String(
+          holding.unofficial_currency_code || security.unofficial_currency_code || ''
+        ).slice(0, 32),
+      };
+    })
+    .filter(position => position.quantity !== null && position.quantity !== 0);
+
+  return {
+    ok: true,
+    institution: 'Robinhood',
+    fetchedAt,
+    accounts,
+    positions,
+    cryptoPositionCount: positions.filter(position => position.isCrypto).length,
+  };
+}
+
+async function refreshStockStickiesHoldingsSnapshot(env) {
+  const { accessToken } = await findRobinhoodPlaidItem(env);
+  const { ok, status, payload } = await plaidPost(env, '/investments/holdings/get', {
+    access_token: accessToken,
+  });
+  if (!ok) {
+    const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
+    const error = new Error(
+      code === 'ADDITIONAL_CONSENT_REQUIRED' || code === 'PRODUCT_NOT_ENABLED'
+        ? 'Robinhood needs permission to share investment positions.'
+        : 'Robinhood positions could not be loaded.'
+    );
+    error.code = code;
+    error.status = status;
+    error.needsConsent = code === 'ADDITIONAL_CONSENT_REQUIRED' || code === 'PRODUCT_NOT_ENABLED';
+    throw error;
+  }
+  const snapshot = normalizeStockStickiesHoldings(payload);
+  await env.RENTALS.put(STOCK_STICKIES_HOLDINGS_CACHE_KEY, JSON.stringify(snapshot));
+  return snapshot;
+}
+
+async function runScheduledStockStickiesHoldingsRefresh(env, scheduledTime) {
+  try {
+    const snapshot = await refreshStockStickiesHoldingsSnapshot(env);
+    console.log(JSON.stringify({
+      event: 'scheduled_stock_stickies_holdings_refresh',
+      scheduledTime: new Date(scheduledTime).toISOString(),
+      fetchedAt: snapshot.fetchedAt,
+      positionCount: snapshot.positions.length,
+      cryptoPositionCount: snapshot.cryptoPositionCount,
+    }));
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'scheduled_stock_stickies_holdings_refresh_error',
+      scheduledTime: new Date(scheduledTime).toISOString(),
+      code: String(error?.code || 'UNKNOWN_ERROR').slice(0, 80),
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  }
+}
+
 async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
   try {
-    const { accessToken } = await findRobinhoodPlaidItem(env);
-    const { ok, status, payload } = await plaidPost(env, '/investments/holdings/get', {
-      access_token: accessToken,
-    });
-    if (!ok) {
-      const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
-      const needsConsent = code === 'ADDITIONAL_CONSENT_REQUIRED' || code === 'PRODUCT_NOT_ENABLED';
-      console.error(JSON.stringify({ event: 'stock_stickies_plaid_holdings_error', status, code }));
-      return jsonResponse({
-        ok: false,
-        error: needsConsent
-          ? 'Robinhood needs permission to share investment positions.'
-          : 'Robinhood positions could not be loaded.',
-        code,
-        needsConsent,
-      }, needsConsent ? 409 : 502, corsHeaders);
+    const snapshot = await refreshStockStickiesHoldingsSnapshot(env);
+    return jsonResponse({ ...snapshot, source: 'live' }, 200, corsHeaders);
+  } catch (error) {
+    const code = String(error?.code || 'UNKNOWN_ERROR').slice(0, 80);
+    const needsConsent = error?.needsConsent === true;
+    console.error(JSON.stringify({
+      event: 'stock_stickies_plaid_holdings_error',
+      status: Number(error?.status) || 0,
+      code,
+    }));
+
+    if (!needsConsent) {
+      const cached = await env.RENTALS.get(STOCK_STICKIES_HOLDINGS_CACHE_KEY, 'json');
+      const fetchedAtMs = Date.parse(String(cached?.fetchedAt || ''));
+      const cacheAgeMs = Number.isFinite(fetchedAtMs) ? Date.now() - fetchedAtMs : Infinity;
+      if (cached?.ok === true && cacheAgeMs >= 0 && cacheAgeMs <= STOCK_STICKIES_HOLDINGS_FALLBACK_MAX_AGE_MS) {
+        return jsonResponse({
+          ...cached,
+          source: 'nightly-cache',
+          stale: true,
+        }, 200, corsHeaders);
+      }
     }
 
-    const accounts = (Array.isArray(payload.accounts) ? payload.accounts : [])
-      .filter(account => account?.type === 'investment')
-      .map(account => ({
-        accountId: String(account.account_id || ''),
-        name: String(account.name || '').slice(0, 120),
-        officialName: String(account.official_name || '').slice(0, 160),
-        subtype: String(account.subtype || '').slice(0, 80),
-        stockStickiesAccount: stockStickiesAccountId(account),
-      }));
-    const accountMap = new Map(accounts.map(account => [account.accountId, account]));
-    const securityMap = new Map(
-      (Array.isArray(payload.securities) ? payload.securities : [])
-        .map(security => [String(security.security_id || ''), security])
-    );
-    const positions = (Array.isArray(payload.holdings) ? payload.holdings : [])
-      .slice(0, 500)
-      .map(holding => {
-        const securityId = String(holding.security_id || '');
-        const security = securityMap.get(securityId) || {};
-        const account = accountMap.get(String(holding.account_id || ''));
-        const isCrypto =
-          String(account?.subtype || '').toLowerCase().includes('crypto') ||
-          String(security.type || '').toLowerCase().includes('crypto') ||
-          String(security.subtype || '').toLowerCase().includes('crypto') ||
-          Boolean(holding.unofficial_currency_code || security.unofficial_currency_code);
-        const hasInstitutionPrice =
-          holding.institution_price !== null &&
-          holding.institution_price !== undefined &&
-          holding.institution_price !== '' &&
-          Number.isFinite(Number(holding.institution_price));
-        const hasClosePrice =
-          security.close_price !== null &&
-          security.close_price !== undefined &&
-          security.close_price !== '' &&
-          Number.isFinite(Number(security.close_price));
-        const institutionPrice = hasInstitutionPrice
-          ? Number(holding.institution_price)
-          : (hasClosePrice ? Number(security.close_price) : null);
-        return {
-          accountId: String(holding.account_id || ''),
-          accountName: account?.officialName || account?.name || '',
-          accountSubtype: account?.subtype || '',
-          stockStickiesAccount: account?.stockStickiesAccount || '',
-          securityId,
-          ticker: String(security.ticker_symbol || '').trim().toUpperCase().slice(0, 32),
-          name: String(security.name || '').slice(0, 200),
-          type: String(security.type || '').slice(0, 80),
-          subtype: String(security.subtype || '').slice(0, 80),
-          quantity: Number.isFinite(Number(holding.quantity)) ? Number(holding.quantity) : null,
-          institutionPrice,
-          institutionValue: Number.isFinite(Number(holding.institution_value)) ? Number(holding.institution_value) : null,
-          costBasis: Number.isFinite(Number(holding.cost_basis)) ? Number(holding.cost_basis) : null,
-          priceAsOf:
-            holding.institution_price_datetime ||
-            holding.institution_price_as_of ||
-            security.update_datetime ||
-            security.close_price_as_of ||
-            null,
-          isCashEquivalent: security.is_cash_equivalent === true,
-          optionContract: security.option_contract || null,
-          isCrypto,
-          unofficialCurrencyCode: String(
-            holding.unofficial_currency_code || security.unofficial_currency_code || ''
-          ).slice(0, 32),
-        };
-      })
-      .filter(position => position.quantity !== null && position.quantity !== 0);
-
-    return jsonResponse({
-      ok: true,
-      institution: 'Robinhood',
-      fetchedAt: new Date().toISOString(),
-      accounts,
-      positions,
-      cryptoPositionCount: positions.filter(position => position.isCrypto).length,
-    }, 200, corsHeaders);
-  } catch (error) {
     return jsonResponse({
       ok: false,
       error: error instanceof Error ? error.message : 'Unable to load Robinhood positions.',
-    }, 502, corsHeaders);
+      code,
+      needsConsent,
+    }, needsConsent ? 409 : 502, corsHeaders);
   }
 }
 

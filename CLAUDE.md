@@ -757,6 +757,10 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 
 ## Recent Updates
 
+### 2026-07-25 — Fair Share: quick-math derivation digest
+
+- **The expanded Fair Share section now opens with a "How her $X/mo is derived" digest** (`fsQuickMathHtml(c)`, injected at the top of the body). `fsCalc` now returns `byCat` — her monthly share summed per budget category — and the digest lists each contributing category → her share (annotating the housing row as `carrying cost ÷ N, incl. utilities` and the Weekly Spending row as `USDA food benchmark`), totaling to `herShare` (shows `exact → rounded` when `roundDollar`). Sums exactly to the total by construction (same loop branch as `herShareExact`; folded utilities skipped in both).
+
 ### 2026-07-25 — Housing benchmark: fair-market-rent defensibility ceiling; RMD annual lump
 
 - **Fair-market-rent guardrail** added to the housing benchmark (`fairShare.housingBenchmark.fairMarketRent`, `fsUpdateHousingBenchmark('fairMarketRent',…)`). The comparable is the fair rental value of a **single room** (a "room for rent" rate, utilities included) — **not** whole-home rent, since she occupies one bedroom and whole-home rent for a large house is uninformatively high. The card compares her housing carrying-cost share directly to the room rate: green when clearly below (✓ §280A(d)(2) cost-sharing) or amber if the carrying-cost inputs push her at/above a market room rate. **Display/guardrail only — never changes her computed share, so no worker/phone change.** The agreement's Exhibit A housing block cites the room fair-rental-value figure and the below-market comparison when set. `fsHousingBenchmark()` returns `fairMarketRent`. Rationale: switching from the mortgage principal-exclusion method to the carrying-cost method raised her share materially; the room-rate check documents that the higher (but real, no-markup) number stays below the fair rental value of what she occupies and remains defensible cost reimbursement.

@@ -10459,6 +10459,7 @@ function fsCalc() {
   const fbAdj = fsFoodBenchmark();
   const hAdj = fsHousingBenchmark();
   let totalAll = 0, totalShared = 0, herShareExact = 0;
+  const byCat = {};   // her monthly share summed per category (for the quick-math digest)
   for (const cat of BUDGET_EXPENSE_CATS) {
     for (const item of (b.expenses[cat] || [])) {
       const amt = item.amount || 0;
@@ -10483,11 +10484,12 @@ function fsCalc() {
         }
         totalShared += sharedAmt;
         herShareExact += herPortion;
+        byCat[cat] = (byCat[cat] || 0) + herPortion;
       }
     }
   }
   const herShare = fs.roundDollar ? Math.round(herShareExact) : herShareExact;
-  return { size, totalAll, totalShared, herShareExact, herShare, mortgageAdj: mAdj, foodAdj: fbAdj, housingAdj: hAdj };
+  return { size, totalAll, totalShared, herShareExact, herShare, byCat, mortgageAdj: mAdj, foodAdj: fbAdj, housingAdj: hAdj };
 }
 
 // Keep an auto-synced income line for Mom's expense reimbursement. It is
@@ -10512,6 +10514,45 @@ function fsSyncBudgetIncome() {
     item.autoType = 'fair-share';
     item.locked = true;
   }
+}
+
+// Compact "how her number is built" digest shown at the top of the expanded Fair
+// Share section — her monthly share broken down by category, summing to the total.
+function fsQuickMathHtml(c) {
+  const fs = state.budget.fairShare;
+  const cats = BUDGET_EXPENSE_CATS.filter(cat => (c.byCat[cat] || 0) > 0.004);
+  const row = (label, note, amount) => `
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:.6rem;padding:.15rem 0">
+      <span style="min-width:0">${label}${note ? ` <span style="font-size:.66rem;color:var(--text-muted)">${note}</span>` : ''}</span>
+      <span style="font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap">${fmt(amount)}</span>
+    </div>`;
+  let rows;
+  if (!cats.length) {
+    rows = `<div style="color:var(--text-muted);font-size:.8rem">No shared expenses yet — mark bills Shared below and they'll appear here.</div>`;
+  } else {
+    rows = cats.map(cat => {
+      let note = '';
+      if (c.housingAdj && cat === c.housingAdj.cat) {
+        const parts = fsItemParticipants(c.housingAdj.item, c.housingAdj.cat, fs);
+        note = `carrying cost ${fmt(c.housingAdj.monthlyCost)} ÷ ${parts}${c.housingAdj.utilities > 0 ? ', incl. utilities' : ''}`;
+      } else if (c.foodAdj && cat === c.foodAdj.cat) {
+        note = 'USDA food benchmark';
+      }
+      return row(escHtml(cat), note, c.byCat[cat]);
+    }).join('');
+  }
+  const totalLine = fs.roundDollar
+    ? `<span style="font-variant-numeric:tabular-nums">${fmt(c.herShareExact)} → <strong>${fmt(c.herShare)}</strong></span>`
+    : `<strong style="font-variant-numeric:tabular-nums">${fmt(c.herShare)}</strong>`;
+  return `
+    <div style="background:linear-gradient(135deg,rgba(37,99,235,.06),rgba(16,185,129,.05));border:1px solid var(--primary);border-radius:var(--radius);padding:.75rem .9rem;margin-bottom:1rem">
+      <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);margin-bottom:.35rem">How her ${fmt(c.herShare)}/mo is derived</div>
+      <div style="font-size:.85rem;line-height:1.5">${rows}</div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:.6rem;border-top:2px solid var(--border);margin-top:.4rem;padding-top:.4rem;font-weight:700;font-size:.9rem">
+        <span>Her Fair Share / mo</span>${totalLine}
+      </div>
+      <div style="font-size:.66rem;color:var(--text-muted);margin-top:.3rem">Sum of her share of each shared bill${fs.roundDollar ? ', rounded to the nearest dollar' : ''}. Category details and toggles are below.</div>
+    </div>`;
 }
 
 // Returns the collapsible Fair Share card injected into the budget layout.
@@ -10807,6 +10848,7 @@ function fsRenderCard() {
 
   const body = !_fsOpen ? '' : `
     <div style="padding:1rem;border-top:1px solid var(--border)">
+      ${fsQuickMathHtml(c)}
       <div style="display:grid;grid-template-columns:1fr minmax(250px,320px);gap:1.25rem;align-items:start">
         <div>
           <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.85rem">

@@ -6148,6 +6148,32 @@ function mbCalcRmd() {
   };
 }
 
+// The monthly-template income line representing her 401(k) distribution: the
+// canonical '401k' id, else the first income item whose name looks like one.
+function mb401kIncomeItem() {
+  const income = state.momBudget?.template?.income || [];
+  return income.find(i => i.id === '401k')
+    || income.find(i => /401\s*\(?k\)?|\bdistribution\b/i.test(String(i.name || '')))
+    || null;
+}
+
+// How much to withdraw to fund the monthly budget: the budgeted 401(k) amount is
+// treated as the net she needs in hand, so the gross withdrawal is grossed up to
+// cover the plan's 20% withholding (net ÷ 0.80). Also compares the annualized
+// gross against the RMD minimum so she can see whether it satisfies the RMD.
+function mbCalc401kWithdrawal() {
+  const item = mb401kIncomeItem();
+  const rate = MOM_RMD_TAX_WITHHOLDING_RATE;
+  const netMonthly = Number(item?.amount) || 0;                 // budgeted = desired net
+  const grossMonthly = netMonthly > 0 ? netMonthly / (1 - rate) : 0;
+  const withheldMonthly = grossMonthly - netMonthly;
+  return {
+    item, name: item?.name || '401(k) Distribution', rate,
+    netMonthly, grossMonthly, withheldMonthly,
+    netAnnual: netMonthly * 12, grossAnnual: grossMonthly * 12, withheldAnnual: withheldMonthly * 12
+  };
+}
+
 let _mbMonth = appTodayIso().slice(0, 7);
 let _mbFixedSort = 'amount';
 
@@ -6645,6 +6671,40 @@ function mbRmdCard() {
       </div>`;
   }
 
+  // ── Withdrawal to fund the monthly budget (gross-up for 20% withholding) ──
+  const w = mbCalc401kWithdrawal();
+  let withdrawalBlock;
+  if (w.netMonthly > 0) {
+    let rmdNote = '';
+    if (c.required && c.rmd > 0) {
+      if (w.grossAnnual + 0.005 >= c.rmd) {
+        rmdNote = `<div style="margin-top:.6rem;padding:.5rem .7rem;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.3);border-radius:var(--radius);font-size:.78rem;color:var(--text)">✓ At ${fmt(w.grossMonthly)}/mo she withdraws <strong>${fmt(w.grossAnnual)}</strong> gross for the year — at or above the ${fmt(c.rmd)} RMD minimum, so the requirement is met.</div>`;
+      } else {
+        const short = c.rmd - w.grossAnnual;
+        rmdNote = `<div style="margin-top:.6rem;padding:.5rem .7rem;background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.4);border-radius:var(--radius);font-size:.78rem;color:var(--text)">⚠️ At ${fmt(w.grossMonthly)}/mo she withdraws only <strong>${fmt(w.grossAnnual)}</strong> gross for the year — <strong>${fmt(short)}</strong> under the ${fmt(c.rmd)} RMD minimum. She must take at least ${fmt(short)} more (≈ ${fmt(short / 12)}/mo) to satisfy the RMD.</div>`;
+      }
+    }
+    withdrawalBlock = `
+      <div style="padding:1rem;background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(37,99,235,.06));border:2px solid var(--success);border-radius:var(--radius)">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">Gross withdrawal to fund the budget</div>
+        <div style="font-size:2rem;font-weight:800;line-height:1.1;margin:.15rem 0;color:var(--success)">${fmt(w.grossMonthly)}<span style="font-size:.9rem;font-weight:600;color:var(--text-muted)"> / month</span></div>
+        <div style="font-size:.82rem;color:var(--text-muted)">so 20% withholding still nets the <strong>${fmt(w.netMonthly)}/mo</strong> budgeted from &ldquo;${escHtml(w.name)}&rdquo; · ${fmt(w.grossMonthly)} × 12 = <strong>${fmt(w.grossAnnual)}</strong>/yr gross</div>
+        <div style="margin-top:.65rem;padding:.65rem .75rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:.5rem 1rem;font-size:.82rem">
+          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Budgeted net / month</span><strong>${fmt(w.netMonthly)}</strong></div>
+          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Tax withheld (20%) / month</span><strong>${fmt(w.withheldMonthly)}</strong></div>
+          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Gross withdrawal / month</span><strong style="color:var(--success)">${fmt(w.grossMonthly)}</strong></div>
+        </div>
+        <div style="margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:.25rem 1.25rem;font-size:.78rem;color:var(--text-muted)">
+          <span>Gross-up: ${fmt(w.netMonthly)} ÷ 0.80 = <strong>${fmt(w.grossMonthly)}</strong></span>
+          <span>Annual: net ${fmt(w.netAnnual)} · withheld ${fmt(w.withheldAnnual)} · gross <strong>${fmt(w.grossAnnual)}</strong></span>
+        </div>
+        ${rmdNote}
+      </div>`;
+  } else {
+    withdrawalBlock = `<div style="padding:.85rem 1rem;background:var(--surface);border:1px dashed var(--border);border-radius:var(--radius);color:var(--text-muted);font-size:.85rem">
+      Add a 401(k) distribution amount to the monthly template's income section and this shows the gross withdrawal needed to net it after 20% withholding.</div>`;
+  }
+
   return `
     <div class="card tp-card">
       <div class="card-header"><div class="card-title">Traditional 401(k) Minimum Distribution (RMD)</div></div>
@@ -6669,8 +6729,14 @@ function mbRmdCard() {
           </div>
         </div>
         ${result}
+        <div style="display:flex;align-items:center;gap:.6rem;margin:1rem 0 .6rem">
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+          <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">Withdrawal to fund the monthly budget</div>
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+        </div>
+        ${withdrawalBlock}
         <div style="font-size:.72rem;color:var(--text-muted);margin-top:.6rem;line-height:1.5">
-          Uses the full pre-tax traditional 401(k) balance. The gross RMD satisfies the withdrawal requirement; the net estimate subtracts the plan's automatic <strong>20% tax withholding</strong>. Assumes she's <strong>retired</strong> (no still-working delay) and has <strong>no spouse</strong>, so the IRS <strong>Uniform Lifetime Table</strong> applies. Future-year results are projections based on the balance entered. Estimate only — actual tax owed may differ from the amount withheld; confirm with her plan administrator or CPA.
+          The top figure is the IRS <strong>required minimum</strong> she must withdraw. The section below works the other way: it grosses up the <strong>${fmt(w.netMonthly)}/mo</strong> budgeted from her 401(k) in the monthly template so that, after the plan's automatic <strong>20% tax withholding</strong>, she still nets the budgeted amount (net ÷ 0.80). Both use the full pre-tax balance and assume she's <strong>retired</strong> with <strong>no spouse</strong>, so the IRS <strong>Uniform Lifetime Table</strong> applies. Future-year RMDs are projections. Estimate only — actual tax owed may differ from the amount withheld; confirm with her plan administrator or CPA.
         </div>
       </div>
     </div>`;

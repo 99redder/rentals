@@ -2317,6 +2317,9 @@ function stockStickiesAccountId(account) {
   const label = `${account?.name || ''} ${account?.official_name || ''} ${account?.subtype || ''}`.toLowerCase();
   if (/\broth\b/.test(label)) return 'roth';
   if (/\btraditional\b/.test(label) || (/\bira\b/.test(label) && !/\broth\b/.test(label))) return 'traditional';
+  // Robinhood reports crypto in a separate investment account. It is still part
+  // of the owner's taxable portfolio, so Stock Stickies groups it with Individual.
+  if (/\bcrypto(?:currency)?\b/.test(label)) return 'individual';
   if (account?.subtype === 'brokerage' || /\bindividual\b|\bbrokerage\b/.test(label)) return 'individual';
   return '';
 }
@@ -2409,12 +2412,30 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
       (Array.isArray(payload.securities) ? payload.securities : [])
         .map(security => [String(security.security_id || ''), security])
     );
-    const returnedPositions = (Array.isArray(payload.holdings) ? payload.holdings : [])
+    const positions = (Array.isArray(payload.holdings) ? payload.holdings : [])
       .slice(0, 500)
       .map(holding => {
         const securityId = String(holding.security_id || '');
         const security = securityMap.get(securityId) || {};
         const account = accountMap.get(String(holding.account_id || ''));
+        const isCrypto =
+          String(account?.subtype || '').toLowerCase().includes('crypto') ||
+          String(security.type || '').toLowerCase().includes('crypto') ||
+          String(security.subtype || '').toLowerCase().includes('crypto') ||
+          Boolean(holding.unofficial_currency_code || security.unofficial_currency_code);
+        const hasInstitutionPrice =
+          holding.institution_price !== null &&
+          holding.institution_price !== undefined &&
+          holding.institution_price !== '' &&
+          Number.isFinite(Number(holding.institution_price));
+        const hasClosePrice =
+          security.close_price !== null &&
+          security.close_price !== undefined &&
+          security.close_price !== '' &&
+          Number.isFinite(Number(security.close_price));
+        const institutionPrice = hasInstitutionPrice
+          ? Number(holding.institution_price)
+          : (hasClosePrice ? Number(security.close_price) : null);
         return {
           accountId: String(holding.account_id || ''),
           accountName: account?.officialName || account?.name || '',
@@ -2426,27 +2447,24 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
           type: String(security.type || '').slice(0, 80),
           subtype: String(security.subtype || '').slice(0, 80),
           quantity: Number.isFinite(Number(holding.quantity)) ? Number(holding.quantity) : null,
-          institutionPrice: Number.isFinite(Number(holding.institution_price)) ? Number(holding.institution_price) : null,
+          institutionPrice,
           institutionValue: Number.isFinite(Number(holding.institution_value)) ? Number(holding.institution_value) : null,
           costBasis: Number.isFinite(Number(holding.cost_basis)) ? Number(holding.cost_basis) : null,
-          priceAsOf: holding.institution_price_as_of || holding.institution_price_datetime || null,
+          priceAsOf:
+            holding.institution_price_datetime ||
+            holding.institution_price_as_of ||
+            security.update_datetime ||
+            security.close_price_as_of ||
+            null,
           isCashEquivalent: security.is_cash_equivalent === true,
           optionContract: security.option_contract || null,
-          isCrypto:
-            String(account?.subtype || '').toLowerCase().includes('crypto') ||
-            String(security.type || '').toLowerCase().includes('crypto') ||
-            String(security.subtype || '').toLowerCase().includes('crypto') ||
-            Boolean(holding.unofficial_currency_code),
+          isCrypto,
+          unofficialCurrencyCode: String(
+            holding.unofficial_currency_code || security.unofficial_currency_code || ''
+          ).slice(0, 32),
         };
       })
       .filter(position => position.quantity !== null && position.quantity !== 0);
-    const cryptoPositions = returnedPositions.filter(position => position.isCrypto);
-    const positions = returnedPositions
-      .filter(position => !position.isCrypto)
-      .map(({ isCrypto: _isCrypto, ...position }) => position);
-    const ignoredCryptoTickers = [
-      ...new Set(cryptoPositions.map(position => position.ticker).filter(Boolean)),
-    ];
 
     return jsonResponse({
       ok: true,
@@ -2454,8 +2472,7 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
       fetchedAt: new Date().toISOString(),
       accounts,
       positions,
-      ignoredCryptoTickers,
-      ignoredCryptoCount: cryptoPositions.length,
+      cryptoPositionCount: positions.filter(position => position.isCrypto).length,
     }, 200, corsHeaders);
   } catch (error) {
     return jsonResponse({

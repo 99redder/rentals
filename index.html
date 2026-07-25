@@ -10523,9 +10523,15 @@ function fsQuickMathHtml(c) {
   const cats = BUDGET_EXPENSE_CATS.filter(cat => (c.byCat[cat] || 0) > 0.004);
   const row = (label, note, amount) => `
     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:.6rem;padding:.15rem 0">
-      <span style="min-width:0">${label}${note ? ` <span style="font-size:.66rem;color:var(--text-muted)">${note}</span>` : ''}</span>
+      <span style="min-width:0">${label}${note ? ` <span style="font-size:.66rem;color:var(--text-muted)">(${note})</span>` : ''}</span>
       <span style="font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap">${fmt(amount)}</span>
     </div>`;
+  // Names of the shared items contributing to a category (excludes utilities
+  // folded into housing) — used to spell out vaguer buckets like "Services".
+  const sharedNames = cat => (state.budget.expenses[cat] || [])
+    .filter(it => fsItemShared(it, cat, fs) && !(c.housingAdj && c.housingAdj.utilityItemIds.includes(it.id)))
+    .map(it => escHtml(it.name))
+    .join(', ');
   let rows;
   if (!cats.length) {
     rows = `<div style="color:var(--text-muted);font-size:.8rem">No shared expenses yet — mark bills Shared below and they'll appear here.</div>`;
@@ -10537,6 +10543,8 @@ function fsQuickMathHtml(c) {
         note = `carrying cost ${fmt(c.housingAdj.monthlyCost)} ÷ ${parts}${c.housingAdj.utilities > 0 ? ', incl. utilities' : ''}`;
       } else if (c.foodAdj && cat === c.foodAdj.cat) {
         note = 'USDA food benchmark';
+      } else if (cat === 'Services') {
+        note = sharedNames('Services');
       }
       return row(escHtml(cat), note, c.byCat[cat]);
     }).join('');

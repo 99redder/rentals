@@ -10641,8 +10641,8 @@ function fsRenderCard() {
       ${hMath}
       <div style="margin-top:.55rem">
         <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">Benchmark source / method</label>
-        <input class="form-input" style="width:100%;font-size:.85rem" type="text" value="${escAttr(h.sourceLabel)}"
-               onchange="fsUpdateHousingBenchmark('sourceLabel', this.value)">
+        <textarea class="form-input" rows="4" style="width:100%;font-size:.8rem;line-height:1.5;resize:vertical;white-space:pre-wrap;field-sizing:content;min-height:5rem"
+               onchange="fsUpdateHousingBenchmark('sourceLabel', this.value)">${escHtml(h.sourceLabel)}</textarea>
       </div>`;
   }
   const housingBox = `

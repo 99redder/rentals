@@ -6678,25 +6678,24 @@ function mbRmdCard() {
     let rmdNote = '';
     if (c.required && c.rmd > 0) {
       if (w.grossAnnual + 0.005 >= c.rmd) {
-        rmdNote = `<div style="margin-top:.6rem;padding:.5rem .7rem;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.3);border-radius:var(--radius);font-size:.78rem;color:var(--text)">✓ At ${fmt(w.grossMonthly)}/mo she withdraws <strong>${fmt(w.grossAnnual)}</strong> gross for the year — at or above the ${fmt(c.rmd)} RMD minimum, so the requirement is met.</div>`;
+        rmdNote = `<div style="margin-top:.6rem;padding:.5rem .7rem;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.3);border-radius:var(--radius);font-size:.78rem;color:var(--text)">✓ This <strong>${fmt(w.grossAnnual)}</strong> annual withdrawal is at or above the ${fmt(c.rmd)} RMD minimum, so the requirement is met.</div>`;
       } else {
         const short = c.rmd - w.grossAnnual;
-        rmdNote = `<div style="margin-top:.6rem;padding:.5rem .7rem;background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.4);border-radius:var(--radius);font-size:.78rem;color:var(--text)">⚠️ At ${fmt(w.grossMonthly)}/mo she withdraws only <strong>${fmt(w.grossAnnual)}</strong> gross for the year — <strong>${fmt(short)}</strong> under the ${fmt(c.rmd)} RMD minimum. She must take at least ${fmt(short)} more (≈ ${fmt(short / 12)}/mo) to satisfy the RMD.</div>`;
+        rmdNote = `<div style="margin-top:.6rem;padding:.5rem .7rem;background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.4);border-radius:var(--radius);font-size:.78rem;color:var(--text)">⚠️ This <strong>${fmt(w.grossAnnual)}</strong> annual withdrawal is <strong>${fmt(short)}</strong> under the ${fmt(c.rmd)} RMD minimum. Withdraw at least ${fmt(short)} more on Jan 1 to satisfy the RMD.</div>`;
       }
     }
     withdrawalBlock = `
       <div style="padding:1rem;background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(37,99,235,.06));border:2px solid var(--success);border-radius:var(--radius)">
-        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">Gross withdrawal to fund the budget</div>
-        <div style="font-size:2rem;font-weight:800;line-height:1.1;margin:.15rem 0;color:var(--success)">${fmt(w.grossMonthly)}<span style="font-size:.9rem;font-weight:600;color:var(--text-muted)"> / month</span></div>
-        <div style="font-size:.82rem;color:var(--text-muted)">so 20% withholding still nets the <strong>${fmt(w.netMonthly)}/mo</strong> budgeted from &ldquo;${escHtml(w.name)}&rdquo; · ${fmt(w.grossMonthly)} × 12 = <strong>${fmt(w.grossAnnual)}</strong>/yr gross</div>
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">Gross Jan 1 withdrawal to fund the year</div>
+        <div style="font-size:2rem;font-weight:800;line-height:1.1;margin:.15rem 0;color:var(--success)">${fmt(w.grossAnnual)}<span style="font-size:.9rem;font-weight:600;color:var(--text-muted)"> / year</span></div>
+        <div style="font-size:.82rem;color:var(--text-muted)">one lump on Jan 1 so 20% withholding still leaves the <strong>${fmt(w.netAnnual)}/yr</strong> (${fmt(w.netMonthly)}/mo) budgeted from &ldquo;${escHtml(w.name)}&rdquo; · gross-up ${fmt(w.netAnnual)} ÷ 0.80 = <strong>${fmt(w.grossAnnual)}</strong></div>
         <div style="margin-top:.65rem;padding:.65rem .75rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:.5rem 1rem;font-size:.82rem">
-          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Budgeted net / month</span><strong>${fmt(w.netMonthly)}</strong></div>
-          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Tax withheld (20%) / month</span><strong>${fmt(w.withheldMonthly)}</strong></div>
-          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Gross withdrawal / month</span><strong style="color:var(--success)">${fmt(w.grossMonthly)}</strong></div>
+          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Budgeted net / year</span><strong>${fmt(w.netAnnual)}</strong></div>
+          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Tax withheld (20%) / year</span><strong>${fmt(w.withheldAnnual)}</strong></div>
+          <div><span style="display:block;color:var(--text-muted);font-size:.72rem">Gross withdrawal / year</span><strong style="color:var(--success)">${fmt(w.grossAnnual)}</strong></div>
         </div>
         <div style="margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:.25rem 1.25rem;font-size:.78rem;color:var(--text-muted)">
-          <span>Gross-up: ${fmt(w.netMonthly)} ÷ 0.80 = <strong>${fmt(w.grossMonthly)}</strong></span>
-          <span>Annual: net ${fmt(w.netAnnual)} · withheld ${fmt(w.withheldAnnual)} · gross <strong>${fmt(w.grossAnnual)}</strong></span>
+          <span>Monthly equivalent: net ${fmt(w.netMonthly)} · gross ${fmt(w.grossMonthly)}</span>
         </div>
         ${rmdNote}
       </div>`;
@@ -6736,7 +6735,7 @@ function mbRmdCard() {
         </div>
         ${withdrawalBlock}
         <div style="font-size:.72rem;color:var(--text-muted);margin-top:.6rem;line-height:1.5">
-          The top figure is the IRS <strong>required minimum</strong> she must withdraw. The section below works the other way: it grosses up the <strong>${fmt(w.netMonthly)}/mo</strong> budgeted from her 401(k) in the monthly template so that, after the plan's automatic <strong>20% tax withholding</strong>, she still nets the budgeted amount (net ÷ 0.80). Both use the full pre-tax balance and assume she's <strong>retired</strong> with <strong>no spouse</strong>, so the IRS <strong>Uniform Lifetime Table</strong> applies. Future-year RMDs are projections. Estimate only — actual tax owed may differ from the amount withheld; confirm with her plan administrator or CPA.
+          The top figure is the IRS <strong>required minimum</strong> she must withdraw. The section below works the other way: it grosses up the <strong>${fmt(w.netAnnual)}/yr</strong> (${fmt(w.netMonthly)}/mo) budgeted from her 401(k) in the monthly template into a single <strong>Jan 1 lump withdrawal</strong> so that, after the plan's automatic <strong>20% tax withholding</strong>, she still nets the budgeted amount for the year (net ÷ 0.80). Both use the full pre-tax balance and assume she's <strong>retired</strong> with <strong>no spouse</strong>, so the IRS <strong>Uniform Lifetime Table</strong> applies. Future-year RMDs are projections. Estimate only — actual tax owed may differ from the amount withheld; confirm with her plan administrator or CPA.
         </div>
       </div>
     </div>`;
@@ -10216,6 +10215,10 @@ function fsNormalize(raw) {
       insurance:   (Number(raw.housingBenchmark?.insurance) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.insurance))) ? Number(raw.housingBenchmark.insurance) : 0,
       hoa:         (Number(raw.housingBenchmark?.hoa) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.hoa))) ? Number(raw.housingBenchmark.hoa) : 0,
       utilities:   (Number(raw.housingBenchmark?.utilities) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.utilities))) ? Number(raw.housingBenchmark.utilities) : 0,
+      // Optional fair-market monthly rent for a comparable whole home — the §280A(d)(2)
+      // defensibility ceiling. Display/guardrail only (never changes her share): it
+      // documents that her contribution stays clearly below fair rental value.
+      fairMarketRent: (Number(raw.housingBenchmark?.fairMarketRent) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.fairMarketRent))) ? Number(raw.housingBenchmark.fairMarketRent) : 0,
       sourceLabel: (typeof raw.housingBenchmark?.sourceLabel === 'string' && raw.housingBenchmark.sourceLabel.trim()) ? raw.housingBenchmark.sourceLabel : FS_HOUSING_DEFAULT_SOURCE,
     },
   };
@@ -10367,7 +10370,7 @@ function fsHousingBenchmark() {
   if (!calc) return null;
   const target = fsHousingItem();
   if (!target) return null;
-  return { itemId: target.item.id, item: target.item, cat: target.cat, ...calc, sourceLabel: fs.housingBenchmark.sourceLabel };
+  return { itemId: target.item.id, item: target.item, cat: target.cat, ...calc, sourceLabel: fs.housingBenchmark.sourceLabel, fairMarketRent: Number(fs.housingBenchmark.fairMarketRent) || 0 };
 }
 
 // Standard fixed-rate amortization for the current month's payment.
@@ -10614,6 +10617,34 @@ function fsRenderCard() {
     } else {
       hMath = `<div style="font-size:.72rem;color:var(--danger);margin-top:.55rem">${hTarget ? 'Enter a home value + reserve %, or a carrying component, so the monthly cost is above zero.' : 'No Mortgage-category budget item found — add one (or a housing line) and pick it here.'}</div>`;
     }
+    // Fair-market-rent defensibility ceiling (§280A(d)(2)): documents that her
+    // housing share stays clearly below fair rental value. Guardrail only — never
+    // changes her share; it flags if the carrying-cost inputs push her at/above market.
+    const fmr = Number(h.fairMarketRent) || 0;
+    const hParts = (hCalc && hTarget) ? fsItemParticipants(hTarget.item, hTarget.cat, fs) : fs.householdSize;
+    const herHousing = hCalc ? hCalc.monthlyCost / hParts : 0;
+    let fmrNote;
+    if (fmr > 0 && hCalc) {
+      const perPersonFmr = fmr / hParts;
+      const totalPct = Math.round(hCalc.monthlyCost / fmr * 100);
+      const herPct = perPersonFmr > 0 ? Math.round(herHousing / perPersonFmr * 100) : 0;
+      const ok = herHousing <= perPersonFmr && hCalc.monthlyCost < fmr;
+      fmrNote = `<div style="margin-top:.45rem;padding:.5rem .65rem;border-radius:var(--radius);font-size:.72rem;line-height:1.55;background:${ok ? 'rgba(16,185,129,.10)' : 'rgba(234,179,8,.12)'};border:1px solid ${ok ? 'rgba(16,185,129,.3)' : 'rgba(234,179,8,.4)'}">
+        ${ok ? '✓' : '⚠️'} Her housing share <strong>${fmt(herHousing)}/mo</strong> is ${herPct}% of a per-person split of the ${fmt(fmr)} market rent (${fmt(perPersonFmr)}); the full carrying cost ${fmt(hCalc.monthlyCost)} is ${totalPct}% of market rent. ${ok
+          ? 'Clearly below fair rental value — consistent with 26&nbsp;U.S.C. §280A(d)(2): a family member paying below fair rental value keeps this a cost-sharing arrangement, not rent.'
+          : 'This is at or above a market per-person share. Lower the carrying-cost inputs (or re-check the market-rent figure) so her share stays clearly below fair rental value and reads as cost reimbursement, not rent.'}</div>`;
+    } else {
+      fmrNote = `<div style="margin-top:.4rem;font-size:.64rem;color:var(--text-muted)">Optional: enter a comparable whole-home market rent to document that her share stays below fair rental value — the §280A defensibility ceiling. Leave blank to skip.</div>`;
+    }
+    const fmrBlock = `
+      <div style="margin-top:.55rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .65rem">
+        <div style="flex:1;min-width:150px">
+          <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">🛡️ Fair-market rent — defensibility ceiling /mo</label>
+          <input class="form-input" style="width:100%;max-width:220px;font-size:.85rem" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(fmr))}" placeholder="comparable whole-home rent"
+                 onchange="fsUpdateHousingBenchmark('fairMarketRent', this.value)" onblur="formatMoneyInput(this)">
+        </div>
+        ${fmrNote}
+      </div>`;
     hBody = `
       <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.6rem">
         <div style="flex:2;min-width:180px">
@@ -10639,6 +10670,7 @@ function fsRenderCard() {
           : 'No shared items in the budget\'s Utilities category yet — add them there and they\'ll flow in here automatically. Mark a utility Personal in the list below to leave it out.'}</div>
       </div>
       ${hMath}
+      ${fmrBlock}
       <div style="margin-top:.55rem">
         <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">Benchmark source / method</label>
         <textarea class="form-input" rows="4" style="width:100%;font-size:.8rem;line-height:1.5;resize:vertical;white-space:pre-wrap;field-sizing:content;min-height:5rem"
@@ -10912,7 +10944,7 @@ async function fsUpdateHousingBenchmark(key, value) {
   } else if (key === 'reservePct') {
     const v = parseFloat(value);
     if (isFinite(v) && v >= 0) h.reservePct = v;
-  } else if (['homeValue', 'propertyTax', 'insurance', 'hoa'].includes(key)) {
+  } else if (['homeValue', 'propertyTax', 'insurance', 'hoa', 'fairMarketRent'].includes(key)) {
     // Utilities are auto-summed from the budget's Utilities category, not entered here.
     const v = parseMoney(value);
     if (isFinite(v) && v >= 0) h[key] = v;
@@ -11094,7 +11126,13 @@ function fsAgreementDocHtml() {
         the actual, owner-borne cost of the home &mdash; principally the wear, upkeep, and depreciation of
         the structure &mdash; and contains no return on the Homeowners' capital or other profit, so it
         remains cost-sharing rather than rent. The home remains the Homeowners' personal residence occupied
-        by a family member; no rental activity is created. Method: ${escHtml(hb.sourceLabel)}.</p>
+        by a family member; no rental activity is created.${(hb.fairMarketRent > 0) ? ` For reference, the
+        fair rental value of a comparable whole home is approximately <strong>${fmt(hb.fairMarketRent)} per
+        month</strong>; Resident's housing contribution of ${fmt(housingRow.portion)} is far below both that
+        figure and a per-person share of it (${fmt(hb.fairMarketRent / housingRow.participants)}), consistent
+        with 26&nbsp;U.S.C. §280A(d)(2), under which a dwelling occupied by the owner's family member at less
+        than fair rental value remains the owner's personal residence rather than a rental.` : ''} Method:
+        ${escHtml(hb.sourceLabel)}.</p>
       </div>`;
   }
 

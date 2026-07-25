@@ -468,7 +468,7 @@ A collapsible **section inside the Monthly Budget view** — not a standalone ta
   agreement: { residentName, ownerNames, propertyAddress },  // cost-sharing agreement parties
   mortgage: { enabled, itemId, loanAmount, ratePct, termYears, firstPayment },  // principal exclusion (see below)
   foodBenchmark: { enabled, itemId, amount, sourceLabel, suppliesAllowance },  // USDA food benchmark for the Weekly Spending item (see below)
-  housingBenchmark: { enabled, itemId, homeValue, reservePct, propertyTax, insurance, hoa, utilities, sourceLabel }  // housing carrying-cost benchmark (see below)
+  housingBenchmark: { enabled, itemId, homeValue, reservePct, propertyTax, insurance, hoa, utilities, fairMarketRent, sourceLabel }  // housing carrying-cost benchmark (see below); fairMarketRent is the §280A defensibility ceiling (display-only, never changes her share)
 }
 ```
 There is **no separate bills list** — the bills are the budget's expense items. An item counts as shared if `fairShare.shared[item.id]` is set (explicit override), else it falls back to `FS_SHARED_CAT_DEFAULTS[category]`. Toggling the Shared/Personal pill writes an explicit override.
@@ -756,6 +756,11 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-07-25 — Housing benchmark: fair-market-rent defensibility ceiling; RMD annual lump
+
+- **Fair-market-rent guardrail** added to the housing benchmark (`fairShare.housingBenchmark.fairMarketRent`, `fsUpdateHousingBenchmark('fairMarketRent',…)`). Optional whole-home comparable market rent; the card shows her housing share and the full carrying cost as a % of it (and of a per-person split), green when clearly below fair rental value (✓ §280A(d)(2) cost-sharing) or amber if the carrying-cost inputs push her share at/above a market per-person share. **Display/guardrail only — never changes her computed share, so no worker/phone change.** The agreement's Exhibit A housing block cites the FMR figure and the below-market comparison when set. `fsHousingBenchmark()` now returns `fairMarketRent`. Rationale: switching from the mortgage principal-exclusion method to the carrying-cost method raised her share materially; the FMR check documents that the higher (but real, no-markup) number stays below fair rental value and remains defensible cost reimbursement.
+- **RMD card "withdrawal to fund the budget" now leads with the annual Jan 1 lump** (she withdraws the year's 401(k) distribution all at once on Jan 1). Big figure is `grossAnnual` (`/ year`), with monthly equivalents demoted to a detail line; RMD-comparison note reworded for the annual lump.
 
 ### 2026-07-25 — Housing benchmark: auto utilities + mortgage supersede UI
 

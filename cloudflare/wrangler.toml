@@ -2,6 +2,10 @@ name = "rentals-api"
 main = "src/worker.js"
 compatibility_date = "2024-01-01"
 
+[vars]
+STOCK_STICKIES_FIREBASE_PROJECT_ID = "red-s-stickies"
+STOCK_STICKIES_OWNER_UID = "tQ4KeGwCjsb5CSbrFwmWYWX3BvI2"
+
 # KV Namespace bindings
 [[kv_namespaces]]
 binding = "RENTALS"

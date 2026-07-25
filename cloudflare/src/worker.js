@@ -13,6 +13,12 @@ const VALID_CATEGORIES = [
 ];
 
 const ALLOWED_ORIGIN = 'https://99redder.github.io';
+const STOCK_STICKIES_ORIGINS = new Set([
+  'https://stockstickies.com',
+  'https://www.stockstickies.com',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
 const SESSION_COOKIE = 'rentals_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const REMEMBERED_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days on a trusted device
@@ -48,6 +54,12 @@ const SECURITY_HEADERS = {
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin') || '';
+    const url = new URL(request.url);
+
+    if (url.pathname.startsWith('/api/stock-stickies/')) {
+      return handleStockStickiesApi(request, env, url, origin);
+    }
+
     if (origin && origin !== ALLOWED_ORIGIN) {
       return jsonResponse({ error: 'Origin not allowed' }, 403);
     }
@@ -56,8 +68,6 @@ export default {
     if (request.method === 'OPTIONS') {
       return addSecurityHeaders(new Response(null, { status: 204, headers: CORS_HEADERS }));
     }
-
-    const url = new URL(request.url);
 
     if (url.pathname === '/api/data' && request.method === 'POST') {
       return handleDataApi(request, env);
@@ -79,6 +89,44 @@ export default {
     ctx.waitUntil(runScheduledRobinhoodRefresh(env, controller.scheduledTime));
   }
 };
+
+async function handleStockStickiesApi(request, env, url, origin) {
+  const originAllowed = !origin || STOCK_STICKIES_ORIGINS.has(origin);
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': originAllowed && origin ? origin : 'https://www.stockstickies.com',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Vary': 'Origin',
+  };
+
+  if (!originAllowed) {
+    return jsonResponse({ ok: false, error: 'Origin not allowed' }, 403, corsHeaders);
+  }
+  if (request.method === 'OPTIONS') {
+    return addSecurityHeaders(new Response(null, { status: 204, headers: corsHeaders }));
+  }
+
+  const authorization = String(request.headers.get('Authorization') || '').trim();
+  if (!authorization.startsWith('Bearer ')) {
+    return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, corsHeaders);
+  }
+  try {
+    await verifyStockStickiesOwner(authorization.slice(7).trim(), env);
+  } catch {
+    return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, corsHeaders);
+  }
+
+  if (url.pathname === '/api/stock-stickies/plaid/status' && request.method === 'GET') {
+    return handleStockStickiesPlaidStatus(env, corsHeaders);
+  }
+  if (url.pathname === '/api/stock-stickies/plaid/link-token' && request.method === 'POST') {
+    return handleStockStickiesPlaidLinkToken(env, corsHeaders);
+  }
+  if (url.pathname === '/api/stock-stickies/plaid/holdings' && request.method === 'GET') {
+    return handleStockStickiesPlaidHoldings(env, corsHeaders);
+  }
+  return jsonResponse({ ok: false, error: 'Not found' }, 404, corsHeaders);
+}
 
 async function runScheduledRobinhoodRefresh(env, scheduledTime) {
   const checkingResp = await handleGetRobinhoodBalance(env, true, 'scheduled', ROBINHOOD_ACCOUNTS.checking);
@@ -2188,6 +2236,219 @@ function plaidItemLabels(env) {
     const parsed=JSON.parse(env.PLAID_ITEM_LABELS);
     return parsed && typeof parsed==='object' && !Array.isArray(parsed) ? parsed : {};
   } catch { return {}; }
+}
+
+async function verifyStockStickiesOwner(token, env) {
+  const projectId = String(env.STOCK_STICKIES_FIREBASE_PROJECT_ID || '').trim();
+  const ownerUid = String(env.STOCK_STICKIES_OWNER_UID || '').trim();
+  if (!projectId || !ownerUid || !token) throw new Error('Firebase auth is not configured');
+
+  const segments = token.split('.');
+  if (segments.length !== 3) throw new Error('Invalid token');
+  const header = JSON.parse(decodeBase64UrlText(segments[0]));
+  const claims = JSON.parse(decodeBase64UrlText(segments[1]));
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('Invalid token header');
+
+  const keysResponse = await fetch(
+    'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com',
+    { cf: { cacheEverything: true, cacheTtl: 3600 } }
+  );
+  if (!keysResponse.ok) throw new Error('Unable to load signing keys');
+  const keySet = await readJsonLimited(keysResponse, 256_000);
+  const signingKey = Array.isArray(keySet.keys)
+    ? keySet.keys.find(candidate => candidate.kid === header.kid)
+    : null;
+  if (!signingKey) throw new Error('Unknown signing key');
+
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    signingKey,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+  const validSignature = await crypto.subtle.verify(
+    { name: 'RSASSA-PKCS1-v1_5' },
+    key,
+    decodeBase64UrlBytes(segments[2]),
+    new TextEncoder().encode(`${segments[0]}.${segments[1]}`)
+  );
+  if (!validSignature) throw new Error('Invalid signature');
+
+  const now = Math.floor(Date.now() / 1000);
+  if (
+    claims.aud !== projectId ||
+    claims.iss !== `https://securetoken.google.com/${projectId}` ||
+    claims.sub !== ownerUid ||
+    typeof claims.exp !== 'number' ||
+    claims.exp <= now ||
+    typeof claims.iat !== 'number' ||
+    claims.iat > now + 300
+  ) {
+    throw new Error('Token claims are not authorized');
+  }
+  return claims;
+}
+
+function decodeBase64UrlText(value) {
+  return new TextDecoder().decode(decodeBase64UrlBytes(value));
+}
+
+function decodeBase64UrlBytes(value) {
+  const base64 = String(value).replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+  const decoded = atob(padded);
+  return Uint8Array.from(decoded, char => char.charCodeAt(0));
+}
+
+async function findRobinhoodPlaidItem(env) {
+  for (const accessToken of plaidAccessTokens(env)) {
+    try {
+      const { ok, payload } = await plaidPost(env, '/item/get', { access_token: accessToken });
+      if (ok && String(payload.item?.institution_id || '') === 'ins_54') {
+        return { accessToken, item: payload.item || {} };
+      }
+    } catch { /* try the next linked Item */ }
+  }
+  throw new Error('The linked Robinhood account was not found.');
+}
+
+function stockStickiesAccountId(account) {
+  const label = `${account?.name || ''} ${account?.official_name || ''} ${account?.subtype || ''}`.toLowerCase();
+  if (/\broth\b/.test(label)) return 'roth';
+  if (/\btraditional\b/.test(label) || (/\bira\b/.test(label) && !/\broth\b/.test(label))) return 'traditional';
+  if (account?.subtype === 'brokerage' || /\bindividual\b|\bbrokerage\b/.test(label)) return 'individual';
+  return '';
+}
+
+async function handleStockStickiesPlaidStatus(env, corsHeaders) {
+  try {
+    const { item } = await findRobinhoodPlaidItem(env);
+    const products = Array.isArray(item.products) ? item.products : [];
+    const billedProducts = Array.isArray(item.billed_products) ? item.billed_products : [];
+    const availableProducts = Array.isArray(item.available_products) ? item.available_products : [];
+    return jsonResponse({
+      ok: true,
+      connected: true,
+      investmentsEnabled: products.includes('investments') || billedProducts.includes('investments'),
+      investmentsAvailable: availableProducts.includes('investments'),
+      itemId: String(item.item_id || ''),
+      institution: 'Robinhood',
+    }, 200, corsHeaders);
+  } catch (error) {
+    return jsonResponse({
+      ok: false,
+      connected: false,
+      error: error instanceof Error ? error.message : 'Unable to inspect the Robinhood connection.',
+    }, 502, corsHeaders);
+  }
+}
+
+async function handleStockStickiesPlaidLinkToken(env, corsHeaders) {
+  try {
+    const { accessToken } = await findRobinhoodPlaidItem(env);
+    const body = {
+      client_name: "Red's STUFF",
+      language: 'en',
+      country_codes: ['US'],
+      user: { client_user_id: 'rentals-owner' },
+      access_token: accessToken,
+      additional_consented_products: ['investments'],
+    };
+    if (env.PLAID_REDIRECT_URI) body.redirect_uri = env.PLAID_REDIRECT_URI;
+    const { ok, status, payload } = await plaidPost(env, '/link/token/create', body);
+    if (!ok) {
+      const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
+      console.error(JSON.stringify({ event: 'stock_stickies_plaid_link_token_error', status, code }));
+      return jsonResponse({ ok: false, error: 'Robinhood consent could not be started.', code }, 502, corsHeaders);
+    }
+    return jsonResponse({
+      ok: true,
+      linkToken: String(payload.link_token || ''),
+      expiration: String(payload.expiration || ''),
+    }, 200, corsHeaders);
+  } catch (error) {
+    return jsonResponse({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unable to start Robinhood consent.',
+    }, 502, corsHeaders);
+  }
+}
+
+async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
+  try {
+    const { accessToken } = await findRobinhoodPlaidItem(env);
+    const { ok, status, payload } = await plaidPost(env, '/investments/holdings/get', {
+      access_token: accessToken,
+    });
+    if (!ok) {
+      const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
+      const needsConsent = code === 'ADDITIONAL_CONSENT_REQUIRED' || code === 'PRODUCT_NOT_ENABLED';
+      console.error(JSON.stringify({ event: 'stock_stickies_plaid_holdings_error', status, code }));
+      return jsonResponse({
+        ok: false,
+        error: needsConsent
+          ? 'Robinhood needs permission to share investment positions.'
+          : 'Robinhood positions could not be loaded.',
+        code,
+        needsConsent,
+      }, needsConsent ? 409 : 502, corsHeaders);
+    }
+
+    const accounts = (Array.isArray(payload.accounts) ? payload.accounts : [])
+      .filter(account => account?.type === 'investment')
+      .map(account => ({
+        accountId: String(account.account_id || ''),
+        name: String(account.name || '').slice(0, 120),
+        officialName: String(account.official_name || '').slice(0, 160),
+        subtype: String(account.subtype || '').slice(0, 80),
+        stockStickiesAccount: stockStickiesAccountId(account),
+      }));
+    const accountMap = new Map(accounts.map(account => [account.accountId, account]));
+    const securityMap = new Map(
+      (Array.isArray(payload.securities) ? payload.securities : [])
+        .map(security => [String(security.security_id || ''), security])
+    );
+    const positions = (Array.isArray(payload.holdings) ? payload.holdings : [])
+      .slice(0, 500)
+      .map(holding => {
+        const securityId = String(holding.security_id || '');
+        const security = securityMap.get(securityId) || {};
+        const account = accountMap.get(String(holding.account_id || ''));
+        return {
+          accountId: String(holding.account_id || ''),
+          accountName: account?.officialName || account?.name || '',
+          accountSubtype: account?.subtype || '',
+          stockStickiesAccount: account?.stockStickiesAccount || '',
+          securityId,
+          ticker: String(security.ticker_symbol || '').trim().toUpperCase().slice(0, 32),
+          name: String(security.name || '').slice(0, 200),
+          type: String(security.type || '').slice(0, 80),
+          subtype: String(security.subtype || '').slice(0, 80),
+          quantity: Number.isFinite(Number(holding.quantity)) ? Number(holding.quantity) : null,
+          institutionPrice: Number.isFinite(Number(holding.institution_price)) ? Number(holding.institution_price) : null,
+          institutionValue: Number.isFinite(Number(holding.institution_value)) ? Number(holding.institution_value) : null,
+          costBasis: Number.isFinite(Number(holding.cost_basis)) ? Number(holding.cost_basis) : null,
+          priceAsOf: holding.institution_price_as_of || holding.institution_price_datetime || null,
+          isCashEquivalent: security.is_cash_equivalent === true,
+          optionContract: security.option_contract || null,
+        };
+      })
+      .filter(position => position.quantity !== null && position.quantity !== 0);
+
+    return jsonResponse({
+      ok: true,
+      institution: 'Robinhood',
+      fetchedAt: new Date().toISOString(),
+      accounts,
+      positions,
+    }, 200, corsHeaders);
+  } catch (error) {
+    return jsonResponse({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unable to load Robinhood positions.',
+    }, 502, corsHeaders);
+  }
 }
 
 // Bank-connection failures we can describe in plain language. Anything that

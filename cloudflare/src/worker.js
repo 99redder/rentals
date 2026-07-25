@@ -1205,16 +1205,25 @@ function fairShareFoodBenchmark(fs, expenses) {
 }
 
 // Mirror of the frontend fsHousingBenchmark — her housing share is her portion of
-// the home's real carrying cost (maintenance/capital reserve + optional carrying
-// components), decoupled from the mortgage. Returns { itemId, monthlyCost } or null.
-function fairShareHousingBenchmark(fs, expenses) {
+// the home's real carrying cost (maintenance/capital reserve + property tax /
+// insurance / HOA + the shared utility bills pulled from the budget's Utilities
+// category), decoupled from the mortgage. The folded utility ids are returned so
+// the caller can exclude them from the normal per-item split (no double counting).
+// Returns { itemId, monthlyCost, utilityItemIds } or null.
+function fairShareHousingBenchmark(fs, expenses, shared) {
   const h = fs.housingBenchmark;
   if (!h || !h.enabled) return null;
+  const utilAll = Array.isArray(expenses['Utilities']) ? expenses['Utilities'] : [];
+  const utilItems = utilAll.filter(it => Object.prototype.hasOwnProperty.call(shared, it.id)
+    ? !!shared[it.id]
+    : !!FS_SHARED_CAT_DEFAULTS['Utilities']);
+  const utilities = utilItems.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  const utilityItemIds = utilItems.map(it => it.id);
   const homeValue = Number(h.homeValue) || 0;
   const reservePct = Number(h.reservePct) || 0;
   const reserve = (homeValue > 0 && reservePct > 0) ? (reservePct / 100 * homeValue) / 12 : 0;
   const monthlyCost = reserve + (Number(h.propertyTax) || 0) + (Number(h.insurance) || 0)
-    + (Number(h.hoa) || 0) + (Number(h.utilities) || 0);
+    + (Number(h.hoa) || 0) + utilities;
   if (!(monthlyCost > 0)) return null;
   let itemId = typeof h.itemId === 'string' ? h.itemId : '';
   if (!itemId) {
@@ -1222,7 +1231,7 @@ function fairShareHousingBenchmark(fs, expenses) {
     const match = items.find(i => /mortgage/i.test(String(i.name || ''))) || items[0];
     itemId = match ? match.id : '';
   }
-  return itemId ? { itemId, monthlyCost } : null;
+  return itemId ? { itemId, monthlyCost, utilityItemIds } : null;
 }
 
 // Her monthly Fair Share = the sum of her portion of each shared expense.
@@ -1235,7 +1244,7 @@ function calcFairShareFromBudget(budget) {
   const expenses = (budget.expenses && typeof budget.expenses === 'object') ? budget.expenses : {};
   const mAdj = fairShareMortgageExclusion(fs, expenses);
   const fbAdj = fairShareFoodBenchmark(fs, expenses);
-  const hAdj = fairShareHousingBenchmark(fs, expenses);
+  const hAdj = fairShareHousingBenchmark(fs, expenses, shared);
   let herShare = 0;
   for (const cat of Object.keys(expenses)) {
     const items = Array.isArray(expenses[cat]) ? expenses[cat] : [];
@@ -1244,6 +1253,8 @@ function calcFairShareFromBudget(budget) {
         ? !!shared[item.id]
         : !!FS_SHARED_CAT_DEFAULTS[cat];
       if (isShared) {
+        // Utility items folded into the housing carrying cost aren't split again here.
+        if (hAdj && hAdj.utilityItemIds.includes(item.id)) continue;
         const participants = fairShareItemParticipants(item, cat, fs, householdSize);
         const amt = Number(item.amount) || 0;
         if (hAdj && item.id === hAdj.itemId) {

@@ -10245,9 +10245,19 @@ function fsFoodBenchmark() {
   return { itemId: target.item.id, item: target.item, cat: target.cat, amount: Number(fb.amount), sourceLabel: fb.sourceLabel };
 }
 
+// The shared items in the budget's Utilities category — these are the household
+// utility bills the housing benchmark pulls in automatically. "Only the ones it
+// needs to" = shared ones (a utility marked Personal is left out).
+function fsHousingUtilityItems(fs) {
+  return (state.budget.expenses['Utilities'] || []).filter(it => fsItemShared(it, 'Utilities', fs));
+}
+
 // Housing carrying cost for the current month: an annual maintenance/capital
-// reserve on home value plus any carrying components entered directly (only those
-// not already tracked as their own shared budget lines, to avoid double counting).
+// reserve on home value, plus property tax / insurance / HOA entered directly
+// (only those not already their own shared budget line), plus the household's
+// shared utility bills pulled automatically from the budget's Utilities category.
+// Those utility items are then excluded from the normal per-item split in fsCalc
+// (folded into this carrying cost) so nothing is counted twice.
 // Returns null when the benchmark is off or the total works out to zero.
 function fsHousingCalc(fs) {
   const h = fs.housingBenchmark;
@@ -10258,10 +10268,12 @@ function fsHousingCalc(fs) {
   const propertyTax = Number(h.propertyTax) || 0;
   const insurance = Number(h.insurance) || 0;
   const hoa = Number(h.hoa) || 0;
-  const utilities = Number(h.utilities) || 0;
+  const utilItems = fsHousingUtilityItems(fs);
+  const utilities = utilItems.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  const utilityItemIds = utilItems.map(it => it.id);
   const monthlyCost = reserve + propertyTax + insurance + hoa + utilities;
   if (!(monthlyCost > 0)) return null;
-  return { homeValue, reservePct, reserve, propertyTax, insurance, hoa, utilities, monthlyCost };
+  return { homeValue, reservePct, reserve, propertyTax, insurance, hoa, utilities, utilItems, utilityItemIds, monthlyCost };
 }
 
 // The budget expense item the housing benchmark applies to: the explicitly chosen
@@ -10383,6 +10395,8 @@ function fsCalc() {
       const amt = item.amount || 0;
       totalAll += amt;
       if (fsItemShared(item, cat, fs)) {
+        // Utility items folded into the housing carrying cost aren't split again here.
+        if (hAdj && hAdj.utilityItemIds.includes(item.id)) continue;
         let sharedAmt, herPortion;
         if (hAdj && item.id === hAdj.itemId) {
           // Housing-benchmark item: the real shared cost is the home's carrying
@@ -10438,12 +10452,16 @@ function fsRenderCard() {
   const c = fsCalc();
 
   // ── Mortgage principal exclusion sub-card ──────────────────────────────
+  // The housing carrying-cost benchmark replaces the mortgage treatment entirely,
+  // so when it's on the mortgage exclusion is superseded — greyed out and inert to
+  // keep it clear which one is actually applied.
   const m = fs.mortgage;
+  const housingOn = !!fs.housingBenchmark.enabled;
   const mCalc = fsMortgageCalc(fs);
   const mTarget = fsMortgageItem();
   const pct = v => `${v.toFixed(4)}%`;
   let mBody = '';
-  if (m.enabled) {
+  if (m.enabled && !housingOn) {
     const mortgageOptions = (b.expenses['Mortgage'] || []).map(i =>
       `<option value="${escAttr(i.id)}" ${mTarget && mTarget.item.id === i.id ? 'selected' : ''}>${escHtml(i.name)} — ${fmt(i.amount || 0)}/mo</option>`).join('');
     const mInput = (key, label, attrs) => `
@@ -10481,15 +10499,17 @@ function fsRenderCard() {
       ${mMath}`;
   }
   const mortgageBox = `
-    <div style="border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .8rem;margin-bottom:.9rem;background:var(--surface)">
+    <div style="border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .8rem;margin-bottom:.9rem;background:var(--surface);${housingOn ? 'opacity:.55' : ''}">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap">
         <div style="flex:1;min-width:220px">
-          <div style="font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">🏠 Mortgage Principal Exclusion</div>
-          <div style="font-size:.68rem;color:var(--text-muted)">Loan principal builds the homeowners' equity, not a shared household cost — it's subtracted from the mortgage item before her split. The budget keeps the real payment.</div>
+          <div style="font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">🏠 Mortgage Principal Exclusion${housingOn ? ' <span style="color:var(--text-muted);font-weight:600;text-transform:none">— superseded</span>' : ''}</div>
+          <div style="font-size:.68rem;color:var(--text-muted)">${housingOn
+            ? 'Not applied while the Housing Carrying-Cost Benchmark below is on — that benchmark replaces the mortgage treatment for the housing item. Turn the benchmark off to use principal exclusion instead.'
+            : "Loan principal builds the homeowners' equity, not a shared household cost — it's subtracted from the mortgage item before her split. The budget keeps the real payment."}</div>
         </div>
-        <button type="button" onclick="fsUpdateMortgage('enabled', ${m.enabled ? 'false' : 'true'})"
-                style="min-width:76px;padding:.35rem .7rem;border-radius:var(--radius);border:1px solid ${m.enabled ? 'rgba(16,185,129,.4)' : 'var(--border)'};cursor:pointer;font-weight:700;font-size:.8rem;background:${m.enabled ? 'rgba(16,185,129,.14)' : 'var(--surface)'};color:${m.enabled ? 'var(--success)' : 'var(--text-muted)'}">
-          ${m.enabled ? '✓ On' : 'Off'}
+        <button type="button" ${housingOn ? 'disabled title="Turn off the Housing Carrying-Cost Benchmark to use this"' : `onclick="fsUpdateMortgage('enabled', ${m.enabled ? 'false' : 'true'})"`}
+                style="min-width:76px;padding:.35rem .7rem;border-radius:var(--radius);border:1px solid ${m.enabled && !housingOn ? 'rgba(16,185,129,.4)' : 'var(--border)'};cursor:${housingOn ? 'not-allowed' : 'pointer'};font-weight:700;font-size:.8rem;background:${m.enabled && !housingOn ? 'rgba(16,185,129,.14)' : 'var(--surface)'};color:${m.enabled && !housingOn ? 'var(--success)' : 'var(--text-muted)'}">
+          ${housingOn ? 'Off' : (m.enabled ? '✓ On' : 'Off')}
         </button>
       </div>
       ${mBody}
@@ -10537,12 +10557,20 @@ function fsRenderCard() {
         ${hInput('homeValue', 'Home value', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.homeValue))}"`, 'for the reserve')}
         ${hInput('reservePct', 'Reserve %/yr', `type="number" min="0" step="0.1" value="${escAttr(String(h.reservePct))}"`, '≈1% rule')}
       </div>
-      <div style="font-size:.66rem;color:var(--text-muted);margin-top:.55rem">Add carrying components below <strong>only</strong> if they aren't already their own shared budget line (otherwise they'd be counted twice):</div>
+      <div style="font-size:.66rem;color:var(--text-muted);margin-top:.55rem">Add property tax / insurance / HOA below <strong>only</strong> if they aren't already their own shared budget line (otherwise they'd be counted twice):</div>
       <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.35rem">
         ${hInput('propertyTax', 'Property tax /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.propertyTax))}"`)}
         ${hInput('insurance', 'Insurance /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.insurance))}"`)}
         ${hInput('hoa', 'HOA /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.hoa))}"`)}
-        ${hInput('utilities', 'Utilities /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.utilities))}"`)}
+      </div>
+      <div style="margin-top:.55rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .65rem">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;flex-wrap:wrap">
+          <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">⚡ Utilities — auto from budget</span>
+          <span style="font-size:.9rem;font-weight:800;color:var(--primary);font-variant-numeric:tabular-nums">${fmt(hCalc ? hCalc.utilities : 0)}/mo</span>
+        </div>
+        <div style="font-size:.66rem;color:var(--text-muted);margin-top:.2rem">${(hCalc && hCalc.utilItems.length)
+          ? 'Pulled live from Monthly Budget → Utilities (shared items only): ' + hCalc.utilItems.map(i => `${escHtml(i.name)} ${fmt(i.amount || 0)}`).join(' · ') + '. These are folded into the carrying cost and not split separately, so nothing is double-counted.'
+          : 'No shared items in the budget\'s Utilities category yet — add them there and they\'ll flow in here automatically. Mark a utility Personal in the list below to leave it out.'}</div>
       </div>
       ${hMath}
       <div style="margin-top:.55rem">
@@ -10642,6 +10670,8 @@ function fsRenderCard() {
       // Housing benchmark supersedes the mortgage principal exclusion on the same item.
       const isAdj = isShared && !isHb && c.mortgageAdj && c.mortgageAdj.itemId === item.id;
       const isFb = isShared && c.foodAdj && c.foodAdj.itemId === item.id;
+      // Utility item folded into the housing carrying cost — counted there, not split here.
+      const isFolded = isShared && c.housingAdj && c.housingAdj.utilityItemIds.includes(item.id);
       const effAmt = isHb ? c.housingAdj.monthlyCost
         : isAdj ? Math.max(0, (Number(item.amount) || 0) - c.mortgageAdj.principal)
         : (Number(item.amount) || 0);
@@ -10651,7 +10681,9 @@ function fsRenderCard() {
         : isAdj
         ? `<s style="opacity:.6">${fmt(item.amount || 0)}</s> ${fmt(effAmt)}/mo <span title="Estimated loan principal excluded — see the mortgage adjustment above" style="font-size:.66rem;color:var(--primary);font-weight:700">− principal</span>`
         : `${fmt(item.amount || 0)}/mo`;
-      const portionCell = isFb
+      const portionCell = isFolded
+        ? `<span title="Folded into the housing carrying-cost benchmark above and split there — not counted separately" style="display:flex;align-items:center;gap:.25rem;font-size:.68rem;color:var(--primary);font-weight:700;white-space:nowrap">→ in housing 🏘️</span>`
+        : isFb
         ? `<span title="${escAttr(c.foodAdj.sourceLabel)} — see the USDA food benchmark above" style="display:flex;align-items:center;gap:.25rem;font-size:.68rem;color:var(--primary);font-weight:700;white-space:nowrap">USDA = ${fmt(momPortion)}</span>`
         : `<label title="Number of people who benefit from this expense" style="display:flex;align-items:center;gap:.25rem;font-size:.68rem;color:var(--text-muted);white-space:nowrap">
           ÷ <input type="number" min="1" max="${fs.householdSize}" step="1" value="${participants}"
@@ -10814,7 +10846,8 @@ async function fsUpdateHousingBenchmark(key, value) {
   } else if (key === 'reservePct') {
     const v = parseFloat(value);
     if (isFinite(v) && v >= 0) h.reservePct = v;
-  } else if (['homeValue', 'propertyTax', 'insurance', 'hoa', 'utilities'].includes(key)) {
+  } else if (['homeValue', 'propertyTax', 'insurance', 'hoa'].includes(key)) {
+    // Utilities are auto-summed from the budget's Utilities category, not entered here.
     const v = parseMoney(value);
     if (isFinite(v) && v >= 0) h[key] = v;
   }
@@ -10859,6 +10892,8 @@ function fsAgreementRows() {
   for (const cat of BUDGET_EXPENSE_CATS) {
     for (const item of (b.expenses[cat] || [])) {
       if (!fsItemShared(item, cat, fs)) continue;
+      // Utility items folded into the housing carrying cost are shown inside that row, not separately.
+      if (hAdj && hAdj.utilityItemIds.includes(item.id)) continue;
       const participants = fsItemParticipants(item, cat, fs);
       const amt = Number(item.amount) || 0;
       const isHb = hAdj && item.id === hAdj.itemId;
@@ -10971,7 +11006,7 @@ function fsAgreementDocHtml() {
     if (hb.propertyTax > 0) comp.push(`property tax of ${fmt(hb.propertyTax)} per month`);
     if (hb.insurance > 0) comp.push(`insurance of ${fmt(hb.insurance)} per month`);
     if (hb.hoa > 0) comp.push(`HOA dues of ${fmt(hb.hoa)} per month`);
-    if (hb.utilities > 0) comp.push(`utilities of ${fmt(hb.utilities)} per month`);
+    if (hb.utilities > 0) comp.push(`the household's shared utilities of ${fmt(hb.utilities)} per month${(hb.utilItems && hb.utilItems.length) ? ` (${hb.utilItems.map(i => `${escHtml(i.name)} ${fmt(i.amount || 0)}`).join(', ')})` : ''}`);
     const compList = comp.length > 1
       ? comp.slice(0, -1).join('; ') + '; and ' + comp[comp.length - 1]
       : (comp[0] || '');

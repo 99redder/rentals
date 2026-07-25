@@ -10618,29 +10618,29 @@ function fsRenderCard() {
       hMath = `<div style="font-size:.72rem;color:var(--danger);margin-top:.55rem">${hTarget ? 'Enter a home value + reserve %, or a carrying component, so the monthly cost is above zero.' : 'No Mortgage-category budget item found — add one (or a housing line) and pick it here.'}</div>`;
     }
     // Fair-market-rent defensibility ceiling (§280A(d)(2)): documents that her
-    // housing share stays clearly below fair rental value. Guardrail only — never
-    // changes her share; it flags if the carrying-cost inputs push her at/above market.
-    const fmr = Number(h.fairMarketRent) || 0;
+    // housing share stays below the fair rental value of what she actually occupies
+    // — one room in a shared home, so the comparable is a single-room ("room for
+    // rent", utilities-included) rate, NOT whole-home rent (which a large house
+    // makes uninformatively high). Guardrail only — never changes her share.
+    const roomFmr = Number(h.fairMarketRent) || 0;
     const hParts = (hCalc && hTarget) ? fsItemParticipants(hTarget.item, hTarget.cat, fs) : fs.householdSize;
     const herHousing = hCalc ? hCalc.monthlyCost / hParts : 0;
     let fmrNote;
-    if (fmr > 0 && hCalc) {
-      const perPersonFmr = fmr / hParts;
-      const totalPct = Math.round(hCalc.monthlyCost / fmr * 100);
-      const herPct = perPersonFmr > 0 ? Math.round(herHousing / perPersonFmr * 100) : 0;
-      const ok = herHousing <= perPersonFmr && hCalc.monthlyCost < fmr;
+    if (roomFmr > 0 && hCalc) {
+      const herPct = Math.round(herHousing / roomFmr * 100);
+      const ok = herHousing <= roomFmr;
       fmrNote = `<div style="margin-top:.45rem;padding:.5rem .65rem;border-radius:var(--radius);font-size:.72rem;line-height:1.55;background:${ok ? 'rgba(16,185,129,.10)' : 'rgba(234,179,8,.12)'};border:1px solid ${ok ? 'rgba(16,185,129,.3)' : 'rgba(234,179,8,.4)'}">
-        ${ok ? '✓' : '⚠️'} Her housing share <strong>${fmt(herHousing)}/mo</strong> is ${herPct}% of a per-person split of the ${fmt(fmr)} market rent (${fmt(perPersonFmr)}); the full carrying cost ${fmt(hCalc.monthlyCost)} is ${totalPct}% of market rent. ${ok
-          ? 'Clearly below fair rental value — consistent with 26&nbsp;U.S.C. §280A(d)(2): a family member paying below fair rental value keeps this a cost-sharing arrangement, not rent.'
-          : 'This is at or above a market per-person share. Lower the carrying-cost inputs (or re-check the market-rent figure) so her share stays clearly below fair rental value and reads as cost reimbursement, not rent.'}</div>`;
+        ${ok ? '✓' : '⚠️'} Her housing share <strong>${fmt(herHousing)}/mo</strong> (carrying-cost portion, incl. her utilities) is ${herPct}% of the ${fmt(roomFmr)} fair rental value of a comparable room. ${ok
+          ? 'Clearly below what renting a room would cost — consistent with 26&nbsp;U.S.C. §280A(d)(2): paying below the fair rental value of what she occupies keeps this cost-sharing, not rent.'
+          : 'At or above a market room rate — lower the carrying-cost inputs (or re-check the room rate) so her share stays clearly below the fair rental value of a room and reads as cost reimbursement, not rent.'}</div>`;
     } else {
-      fmrNote = `<div style="margin-top:.4rem;font-size:.64rem;color:var(--text-muted)">Optional: enter a comparable whole-home market rent to document that her share stays below fair rental value — the §280A defensibility ceiling. Leave blank to skip.</div>`;
+      fmrNote = `<div style="margin-top:.4rem;font-size:.64rem;color:var(--text-muted)">Optional but recommended: enter the fair rental value of a comparable <strong>single room</strong> in a shared home in your area (a &ldquo;room for rent&rdquo; rate, utilities included) — the right yardstick since she occupies one bedroom, and the §280A ceiling. Whole-home rent isn't the right comparable. Leave blank to skip.</div>`;
     }
     const fmrBlock = `
       <div style="margin-top:.55rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .65rem">
         <div style="flex:1;min-width:150px">
-          <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">🛡️ Fair-market rent — defensibility ceiling /mo</label>
-          <input class="form-input" style="width:100%;max-width:220px;font-size:.85rem" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(fmr))}" placeholder="comparable whole-home rent"
+          <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">🛡️ Fair rental value of a comparable room /mo (§280A ceiling)</label>
+          <input class="form-input" style="width:100%;max-width:240px;font-size:.85rem" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(roomFmr))}" placeholder="room-for-rent rate, utils incl."
                  onchange="fsUpdateHousingBenchmark('fairMarketRent', this.value)" onblur="formatMoneyInput(this)">
         </div>
         ${fmrNote}
@@ -11126,13 +11126,13 @@ function fsAgreementDocHtml() {
         the actual, owner-borne cost of the home &mdash; principally the wear, upkeep, and depreciation of
         the structure &mdash; and contains no return on the Homeowners' capital or other profit, so it
         remains cost-sharing rather than rent. The home remains the Homeowners' personal residence occupied
-        by a family member; no rental activity is created.${(hb.fairMarketRent > 0) ? ` For reference, the
-        fair rental value of a comparable whole home is approximately <strong>${fmt(hb.fairMarketRent)} per
-        month</strong>; Resident's housing contribution of ${fmt(housingRow.portion)} is far below both that
-        figure and a per-person share of it (${fmt(hb.fairMarketRent / housingRow.participants)}), consistent
-        with 26&nbsp;U.S.C. §280A(d)(2), under which a dwelling occupied by the owner's family member at less
-        than fair rental value remains the owner's personal residence rather than a rental.` : ''} Method:
-        ${escHtml(hb.sourceLabel)}.</p>
+        by a family member; no rental activity is created.${(hb.fairMarketRent > 0) ? ` Resident occupies a
+        single room in the shared home, so the relevant comparable is the fair rental value of a room, not of
+        the whole house. That fair rental value for a comparable furnished room (utilities included) is
+        approximately <strong>${fmt(hb.fairMarketRent)} per month</strong>; Resident's housing contribution of
+        ${fmt(housingRow.portion)} per month is below it, consistent with 26&nbsp;U.S.C. §280A(d)(2), under
+        which a dwelling occupied by the owner's family member at less than fair rental value remains the
+        owner's personal residence rather than a rental.` : ''} Method: ${escHtml(hb.sourceLabel)}.</p>
       </div>`;
   }
 

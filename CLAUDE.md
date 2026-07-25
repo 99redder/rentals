@@ -467,7 +467,8 @@ A collapsible **section inside the Monthly Budget view** — not a standalone ta
   participants: { [itemId]: number },       // per-item divisor override (who benefits)
   agreement: { residentName, ownerNames, propertyAddress },  // cost-sharing agreement parties
   mortgage: { enabled, itemId, loanAmount, ratePct, termYears, firstPayment },  // principal exclusion (see below)
-  foodBenchmark: { enabled, itemId, amount, sourceLabel, suppliesAllowance }  // USDA food benchmark for the Weekly Spending item (see below)
+  foodBenchmark: { enabled, itemId, amount, sourceLabel, suppliesAllowance },  // USDA food benchmark for the Weekly Spending item (see below)
+  housingBenchmark: { enabled, itemId, homeValue, reservePct, propertyTax, insurance, hoa, utilities, sourceLabel }  // housing carrying-cost benchmark (see below)
 }
 ```
 There is **no separate bills list** — the bills are the budget's expense items. An item counts as shared if `fairShare.shared[item.id]` is set (explicit override), else it falls back to `FS_SHARED_CAT_DEFAULTS[category]`. Toggling the Shared/Personal pill writes an explicit override.
@@ -755,6 +756,13 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-07-25 — Fair Share: housing carrying-cost benchmark
+
+- **New `🏘️ Housing Carrying-Cost Benchmark` sub-card** in the Fair Share section, parallel to the USDA food benchmark. Motivation: 4781MC will be built with the builder's lender (higher rate, ~$20k closing-cost credit) and the loan may be paid off within a year. Once the mortgage line goes to $0, Mom's housing share would collapse even though occupying the home still has a real cost. When enabled, her housing share is valued at her portion of the home's **carrying cost** — an annual maintenance/capital reserve (`reservePct`%/yr × `homeValue` ÷ 12, ~1% rule) **plus** any carrying components (`propertyTax`/`insurance`/`hoa`/`utilities`, monthly — enter only those not already their own shared budget line, to avoid double-counting) — divided by the item's participants. Decoupled from the mortgage and deliberately held **below fair market rent**, so it stays cost reimbursement (not rent → not rental income). **Supersedes the mortgage principal exclusion on the same item.**
+- Config in `fairShare.housingBenchmark`. Helpers `fsHousingCalc(fs)` / `fsHousingItem()` (chosen id, else first Mortgage item matching `/mortgage/i`, else first Mortgage item — matches the worker) / `fsHousingBenchmark()`; mutator `fsUpdateHousingBenchmark()`. In `fsCalc` the housing item's shared amount becomes the carrying cost and her portion = `monthlyCost ÷ participants` (precedence: housing → food → mortgage-exclusion/plain). Shared-bills row shows the original struck through + adjusted amount + `carrying cost` badge.
+- **Agreement:** Method clause gains a conditional carrying-cost sentence; Exhibit A marks the row `‡` with a boxed "Housing carrying-cost benchmark" write-up (components, ÷household, and the below-fair-rent / no-return-on-capital rationale). The existing §280A(d)(2) + Pub 527 reference already covers the legal basis (family member occupying below fair rental value = personal-use dwelling, no rental activity).
+- **Worker mirrored** (`fairShareHousingBenchmark` inside `calcFairShareFromBudget`) so the phone PWA's Fair Share matches. Verified against the real worker fn across 8 scenarios (incl. paid-off mortgage: share holds at benchmark instead of collapsing).
 
 ### 2026-07-23 — 4781MC modeled as new construction (pre-settlement)
 

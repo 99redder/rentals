@@ -10137,6 +10137,21 @@ function fsNormalize(raw) {
       sourceLabel: (typeof raw.foodBenchmark?.sourceLabel === 'string' && raw.foodBenchmark.sourceLabel.trim()) ? raw.foodBenchmark.sourceLabel : FS_USDA_DEFAULT_SOURCE,
       suppliesAllowance: (Number(raw.foodBenchmark?.suppliesAllowance) >= 0 && Number.isFinite(Number(raw.foodBenchmark?.suppliesAllowance))) ? Number(raw.foodBenchmark.suppliesAllowance) : FS_USDA_DEFAULT_SUPPLIES,
     },
+    // Housing carrying-cost benchmark — her housing share is her portion of the
+    // home's real carrying cost (maintenance/capital reserve + optional carrying
+    // components), decoupled from the mortgage. Supersedes the mortgage principal
+    // exclusion on the same item. Off by default.
+    housingBenchmark: {
+      enabled:     !!raw.housingBenchmark?.enabled,
+      itemId:      typeof raw.housingBenchmark?.itemId === 'string' ? raw.housingBenchmark.itemId : '',
+      homeValue:   (Number(raw.housingBenchmark?.homeValue) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.homeValue))) ? Number(raw.housingBenchmark.homeValue) : 0,
+      reservePct:  (Number(raw.housingBenchmark?.reservePct) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.reservePct))) ? Number(raw.housingBenchmark.reservePct) : FS_HOUSING_DEFAULT_RESERVE_PCT,
+      propertyTax: (Number(raw.housingBenchmark?.propertyTax) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.propertyTax))) ? Number(raw.housingBenchmark.propertyTax) : 0,
+      insurance:   (Number(raw.housingBenchmark?.insurance) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.insurance))) ? Number(raw.housingBenchmark.insurance) : 0,
+      hoa:         (Number(raw.housingBenchmark?.hoa) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.hoa))) ? Number(raw.housingBenchmark.hoa) : 0,
+      utilities:   (Number(raw.housingBenchmark?.utilities) >= 0 && Number.isFinite(Number(raw.housingBenchmark?.utilities))) ? Number(raw.housingBenchmark.utilities) : 0,
+      sourceLabel: (typeof raw.housingBenchmark?.sourceLabel === 'string' && raw.housingBenchmark.sourceLabel.trim()) ? raw.housingBenchmark.sourceLabel : FS_HOUSING_DEFAULT_SOURCE,
+    },
   };
 }
 
@@ -10150,6 +10165,20 @@ function fsNormalize(raw) {
 const FS_USDA_DEFAULT_AMOUNT = 442;
 const FS_USDA_DEFAULT_SUPPLIES = 67;
 const FS_USDA_DEFAULT_SOURCE = 'USDA Liberal Food Plan, female 71+ — May 2026 report ($394.40/mo, −5% household-size adj. = $375) + $67/mo household-supplies allowance (toiletries, paper goods, cleaning)';
+
+// Housing carrying-cost benchmark — when the home is owned free-and-clear (or the
+// mortgage is paid off early), the mortgage line goes to $0 and Mom's housing
+// share would collapse to nothing even though occupying the structure still has a
+// real ongoing cost. Instead of a fraction of the mortgage payment, her housing
+// share is valued at her portion of the home's true carrying cost, decoupled from
+// financing: an annual maintenance/capital reserve (owner-borne wear-and-tear and
+// depreciation on the structure) plus any carrying components not already tracked
+// as their own shared budget lines. This is a real cost with no markup — it stays
+// expense reimbursement, and it deliberately stays BELOW fair market rent (whose
+// spread over carrying cost would read as rental income). 1%/yr of home value is a
+// conventional maintenance-reserve rule of thumb.
+const FS_HOUSING_DEFAULT_RESERVE_PCT = 1;
+const FS_HOUSING_DEFAULT_SOURCE = "Home carrying cost, financing-independent: a 1%/yr maintenance & capital reserve on home value (owner-borne upkeep and depreciation) plus any carrying components not already split as their own shared bills. Held below fair market rent so it stays cost reimbursement, not rent.";
 
 // Builds the benchmark source label from a report's Liberal figure + the
 // supplies allowance. Same format as FS_USDA_DEFAULT_SOURCE.
@@ -10214,6 +10243,53 @@ function fsFoodBenchmark() {
   const target = fsFoodBenchmarkItem();
   if (!target) return null;
   return { itemId: target.item.id, item: target.item, cat: target.cat, amount: Number(fb.amount), sourceLabel: fb.sourceLabel };
+}
+
+// Housing carrying cost for the current month: an annual maintenance/capital
+// reserve on home value plus any carrying components entered directly (only those
+// not already tracked as their own shared budget lines, to avoid double counting).
+// Returns null when the benchmark is off or the total works out to zero.
+function fsHousingCalc(fs) {
+  const h = fs.housingBenchmark;
+  if (!h || !h.enabled) return null;
+  const homeValue = Number(h.homeValue) || 0;
+  const reservePct = Number(h.reservePct) || 0;
+  const reserve = (homeValue > 0 && reservePct > 0) ? (reservePct / 100 * homeValue) / 12 : 0;
+  const propertyTax = Number(h.propertyTax) || 0;
+  const insurance = Number(h.insurance) || 0;
+  const hoa = Number(h.hoa) || 0;
+  const utilities = Number(h.utilities) || 0;
+  const monthlyCost = reserve + propertyTax + insurance + hoa + utilities;
+  if (!(monthlyCost > 0)) return null;
+  return { homeValue, reservePct, reserve, propertyTax, insurance, hoa, utilities, monthlyCost };
+}
+
+// The budget expense item the housing benchmark applies to: the explicitly chosen
+// one, else the first Mortgage-category item whose name mentions "mortgage", else
+// the first Mortgage-category item. (Matches the worker's auto-detect.)
+function fsHousingItem() {
+  const b = state.budget;
+  const id = b.fairShare.housingBenchmark?.itemId;
+  if (id) {
+    for (const cat of BUDGET_EXPENSE_CATS) {
+      const item = (b.expenses[cat] || []).find(i => i.id === id);
+      if (item) return { item, cat };
+    }
+    return null;
+  }
+  const items = b.expenses['Mortgage'] || [];
+  const item = items.find(i => /mortgage/i.test(String(i.name || ''))) || items[0];
+  return item ? { item, cat: 'Mortgage' } : null;
+}
+
+// null, or { itemId, item, cat, monthlyCost, ...components, sourceLabel } when active.
+function fsHousingBenchmark() {
+  const fs = state.budget.fairShare;
+  const calc = fsHousingCalc(fs);
+  if (!calc) return null;
+  const target = fsHousingItem();
+  if (!target) return null;
+  return { itemId: target.item.id, item: target.item, cat: target.cat, ...calc, sourceLabel: fs.housingBenchmark.sourceLabel };
 }
 
 // Standard fixed-rate amortization for the current month's payment.
@@ -10300,23 +10376,35 @@ function fsCalc() {
   const size = Math.max(1, fs.householdSize || 1);
   const mAdj = fsMortgageAdjustment();
   const fbAdj = fsFoodBenchmark();
+  const hAdj = fsHousingBenchmark();
   let totalAll = 0, totalShared = 0, herShareExact = 0;
   for (const cat of BUDGET_EXPENSE_CATS) {
     for (const item of (b.expenses[cat] || [])) {
       const amt = item.amount || 0;
       totalAll += amt;
       if (fsItemShared(item, cat, fs)) {
-        const effAmt = (mAdj && item.id === mAdj.itemId) ? Math.max(0, amt - mAdj.principal) : amt;
-        totalShared += effAmt;
-        // Food-benchmark item: her portion is the published USDA figure, not a per-capita split.
-        herShareExact += (fbAdj && item.id === fbAdj.itemId)
-          ? fbAdj.amount
-          : effAmt / fsItemParticipants(item, cat, fs);
+        let sharedAmt, herPortion;
+        if (hAdj && item.id === hAdj.itemId) {
+          // Housing-benchmark item: the real shared cost is the home's carrying
+          // cost (decoupled from the mortgage), split across who benefits.
+          sharedAmt = hAdj.monthlyCost;
+          herPortion = hAdj.monthlyCost / fsItemParticipants(item, cat, fs);
+        } else if (fbAdj && item.id === fbAdj.itemId) {
+          // Food-benchmark item: her portion is the published USDA figure, not a per-capita split.
+          sharedAmt = amt;
+          herPortion = fbAdj.amount;
+        } else {
+          const effAmt = (mAdj && item.id === mAdj.itemId) ? Math.max(0, amt - mAdj.principal) : amt;
+          sharedAmt = effAmt;
+          herPortion = effAmt / fsItemParticipants(item, cat, fs);
+        }
+        totalShared += sharedAmt;
+        herShareExact += herPortion;
       }
     }
   }
   const herShare = fs.roundDollar ? Math.round(herShareExact) : herShareExact;
-  return { size, totalAll, totalShared, herShareExact, herShare, mortgageAdj: mAdj, foodAdj: fbAdj };
+  return { size, totalAll, totalShared, herShareExact, herShare, mortgageAdj: mAdj, foodAdj: fbAdj, housingAdj: hAdj };
 }
 
 // Keep an auto-synced income line for Mom's expense reimbursement. It is
@@ -10407,6 +10495,77 @@ function fsRenderCard() {
       ${mBody}
     </div>`;
 
+  // ── Housing carrying-cost benchmark sub-card ───────────────────────────
+  const h = fs.housingBenchmark;
+  const hCalc = fsHousingCalc(fs);
+  const hTarget = fsHousingItem();
+  let hBody = '';
+  if (h.enabled) {
+    const housingOptions = (b.expenses['Mortgage'] || []).map(i =>
+      `<option value="${escAttr(i.id)}" ${hTarget && hTarget.item.id === i.id ? 'selected' : ''}>${escHtml(i.name)} — ${fmt(i.amount || 0)}/mo</option>`).join('');
+    const hInput = (key, label, attrs, hint) => `
+      <div style="flex:1;min-width:120px">
+        <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">${label}</label>
+        <input class="form-input" style="width:100%;font-size:.85rem" ${attrs}
+               onchange="fsUpdateHousingBenchmark('${key}', this.value)"${key === 'homeValue' || ['propertyTax','insurance','hoa','utilities'].includes(key) ? ' onblur="formatMoneyInput(this)"' : ''}>
+        ${hint ? `<div style="font-size:.6rem;color:var(--text-muted);margin-top:.15rem">${hint}</div>` : ''}
+      </div>`;
+    let hMath;
+    if (hCalc && hTarget) {
+      const parts = fsItemParticipants(hTarget.item, hTarget.cat, fs);
+      const comp = [];
+      if (hCalc.reserve > 0) comp.push(`reserve ${fmt(hCalc.reserve)}`);
+      if (hCalc.propertyTax > 0) comp.push(`tax ${fmt(hCalc.propertyTax)}`);
+      if (hCalc.insurance > 0) comp.push(`insurance ${fmt(hCalc.insurance)}`);
+      if (hCalc.hoa > 0) comp.push(`HOA ${fmt(hCalc.hoa)}`);
+      if (hCalc.utilities > 0) comp.push(`utilities ${fmt(hCalc.utilities)}`);
+      hMath = `
+        <div style="font-size:.72rem;color:var(--text-muted);font-variant-numeric:tabular-nums;line-height:1.7;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .65rem;margin-top:.55rem">
+          ${hCalc.reserve > 0 ? `<div>Maintenance &amp; capital reserve = ${hCalc.reservePct}%/yr × ${fmt(hCalc.homeValue)} ÷ 12 = <strong>${fmt(hCalc.reserve)}</strong>/mo</div>` : ''}
+          <div>Monthly carrying cost = ${comp.join(' + ')} = <strong>${fmt(hCalc.monthlyCost)}</strong>/mo — this replaces the mortgage payment as the shared cost of &ldquo;${escHtml(hTarget.item.name)}&rdquo;.</div>
+          <div>Her share of housing = ${fmt(hCalc.monthlyCost)} ÷ ${parts} = <strong>${fmt(hCalc.monthlyCost / parts)}</strong>/mo — independent of whether the mortgage is still being paid or is paid off.</div>
+        </div>`;
+    } else {
+      hMath = `<div style="font-size:.72rem;color:var(--danger);margin-top:.55rem">${hTarget ? 'Enter a home value + reserve %, or a carrying component, so the monthly cost is above zero.' : 'No Mortgage-category budget item found — add one (or a housing line) and pick it here.'}</div>`;
+    }
+    hBody = `
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.6rem">
+        <div style="flex:2;min-width:180px">
+          <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">Budget item (housing line)</label>
+          <select class="form-input" style="width:100%;font-size:.85rem" onchange="fsUpdateHousingBenchmark('itemId', this.value)">${housingOptions || '<option value="">— none in Mortgage category —</option>'}</select>
+        </div>
+        ${hInput('homeValue', 'Home value', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.homeValue))}"`, 'for the reserve')}
+        ${hInput('reservePct', 'Reserve %/yr', `type="number" min="0" step="0.1" value="${escAttr(String(h.reservePct))}"`, '≈1% rule')}
+      </div>
+      <div style="font-size:.66rem;color:var(--text-muted);margin-top:.55rem">Add carrying components below <strong>only</strong> if they aren't already their own shared budget line (otherwise they'd be counted twice):</div>
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.35rem">
+        ${hInput('propertyTax', 'Property tax /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.propertyTax))}"`)}
+        ${hInput('insurance', 'Insurance /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.insurance))}"`)}
+        ${hInput('hoa', 'HOA /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.hoa))}"`)}
+        ${hInput('utilities', 'Utilities /mo', `type="text" inputmode="decimal" value="${escAttr(moneyInputValue(h.utilities))}"`)}
+      </div>
+      ${hMath}
+      <div style="margin-top:.55rem">
+        <label style="display:block;font-size:.66rem;font-weight:600;color:var(--text-muted);margin-bottom:.2rem">Benchmark source / method</label>
+        <input class="form-input" style="width:100%;font-size:.85rem" type="text" value="${escAttr(h.sourceLabel)}"
+               onchange="fsUpdateHousingBenchmark('sourceLabel', this.value)">
+      </div>`;
+  }
+  const housingBox = `
+    <div style="border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .8rem;margin-bottom:.9rem;background:var(--surface)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <div style="font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">🏘️ Housing Carrying-Cost Benchmark</div>
+          <div style="font-size:.68rem;color:var(--text-muted)">Values her housing share at her portion of the home's real carrying cost (maintenance/capital reserve + any carrying components), decoupled from the mortgage — so paying the loan off early doesn't collapse her contribution. Held below fair market rent so it stays cost-sharing, not rent. <strong>Supersedes the mortgage principal exclusion on the same item.</strong></div>
+        </div>
+        <button type="button" onclick="fsUpdateHousingBenchmark('enabled', ${h.enabled ? 'false' : 'true'})"
+                style="min-width:76px;padding:.35rem .7rem;border-radius:var(--radius);border:1px solid ${h.enabled ? 'rgba(16,185,129,.4)' : 'var(--border)'};cursor:pointer;font-weight:700;font-size:.8rem;background:${h.enabled ? 'rgba(16,185,129,.14)' : 'var(--surface)'};color:${h.enabled ? 'var(--success)' : 'var(--text-muted)'}">
+          ${h.enabled ? '✓ On' : 'Off'}
+        </button>
+      </div>
+      ${hBody}
+    </div>`;
+
   // ── USDA food benchmark sub-card ───────────────────────────────────────
   const fb = fs.foodBenchmark;
   const fbAdj = c.foodAdj;
@@ -10479,11 +10638,17 @@ function fsRenderCard() {
     const rows = items.map(item => {
       const isShared = fsItemShared(item, cat, fs);
       const participants = fsItemParticipants(item, cat, fs);
-      const isAdj = isShared && c.mortgageAdj && c.mortgageAdj.itemId === item.id;
+      const isHb = isShared && c.housingAdj && c.housingAdj.itemId === item.id;
+      // Housing benchmark supersedes the mortgage principal exclusion on the same item.
+      const isAdj = isShared && !isHb && c.mortgageAdj && c.mortgageAdj.itemId === item.id;
       const isFb = isShared && c.foodAdj && c.foodAdj.itemId === item.id;
-      const effAmt = isAdj ? Math.max(0, (Number(item.amount) || 0) - c.mortgageAdj.principal) : (Number(item.amount) || 0);
+      const effAmt = isHb ? c.housingAdj.monthlyCost
+        : isAdj ? Math.max(0, (Number(item.amount) || 0) - c.mortgageAdj.principal)
+        : (Number(item.amount) || 0);
       const momPortion = isShared ? (isFb ? c.foodAdj.amount : effAmt / participants) : 0;
-      const amtCell = isAdj
+      const amtCell = isHb
+        ? `<s style="opacity:.6">${fmt(item.amount || 0)}</s> ${fmt(effAmt)}/mo <span title="Home carrying cost substituted for the mortgage payment — see the housing benchmark above" style="font-size:.66rem;color:var(--primary);font-weight:700">carrying cost</span>`
+        : isAdj
         ? `<s style="opacity:.6">${fmt(item.amount || 0)}</s> ${fmt(effAmt)}/mo <span title="Estimated loan principal excluded — see the mortgage adjustment above" style="font-size:.66rem;color:var(--primary);font-weight:700">− principal</span>`
         : `${fmt(item.amount || 0)}/mo`;
       const portionCell = isFb
@@ -10530,6 +10695,7 @@ function fsRenderCard() {
             </div>
           </div>
           ${mortgageBox}
+          ${housingBox}
           ${foodBox}
           <div style="font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:.3rem">Which bills are shared, and by whom?</div>
           <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:.6rem">Mark each bill <strong>Shared</strong> or <strong>Personal</strong>, then set how many people actually benefit from each shared expense. Phone service and car insurance default to the three adults; household-wide expenses default to all ${fs.householdSize} residents. If Mom's exact incremental cost is known, use that instead of an equal split.</div>
@@ -10635,6 +10801,26 @@ async function fsUpdateMortgage(key, value) {
   _renderBudgetHtml();
 }
 
+async function fsUpdateHousingBenchmark(key, value) {
+  const h = state.budget.fairShare.housingBenchmark;
+  if (key === 'enabled') {
+    h.enabled = (value === true || value === 'true');
+  } else if (key === 'itemId') {
+    h.itemId = String(value || '');
+  } else if (key === 'sourceLabel') {
+    h.sourceLabel = String(value ?? '').trim() || FS_HOUSING_DEFAULT_SOURCE;
+  } else if (key === 'reservePct') {
+    const v = parseFloat(value);
+    if (isFinite(v) && v >= 0) h.reservePct = v;
+  } else if (['homeValue', 'propertyTax', 'insurance', 'hoa', 'utilities'].includes(key)) {
+    const v = parseMoney(value);
+    if (isFinite(v) && v >= 0) h[key] = v;
+  }
+  fsSyncBudgetIncome();
+  await _saveBudget();
+  _renderBudgetHtml();
+}
+
 async function fsUpdateFoodBenchmark(key, value) {
   const fb = state.budget.fairShare.foodBenchmark;
   if (key === 'enabled') {
@@ -10666,20 +10852,23 @@ function fsAgreementRows() {
   const fs = b.fairShare;
   const mAdj = fsMortgageAdjustment();
   const fbAdj = fsFoodBenchmark();
+  const hAdj = fsHousingBenchmark();
   const rows = [];
   for (const cat of BUDGET_EXPENSE_CATS) {
     for (const item of (b.expenses[cat] || [])) {
       if (!fsItemShared(item, cat, fs)) continue;
       const participants = fsItemParticipants(item, cat, fs);
       const amt = Number(item.amount) || 0;
-      const isAdj = mAdj && item.id === mAdj.itemId;
+      const isHb = hAdj && item.id === hAdj.itemId;
+      const isAdj = !isHb && mAdj && item.id === mAdj.itemId;   // housing benchmark supersedes the mortgage exclusion
       const isFb = fbAdj && item.id === fbAdj.itemId;
-      const eff = isAdj ? Math.max(0, amt - mAdj.principal) : amt;
+      const eff = isHb ? hAdj.monthlyCost : (isAdj ? Math.max(0, amt - mAdj.principal) : amt);
       rows.push({
         name: item.name, cat, amount: eff, participants,
         portion: isFb ? fbAdj.amount : eff / participants,
         adjusted: isAdj ? { original: amt, principal: mAdj.principal, k: mAdj.k, n: mAdj.n, ratePct: fs.mortgage.ratePct } : null,
-        usda: isFb ? { amount: fbAdj.amount, sourceLabel: fbAdj.sourceLabel, fullAmount: amt, perCapita: eff / participants } : null
+        usda: isFb ? { amount: fbAdj.amount, sourceLabel: fbAdj.sourceLabel, fullAmount: amt, perCapita: eff / participants } : null,
+        housing: isHb ? { ...hAdj, original: amt } : null
       });
     }
   }
@@ -10698,6 +10887,7 @@ function fsAgreementDocHtml() {
   const c = fsCalc();
   const rows = fsAgreementRows();
   const mAdj = fsMortgageAdjustment();
+  const hAdj = fsHousingBenchmark();
   const today = fsAgreementDate();
   const resident = a.residentName.trim() || '________________________';
   const owners = a.ownerNames.trim() || '________________________';
@@ -10705,9 +10895,9 @@ function fsAgreementDocHtml() {
 
   const exhibitRows = rows.map(r => `
     <tr>
-      <td>${escHtml(r.name)}${r.adjusted ? '&nbsp;*' : ''}${r.usda ? '&nbsp;&dagger;' : ''}</td>
+      <td>${escHtml(r.name)}${r.adjusted ? '&nbsp;*' : ''}${r.usda ? '&nbsp;&dagger;' : ''}${r.housing ? '&nbsp;&Dagger;' : ''}</td>
       <td>${escHtml(r.cat)}</td>
-      <td class="num">${fmt(r.amount)}</td>
+      <td class="num">${fmt(r.amount)}${r.housing ? '&nbsp;&Dagger;' : ''}</td>
       <td class="num">${r.usda ? 'USDA&nbsp;&dagger;' : r.participants}</td>
       <td class="num">${fmt(r.portion)}</td>
     </tr>`).join('');
@@ -10768,6 +10958,43 @@ function fsAgreementDocHtml() {
       </div>`;
   }
 
+  // Housing carrying-cost benchmark write-up for Exhibit A — explains valuing the
+  // housing share at real carrying cost rather than the mortgage payment.
+  const housingRow = rows.find(r => r.housing);
+  let housingBlock = '';
+  if (housingRow) {
+    const hb = housingRow.housing;
+    const comp = [];
+    if (hb.reserve > 0) comp.push(`a maintenance and capital reserve of ${fmt(hb.reserve)} per month (${hb.reservePct}% per year of the ${fmt(hb.homeValue)} home value, divided by twelve)`);
+    if (hb.propertyTax > 0) comp.push(`property tax of ${fmt(hb.propertyTax)} per month`);
+    if (hb.insurance > 0) comp.push(`insurance of ${fmt(hb.insurance)} per month`);
+    if (hb.hoa > 0) comp.push(`HOA dues of ${fmt(hb.hoa)} per month`);
+    if (hb.utilities > 0) comp.push(`utilities of ${fmt(hb.utilities)} per month`);
+    const compList = comp.length > 1
+      ? comp.slice(0, -1).join('; ') + '; and ' + comp[comp.length - 1]
+      : (comp[0] || '');
+    housingBlock = `
+      <div class="fs-doc-mortgage">
+        <h3>&Dagger; Housing carrying-cost benchmark</h3>
+        <p>The &ldquo;${escHtml(housingRow.name)}&rdquo; line above is <strong>not</strong> valued at the
+        household's mortgage payment. A mortgage payment is a financing choice: most of it repays loan
+        principal, which builds Homeowners' equity, and it disappears entirely once the loan is paid off,
+        even though occupying the home continues to cost the Homeowners something real. To keep Resident's
+        housing contribution stable and tied to actual cost rather than to financing, Resident's share of
+        housing is valued at Resident's portion of the home's ongoing <em>carrying cost</em>, composed of
+        ${compList}, for a total of <strong>${fmt(hb.monthlyCost)} per month</strong>. That carrying cost is
+        then divided among the ${housingRow.participants} household members who occupy the home, so
+        Resident's housing share is ${fmt(hb.monthlyCost)} &divide; ${housingRow.participants} =
+        <strong>${fmt(housingRow.portion)} per month</strong>.</p>
+        <p>This figure is deliberately set at the home's carrying cost and kept <strong>below the fair
+        market rent</strong> for a comparable dwelling. It reimburses the Homeowners for Resident's share of
+        the actual, owner-borne cost of the home &mdash; principally the wear, upkeep, and depreciation of
+        the structure &mdash; and contains no return on the Homeowners' capital or other profit, so it
+        remains cost-sharing rather than rent. The home remains the Homeowners' personal residence occupied
+        by a family member; no rental activity is created. Method: ${escHtml(hb.sourceLabel)}.</p>
+      </div>`;
+  }
+
   return `
   <div class="fs-doc">
     <h1>Household Cost-Sharing Agreement</h1>
@@ -10804,7 +11031,12 @@ function fsAgreementDocHtml() {
       published USDA Cost of Food benchmark for Resident's age and sex &mdash; an
       independently published figure updated monthly by USDA &mdash; plus a stated
       allowance for Resident's share of household supplies, rather than a per-capita
-      fraction of mixed family spending, as detailed in Exhibit&nbsp;A.` : ''}</li>
+      fraction of mixed family spending, as detailed in Exhibit&nbsp;A.` : ''}${hAdj ? `
+      Resident's share of housing is valued at Resident's portion of the home's actual
+      ongoing carrying cost (principally owner-borne maintenance, upkeep, and
+      depreciation), independent of the Homeowners' mortgage financing and set below
+      the fair rental value of the dwelling, so it reimburses real cost without any
+      return on the Homeowners' capital, as detailed in Exhibit&nbsp;A.` : ''}</li>
 
       <li><strong>Monthly contribution.</strong> Based on current costs, Resident's contribution
       is <strong>${fmt(c.herShare)} per month</strong>${fs.roundDollar ? ' (rounded to the nearest whole dollar)' : ''},
@@ -10870,6 +11102,7 @@ function fsAgreementDocHtml() {
       </table>
       ${adjBlock}
       ${usdaBlock}
+      ${housingBlock}
       <p class="fs-doc-foot">Exact sum of itemized shares: ${fmt(c.herShareExact)}. Amounts are drawn from the
       household budget records as of the date above; expenses classified as personal are omitted.
       Prepared from the household budget maintained by Homeowners. Template for family

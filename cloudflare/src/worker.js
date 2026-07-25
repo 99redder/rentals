@@ -1204,6 +1204,27 @@ function fairShareFoodBenchmark(fs, expenses) {
   return itemId ? { itemId, amount: Number(fb.amount) } : null;
 }
 
+// Mirror of the frontend fsHousingBenchmark — her housing share is her portion of
+// the home's real carrying cost (maintenance/capital reserve + optional carrying
+// components), decoupled from the mortgage. Returns { itemId, monthlyCost } or null.
+function fairShareHousingBenchmark(fs, expenses) {
+  const h = fs.housingBenchmark;
+  if (!h || !h.enabled) return null;
+  const homeValue = Number(h.homeValue) || 0;
+  const reservePct = Number(h.reservePct) || 0;
+  const reserve = (homeValue > 0 && reservePct > 0) ? (reservePct / 100 * homeValue) / 12 : 0;
+  const monthlyCost = reserve + (Number(h.propertyTax) || 0) + (Number(h.insurance) || 0)
+    + (Number(h.hoa) || 0) + (Number(h.utilities) || 0);
+  if (!(monthlyCost > 0)) return null;
+  let itemId = typeof h.itemId === 'string' ? h.itemId : '';
+  if (!itemId) {
+    const items = Array.isArray(expenses['Mortgage']) ? expenses['Mortgage'] : [];
+    const match = items.find(i => /mortgage/i.test(String(i.name || ''))) || items[0];
+    itemId = match ? match.id : '';
+  }
+  return itemId ? { itemId, monthlyCost } : null;
+}
+
 // Her monthly Fair Share = the sum of her portion of each shared expense.
 function calcFairShareFromBudget(budget) {
   if (!budget || typeof budget !== 'object') return 0;
@@ -1214,6 +1235,7 @@ function calcFairShareFromBudget(budget) {
   const expenses = (budget.expenses && typeof budget.expenses === 'object') ? budget.expenses : {};
   const mAdj = fairShareMortgageExclusion(fs, expenses);
   const fbAdj = fairShareFoodBenchmark(fs, expenses);
+  const hAdj = fairShareHousingBenchmark(fs, expenses);
   let herShare = 0;
   for (const cat of Object.keys(expenses)) {
     const items = Array.isArray(expenses[cat]) ? expenses[cat] : [];
@@ -1224,10 +1246,15 @@ function calcFairShareFromBudget(budget) {
       if (isShared) {
         const participants = fairShareItemParticipants(item, cat, fs, householdSize);
         const amt = Number(item.amount) || 0;
-        const effAmt = (mAdj && item.id === mAdj.itemId) ? Math.max(0, amt - mAdj.principal) : amt;
-        herShare += (fbAdj && item.id === fbAdj.itemId)
-          ? fbAdj.amount
-          : effAmt / participants;
+        if (hAdj && item.id === hAdj.itemId) {
+          // Housing benchmark supersedes the mortgage exclusion on the same item.
+          herShare += hAdj.monthlyCost / participants;
+        } else if (fbAdj && item.id === fbAdj.itemId) {
+          herShare += fbAdj.amount;
+        } else {
+          const effAmt = (mAdj && item.id === mAdj.itemId) ? Math.max(0, amt - mAdj.principal) : amt;
+          herShare += effAmt / participants;
+        }
       }
     }
   }

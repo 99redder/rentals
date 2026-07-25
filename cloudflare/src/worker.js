@@ -2409,7 +2409,7 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
       (Array.isArray(payload.securities) ? payload.securities : [])
         .map(security => [String(security.security_id || ''), security])
     );
-    const positions = (Array.isArray(payload.holdings) ? payload.holdings : [])
+    const returnedPositions = (Array.isArray(payload.holdings) ? payload.holdings : [])
       .slice(0, 500)
       .map(holding => {
         const securityId = String(holding.security_id || '');
@@ -2432,9 +2432,21 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
           priceAsOf: holding.institution_price_as_of || holding.institution_price_datetime || null,
           isCashEquivalent: security.is_cash_equivalent === true,
           optionContract: security.option_contract || null,
+          isCrypto:
+            String(account?.subtype || '').toLowerCase().includes('crypto') ||
+            String(security.type || '').toLowerCase().includes('crypto') ||
+            String(security.subtype || '').toLowerCase().includes('crypto') ||
+            Boolean(holding.unofficial_currency_code),
         };
       })
       .filter(position => position.quantity !== null && position.quantity !== 0);
+    const cryptoPositions = returnedPositions.filter(position => position.isCrypto);
+    const positions = returnedPositions
+      .filter(position => !position.isCrypto)
+      .map(({ isCrypto: _isCrypto, ...position }) => position);
+    const ignoredCryptoTickers = [
+      ...new Set(cryptoPositions.map(position => position.ticker).filter(Boolean)),
+    ];
 
     return jsonResponse({
       ok: true,
@@ -2442,6 +2454,8 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
       fetchedAt: new Date().toISOString(),
       accounts,
       positions,
+      ignoredCryptoTickers,
+      ignoredCryptoCount: cryptoPositions.length,
     }, 200, corsHeaders);
   } catch (error) {
     return jsonResponse({

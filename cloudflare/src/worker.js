@@ -2440,6 +2440,39 @@ function normalizeStockStickiesHoldings(payload, fetchedAt = new Date().toISOStr
       const institutionPrice = hasInstitutionPrice
         ? Number(holding.institution_price)
         : (hasClosePrice ? Number(security.close_price) : null);
+      const hasCostBasis =
+        holding.cost_basis !== null &&
+        holding.cost_basis !== undefined &&
+        holding.cost_basis !== '' &&
+        Number.isFinite(Number(holding.cost_basis));
+      const rawTaxLots = Array.isArray(holding.tax_lots) ? holding.tax_lots : [];
+      const taxLots = rawTaxLots
+        .slice(0, 100)
+        .map(lot => {
+          const nullableNumber = value =>
+            value !== null &&
+            value !== undefined &&
+            value !== '' &&
+            Number.isFinite(Number(value))
+              ? Number(value)
+              : null;
+          const positionType = String(lot?.position_type || '').toUpperCase();
+          return {
+            institutionLotId: lot?.institution_lot_id == null
+              ? null
+              : String(lot.institution_lot_id).slice(0, 160),
+            acquiredAt: lot?.original_purchase_datetime
+              ? String(lot.original_purchase_datetime).slice(0, 40)
+              : null,
+            quantity: nullableNumber(lot?.quantity),
+            purchasePrice: nullableNumber(lot?.purchase_price),
+            costBasis: nullableNumber(lot?.cost_basis),
+            currentValue: nullableNumber(lot?.current_value),
+            positionType: positionType === 'LONG' || positionType === 'SHORT'
+              ? positionType
+              : null,
+          };
+        });
       return {
         accountId: String(holding.account_id || ''),
         accountName: account?.officialName || account?.name || '',
@@ -2453,7 +2486,10 @@ function normalizeStockStickiesHoldings(payload, fetchedAt = new Date().toISOStr
         quantity: Number.isFinite(Number(holding.quantity)) ? Number(holding.quantity) : null,
         institutionPrice,
         institutionValue: Number.isFinite(Number(holding.institution_value)) ? Number(holding.institution_value) : null,
-        costBasis: Number.isFinite(Number(holding.cost_basis)) ? Number(holding.cost_basis) : null,
+        costBasis: hasCostBasis ? Number(holding.cost_basis) : null,
+        taxLotCount: rawTaxLots.length,
+        taxLotsTruncated: rawTaxLots.length > taxLots.length,
+        taxLots,
         priceAsOf:
           holding.institution_price_datetime ||
           holding.institution_price_as_of ||

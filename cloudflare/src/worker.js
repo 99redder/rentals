@@ -16,6 +16,7 @@ const ALLOWED_ORIGIN = 'https://99redder.github.io';
 const STOCK_STICKIES_ORIGINS = new Set([
   'https://stockstickies.com',
   'https://www.stockstickies.com',
+  'https://stock-stickies-mobile.eastern-shore-ai.chatgpt.site',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ]);
@@ -2392,6 +2393,13 @@ function normalizeStockStickiesHoldings(payload, fetchedAt = new Date().toISOStr
       officialName: String(account.official_name || '').slice(0, 160),
       subtype: String(account.subtype || '').slice(0, 80),
       stockStickiesAccount: stockStickiesAccountId(account),
+      currentBalance: Number.isFinite(Number(account?.balances?.current))
+        ? Number(account.balances.current)
+        : null,
+      availableBalance: Number.isFinite(Number(account?.balances?.available))
+        ? Number(account.balances.available)
+        : null,
+      isoCurrencyCode: String(account?.balances?.iso_currency_code || '').slice(0, 8),
     }));
   const accountMap = new Map(accounts.map(account => [account.accountId, account]));
   const securityMap = new Map(

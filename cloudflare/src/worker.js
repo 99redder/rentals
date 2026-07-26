@@ -6,6 +6,7 @@ import {
   STOCK_STICKIES_ACCOUNT_IDS,
   aggregateTimeWeightedReturn,
   anchoredInstitutionPerformance,
+  buildStockStickiesCspLedger,
   isRecognizedExternalFlow,
   mergeStockStickiesTransactions,
   modifiedDietzPerformance,
@@ -2401,19 +2402,39 @@ function normalizeStockStickiesInvestmentTransactions(payload) {
     (Array.isArray(payload?.accounts) ? payload.accounts : [])
       .map(account => [String(account?.account_id || ''), stockStickiesAccountId(account)])
   );
+  const securityMap = new Map(
+    (Array.isArray(payload?.securities) ? payload.securities : [])
+      .map(security => [String(security?.security_id || ''), security])
+  );
   return (Array.isArray(payload?.investment_transactions) ? payload.investment_transactions : [])
     .map(transaction => {
       const stockStickiesAccount = accountMap.get(String(transaction?.account_id || ''));
       if (!STOCK_STICKIES_ACCOUNT_IDS.includes(stockStickiesAccount)) return null;
       const amount = Number(transaction?.amount);
       if (!Number.isFinite(amount)) return null;
+      const securityId = transaction?.security_id == null
+        ? null
+        : String(transaction.security_id).slice(0, 160);
+      const security = securityMap.get(String(securityId || '')) || {};
+      const optionContract = security?.option_contract && typeof security.option_contract === 'object'
+        ? {
+            contractType: String(security.option_contract.contract_type || '').toLowerCase().slice(0, 20),
+            expirationDate: security.option_contract.expiration_date
+              ? String(security.option_contract.expiration_date).slice(0, 10)
+              : null,
+            strikePrice: Number.isFinite(Number(security.option_contract.strike_price))
+              ? Number(security.option_contract.strike_price)
+              : null,
+            underlyingSecurityTicker: String(
+              security.option_contract.underlying_security_ticker || ''
+            ).toUpperCase().slice(0, 32),
+          }
+        : null;
       return {
         id: String(transaction?.investment_transaction_id || '').slice(0, 160),
         accountId: String(transaction?.account_id || '').slice(0, 160),
         stockStickiesAccount,
-        securityId: transaction?.security_id == null
-          ? null
-          : String(transaction.security_id).slice(0, 160),
+        securityId,
         date: String(transaction?.date || '').slice(0, 10),
         transactionDatetime: transaction?.transaction_datetime
           ? String(transaction.transaction_datetime).slice(0, 40)
@@ -2421,8 +2442,20 @@ function normalizeStockStickiesInvestmentTransactions(payload) {
         name: String(transaction?.name || '').slice(0, 240),
         amount,
         fees: Number.isFinite(Number(transaction?.fees)) ? Number(transaction.fees) : null,
+        quantity: Number.isFinite(Number(transaction?.quantity)) ? Number(transaction.quantity) : null,
+        price: Number.isFinite(Number(transaction?.price)) ? Number(transaction.price) : null,
         type: String(transaction?.type || '').toLowerCase().slice(0, 40),
         subtype: String(transaction?.subtype || '').toLowerCase().slice(0, 80),
+        ticker: String(security?.ticker_symbol || '').trim().toUpperCase().slice(0, 32),
+        securityType: String(security?.type || '').toLowerCase().slice(0, 80),
+        securitySubtype: String(security?.subtype || '').toLowerCase().slice(0, 80),
+        optionContract,
+        isoCurrencyCode: String(
+          transaction?.iso_currency_code || security?.iso_currency_code || ''
+        ).slice(0, 8),
+        unofficialCurrencyCode: String(
+          transaction?.unofficial_currency_code || security?.unofficial_currency_code || ''
+        ).slice(0, 32),
         cancelTransactionId: transaction?.cancel_transaction_id == null
           ? null
           : String(transaction.cancel_transaction_id).slice(0, 160),
@@ -2433,7 +2466,9 @@ function normalizeStockStickiesInvestmentTransactions(payload) {
 
 async function refreshStockStickiesInvestmentTransactions(env, year) {
   const { accessToken } = await findRobinhoodPlaidItem(env);
-  const startDate = `${year}-01-01`;
+  // Include the prior year so a put opened in December and closed/assigned in
+  // the requested year retains its opening premium and lot history.
+  const startDate = `${year - 1}-01-01`;
   const endDate = easternDateKey();
   const transactionsById = new Map();
   let offset = 0;
@@ -2469,7 +2504,9 @@ async function refreshStockStickiesInvestmentTransactions(env, year) {
       .map(transaction => transaction.cancelTransactionId)
   );
   const data = {
+    schemaVersion: 2,
     year,
+    historyStartDate: startDate,
     fetchedAt: new Date().toISOString(),
     transactions: allTransactions
       .filter(transaction =>
@@ -2491,7 +2528,11 @@ async function getStockStickiesInvestmentTransactions(env, year, force = false) 
   const key = `${STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX}${year}`;
   const cached = await env.RENTALS.get(key, 'json');
   const fetchedDate = cached?.fetchedAt ? easternDateKey(new Date(cached.fetchedAt)) : '';
-  if (!force && cached && fetchedDate === easternDateKey()) return { data: cached, warning: '' };
+  if (
+    !force &&
+    cached?.schemaVersion === 2 &&
+    fetchedDate === easternDateKey()
+  ) return { data: cached, warning: '' };
   try {
     return { data: await refreshStockStickiesInvestmentTransactions(env, year), warning: '' };
   } catch (error) {
@@ -2592,10 +2633,19 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
   const allTransactions = Array.isArray(transactionResult.data?.transactions)
     ? transactionResult.data.transactions
     : [];
+  const ytdTransactions = allTransactions.filter(transaction =>
+    String(transaction?.date || '').startsWith(`${year}-`)
+  );
   const manualExternalFlows = normalizeConfiguredStockStickiesExternalFlows(config, year);
   const performanceTransactions = mergeStockStickiesTransactions(
-    allTransactions,
+    ytdTransactions,
     manualExternalFlows
+  );
+  const cspLedger = buildStockStickiesCspLedger(
+    allTransactions,
+    snapshot?.positions,
+    year,
+    endDate
   );
   const openingValues = config?.openingValues?.[String(year)] || {};
   const cashFlowCoverage = config?.cashFlowCoverage?.[String(year)] || {};
@@ -2637,6 +2687,7 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       netExternalFlow: calculation?.netExternalFlow ?? null,
       externalFlowCount: calculation?.externalFlowCount ?? 0,
       transactionCount: transactions.length,
+      csp: cspLedger.accounts[id],
       cashFlowCoverage: coverageSource,
       cashFlowCoverageThrough: cashFlowCoverageThrough[id] || null,
       methodology: anchoredCalculation ? 'institution-reported-anchor' : 'modified-dietz',
@@ -2726,6 +2777,13 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
   if (transactionResult.data?.truncated) {
     warnings.push('The investment activity history exceeded the 10,000-transaction safety limit.');
   }
+  if (cspLedger.unmatchedTransactionCount) {
+    warnings.push(
+      `${cspLedger.unmatchedTransactionCount} put-option transaction` +
+      `${cspLedger.unmatchedTransactionCount === 1 ? '' : 's'} could not be matched to a ` +
+      'short-put lifecycle and were excluded from CSP P&L.'
+    );
+  }
   return {
     year,
     asOf: endDate,
@@ -2753,6 +2811,8 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
     firstSnapshotDate: dates[0] || null,
     lastSnapshotDate: dates.length ? dates[dates.length - 1] : null,
     transactionsAsOf: transactionResult.data?.fetchedAt || null,
+    transactionHistoryStartDate: transactionResult.data?.historyStartDate || `${year}-01-01`,
+    cspLedger,
     warnings,
   };
 }

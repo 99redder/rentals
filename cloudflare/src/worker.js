@@ -97,7 +97,10 @@ export default {
 };
 
 async function handleStockStickiesApi(request, env, url, origin) {
-  const originAllowed = !origin || STOCK_STICKIES_ORIGINS.has(origin);
+  // Installed iOS PWAs can serialize their opaque origin as the literal
+  // string "null". These endpoints still require a valid Firebase bearer
+  // token, so allow that PWA origin while keeping arbitrary sites blocked.
+  const originAllowed = !origin || origin === 'null' || STOCK_STICKIES_ORIGINS.has(origin);
   const corsHeaders = {
     'Access-Control-Allow-Origin': originAllowed && origin ? origin : 'https://www.stockstickies.com',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',

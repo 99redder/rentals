@@ -2531,6 +2531,7 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
     ? transactionResult.data.transactions
     : [];
   const openingValues = config?.openingValues?.[String(year)] || {};
+  const cashFlowCoverage = config?.cashFlowCoverage?.[String(year)] || {};
   const accounts = {};
   for (const id of STOCK_STICKIES_ACCOUNT_IDS) {
     const rawOpening = openingValues[id];
@@ -2538,7 +2539,8 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       ? null
       : Number(rawOpening);
     const transactions = allTransactions.filter(transaction => transaction.stockStickiesAccount === id);
-    const calculation = transactionResult.data && Number.isFinite(openingValue)
+    const hasCompleteCashFlowHistory = cashFlowCoverage[id] !== 'incomplete';
+    const calculation = transactionResult.data && Number.isFinite(openingValue) && hasCompleteCashFlowHistory
       ? modifiedDietzPerformance(openingValue, Number(currentValues[id] || 0), transactions, year, endDate)
       : null;
     accounts[id] = {
@@ -2549,9 +2551,12 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       netExternalFlow: calculation?.netExternalFlow ?? null,
       externalFlowCount: calculation?.externalFlowCount ?? 0,
       transactionCount: transactions.length,
+      cashFlowCoverage: hasCompleteCashFlowHistory ? 'plaid' : 'incomplete',
       status: !Number.isFinite(openingValue)
         ? 'needs-opening-value'
-        : (!transactionResult.data ? 'transactions-unavailable' : 'ready'),
+        : (!transactionResult.data
+            ? 'transactions-unavailable'
+            : (!hasCompleteCashFlowHistory ? 'cash-flow-history-incomplete' : 'ready')),
     };
   }
   const totalOpening = STOCK_STICKIES_ACCOUNT_IDS.reduce(
@@ -2565,10 +2570,19 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
     (sum, id) => sum + accounts[id].currentValue,
     0
   );
-  const totalCalculation = allOpeningValuesPresent && transactionResult.data
+  const incompleteCashFlowAccounts = STOCK_STICKIES_ACCOUNT_IDS.filter(
+    id => accounts[id].status === 'cash-flow-history-incomplete'
+  );
+  const totalCalculation = allOpeningValuesPresent && transactionResult.data && !incompleteCashFlowAccounts.length
     ? modifiedDietzPerformance(totalOpening, totalCurrent, allTransactions, year, endDate)
     : null;
   const warnings = [transactionResult.warning].filter(Boolean);
+  if (incompleteCashFlowAccounts.length) {
+    warnings.push(
+      `YTD performance is hidden for ${incompleteCashFlowAccounts.join(', ')} because Plaid did not provide ` +
+      'the account’s 2026 deposits and withdrawals. A balance change alone is not investment performance.'
+    );
+  }
   const unclassifiedTransferCount = allTransactions.filter(transaction =>
     transaction.type === 'transfer' &&
     !isRecognizedExternalFlow(transaction)
@@ -2598,7 +2612,9 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       transactionCount: allTransactions.length,
       status: !allOpeningValuesPresent
         ? 'needs-opening-value'
-        : (!transactionResult.data ? 'transactions-unavailable' : 'ready'),
+        : (!transactionResult.data
+            ? 'transactions-unavailable'
+            : (incompleteCashFlowAccounts.length ? 'cash-flow-history-incomplete' : 'ready')),
     },
     snapshotCount: dates.length,
     firstSnapshotDate: dates[0] || null,

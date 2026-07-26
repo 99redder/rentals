@@ -2397,10 +2397,16 @@ function normalizeStockStickiesHoldings(payload, fetchedAt = new Date().toISOStr
       officialName: String(account.official_name || '').slice(0, 160),
       subtype: String(account.subtype || '').slice(0, 80),
       stockStickiesAccount: stockStickiesAccountId(account),
-      currentBalance: Number.isFinite(Number(account?.balances?.current))
+      currentBalance: account?.balances?.current !== null
+        && account?.balances?.current !== undefined
+        && account?.balances?.current !== ''
+        && Number.isFinite(Number(account.balances.current))
         ? Number(account.balances.current)
         : null,
-      availableBalance: Number.isFinite(Number(account?.balances?.available))
+      availableBalance: account?.balances?.available !== null
+        && account?.balances?.available !== undefined
+        && account?.balances?.available !== ''
+        && Number.isFinite(Number(account.balances.available))
         ? Number(account.balances.available)
         : null,
       isoCurrencyCode: String(account?.balances?.iso_currency_code || '').slice(0, 8),

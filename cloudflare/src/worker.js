@@ -2,6 +2,13 @@
 // All amounts stored and returned in DOLLARS (never cents).
 // KV keys: transactions:{property}, summaries:{property}, defaults:{property}, depreciation:{property}
 
+import {
+  STOCK_STICKIES_ACCOUNT_IDS,
+  isRecognizedExternalFlow,
+  modifiedDietzPerformance,
+  stockStickiesAccountValues,
+} from './performance-calculations.js';
+
 const VALID_PROPERTIES = ['6AL', '95EB', '446BB', '731WO', '4781MC'];
 const MOVE_IN_PURCHASE_PROPERTY = '4781MC';
 
@@ -36,6 +43,9 @@ const MAX_UPSTREAM_JSON_BYTES = 1_000_000;
 const MAX_USDA_PDF_BYTES = 5_000_000;
 const STOCK_STICKIES_HOLDINGS_CACHE_KEY = 'stock_stickies:plaid:robinhood:holdings';
 const STOCK_STICKIES_HOLDINGS_FALLBACK_MAX_AGE_MS = 36 * 60 * 60 * 1000;
+const STOCK_STICKIES_PERFORMANCE_CONFIG_KEY = 'stock_stickies:plaid:robinhood:performance:config';
+const STOCK_STICKIES_PERFORMANCE_SNAPSHOT_PREFIX = 'stock_stickies:plaid:robinhood:performance:snapshots:';
+const STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX = 'stock_stickies:plaid:robinhood:performance:transactions:';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
@@ -134,6 +144,12 @@ async function handleStockStickiesApi(request, env, url, origin) {
   }
   if (url.pathname === '/api/stock-stickies/plaid/holdings' && request.method === 'GET') {
     return handleStockStickiesPlaidHoldings(env, corsHeaders);
+  }
+  if (url.pathname === '/api/stock-stickies/plaid/performance' && request.method === 'GET') {
+    return handleStockStickiesPlaidPerformance(env, corsHeaders);
+  }
+  if (url.pathname === '/api/stock-stickies/plaid/performance' && request.method === 'POST') {
+    return handleSaveStockStickiesPerformanceReconciliation(request, env, corsHeaders);
   }
   return jsonResponse({ ok: false, error: 'Not found' }, 404, corsHeaders);
 }
@@ -2334,6 +2350,264 @@ function stockStickiesAccountId(account) {
   return '';
 }
 
+function easternDateKey(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function stockStickiesPerformanceYear(date = new Date()) {
+  return Number(easternDateKey(date).slice(0, 4));
+}
+
+async function recordStockStickiesPerformanceSnapshot(env, snapshot) {
+  const date = easternDateKey();
+  const year = date.slice(0, 4);
+  const key = `${STOCK_STICKIES_PERFORMANCE_SNAPSHOT_PREFIX}${year}`;
+  const stored = await env.RENTALS.get(key, 'json');
+  const snapshots = stored?.snapshots && typeof stored.snapshots === 'object'
+    ? stored.snapshots
+    : {};
+  const accounts = stockStickiesAccountValues(snapshot);
+  snapshots[date] = {
+    date,
+    fetchedAt: String(snapshot?.fetchedAt || new Date().toISOString()),
+    accounts,
+    total: STOCK_STICKIES_ACCOUNT_IDS.reduce((sum, id) => sum + accounts[id], 0),
+  };
+  const ordered = Object.fromEntries(
+    Object.entries(snapshots)
+      .filter(([snapshotDate]) => snapshotDate.startsWith(`${year}-`))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .slice(-370)
+  );
+  await env.RENTALS.put(key, JSON.stringify({
+    year: Number(year),
+    updatedAt: new Date().toISOString(),
+    snapshots: ordered,
+  }));
+  return ordered[date];
+}
+
+function normalizeStockStickiesInvestmentTransactions(payload) {
+  const accountMap = new Map(
+    (Array.isArray(payload?.accounts) ? payload.accounts : [])
+      .map(account => [String(account?.account_id || ''), stockStickiesAccountId(account)])
+  );
+  return (Array.isArray(payload?.investment_transactions) ? payload.investment_transactions : [])
+    .map(transaction => {
+      const stockStickiesAccount = accountMap.get(String(transaction?.account_id || ''));
+      if (!STOCK_STICKIES_ACCOUNT_IDS.includes(stockStickiesAccount)) return null;
+      const amount = Number(transaction?.amount);
+      if (!Number.isFinite(amount)) return null;
+      return {
+        id: String(transaction?.investment_transaction_id || '').slice(0, 160),
+        accountId: String(transaction?.account_id || '').slice(0, 160),
+        stockStickiesAccount,
+        securityId: transaction?.security_id == null
+          ? null
+          : String(transaction.security_id).slice(0, 160),
+        date: String(transaction?.date || '').slice(0, 10),
+        transactionDatetime: transaction?.transaction_datetime
+          ? String(transaction.transaction_datetime).slice(0, 40)
+          : null,
+        name: String(transaction?.name || '').slice(0, 240),
+        amount,
+        fees: Number.isFinite(Number(transaction?.fees)) ? Number(transaction.fees) : null,
+        type: String(transaction?.type || '').toLowerCase().slice(0, 40),
+        subtype: String(transaction?.subtype || '').toLowerCase().slice(0, 80),
+        cancelTransactionId: transaction?.cancel_transaction_id == null
+          ? null
+          : String(transaction.cancel_transaction_id).slice(0, 160),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function refreshStockStickiesInvestmentTransactions(env, year) {
+  const { accessToken } = await findRobinhoodPlaidItem(env);
+  const startDate = `${year}-01-01`;
+  const endDate = easternDateKey();
+  const transactionsById = new Map();
+  let offset = 0;
+  let total = 0;
+  do {
+    const { ok, status, payload } = await plaidPost(env, '/investments/transactions/get', {
+      access_token: accessToken,
+      start_date: startDate,
+      end_date: endDate,
+      options: { count: 250, offset },
+    });
+    if (!ok) {
+      const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
+      const error = new Error('Robinhood investment activity could not be loaded.');
+      error.code = code;
+      error.status = status;
+      throw error;
+    }
+    const page = normalizeStockStickiesInvestmentTransactions(payload);
+    for (const transaction of page) {
+      const key = transaction.id ||
+        `${transaction.accountId}:${transaction.date}:${transaction.type}:${transaction.amount}:${offset}`;
+      transactionsById.set(key, transaction);
+    }
+    total = Number(payload.total_investment_transactions) || 0;
+    offset += 250;
+  } while (offset < total && offset < 10_000);
+
+  const allTransactions = [...transactionsById.values()];
+  const canceledTransactionIds = new Set(
+    allTransactions
+      .filter(transaction => transaction.type === 'cancel' && transaction.cancelTransactionId)
+      .map(transaction => transaction.cancelTransactionId)
+  );
+  const data = {
+    year,
+    fetchedAt: new Date().toISOString(),
+    transactions: allTransactions
+      .filter(transaction =>
+        transaction.type !== 'cancel' &&
+        !canceledTransactionIds.has(transaction.id)
+      )
+      .sort((left, right) => right.date.localeCompare(left.date))
+      .slice(0, 10_000),
+    truncated: total > 10_000,
+  };
+  await env.RENTALS.put(
+    `${STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX}${year}`,
+    JSON.stringify(data)
+  );
+  return data;
+}
+
+async function getStockStickiesInvestmentTransactions(env, year, force = false) {
+  const key = `${STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX}${year}`;
+  const cached = await env.RENTALS.get(key, 'json');
+  const fetchedDate = cached?.fetchedAt ? easternDateKey(new Date(cached.fetchedAt)) : '';
+  if (!force && cached && fetchedDate === easternDateKey()) return { data: cached, warning: '' };
+  try {
+    return { data: await refreshStockStickiesInvestmentTransactions(env, year), warning: '' };
+  } catch (error) {
+    if (cached) {
+      return {
+        data: cached,
+        warning: 'Investment activity could not be refreshed; the last successful transaction snapshot is being used.',
+      };
+    }
+    return {
+      data: null,
+      warning: error instanceof Error ? error.message : 'Investment activity is unavailable.',
+    };
+  }
+}
+
+async function buildStockStickiesPerformance(env, year, snapshot, options = {}) {
+  const config = await env.RENTALS.get(STOCK_STICKIES_PERFORMANCE_CONFIG_KEY, 'json');
+  const snapshotStore = await env.RENTALS.get(
+    `${STOCK_STICKIES_PERFORMANCE_SNAPSHOT_PREFIX}${year}`,
+    'json'
+  );
+  const snapshots = snapshotStore?.snapshots && typeof snapshotStore.snapshots === 'object'
+    ? snapshotStore.snapshots
+    : {};
+  const dates = Object.keys(snapshots).sort();
+  const endDate = easternDateKey();
+  const latestSnapshot = dates.length ? snapshots[dates[dates.length - 1]] : null;
+  const currentValues = snapshot
+    ? stockStickiesAccountValues(snapshot)
+    : (latestSnapshot?.accounts || Object.fromEntries(
+      STOCK_STICKIES_ACCOUNT_IDS.map(id => [id, 0])
+    ));
+  const transactionResult = await getStockStickiesInvestmentTransactions(
+    env,
+    year,
+    options.forceTransactions === true
+  );
+  const allTransactions = Array.isArray(transactionResult.data?.transactions)
+    ? transactionResult.data.transactions
+    : [];
+  const openingValues = config?.openingValues?.[String(year)] || {};
+  const accounts = {};
+  for (const id of STOCK_STICKIES_ACCOUNT_IDS) {
+    const rawOpening = openingValues[id];
+    const openingValue = rawOpening === null || rawOpening === undefined || rawOpening === ''
+      ? null
+      : Number(rawOpening);
+    const transactions = allTransactions.filter(transaction => transaction.stockStickiesAccount === id);
+    const calculation = transactionResult.data && Number.isFinite(openingValue)
+      ? modifiedDietzPerformance(openingValue, Number(currentValues[id] || 0), transactions, year, endDate)
+      : null;
+    accounts[id] = {
+      openingValue: Number.isFinite(openingValue) ? openingValue : null,
+      currentValue: Number(currentValues[id] || 0),
+      gain: calculation?.gain ?? null,
+      returnPercent: calculation?.returnPercent ?? null,
+      netExternalFlow: calculation?.netExternalFlow ?? null,
+      externalFlowCount: calculation?.externalFlowCount ?? 0,
+      transactionCount: transactions.length,
+      status: !Number.isFinite(openingValue)
+        ? 'needs-opening-value'
+        : (!transactionResult.data ? 'transactions-unavailable' : 'ready'),
+    };
+  }
+  const totalOpening = STOCK_STICKIES_ACCOUNT_IDS.reduce(
+    (sum, id) => sum + (Number(accounts[id].openingValue) || 0),
+    0
+  );
+  const allOpeningValuesPresent = STOCK_STICKIES_ACCOUNT_IDS.every(
+    id => Number.isFinite(accounts[id].openingValue)
+  );
+  const totalCurrent = STOCK_STICKIES_ACCOUNT_IDS.reduce(
+    (sum, id) => sum + accounts[id].currentValue,
+    0
+  );
+  const totalCalculation = allOpeningValuesPresent && transactionResult.data
+    ? modifiedDietzPerformance(totalOpening, totalCurrent, allTransactions, year, endDate)
+    : null;
+  const warnings = [transactionResult.warning].filter(Boolean);
+  const unclassifiedTransferCount = allTransactions.filter(transaction =>
+    transaction.type === 'transfer' &&
+    !isRecognizedExternalFlow(transaction)
+  ).length;
+  if (unclassifiedTransferCount) {
+    warnings.push(
+      `${unclassifiedTransferCount} transfer transaction${unclassifiedTransferCount === 1 ? '' : 's'} ` +
+      'were excluded from external cash flows because Plaid did not identify them as contributions, deposits, distributions, or withdrawals.'
+    );
+  }
+  if (transactionResult.data?.truncated) {
+    warnings.push('The investment activity history exceeded the 10,000-transaction safety limit.');
+  }
+  return {
+    year,
+    asOf: endDate,
+    methodology: 'modified-dietz',
+    reconciled: allOpeningValuesPresent,
+    accounts,
+    total: {
+      openingValue: allOpeningValuesPresent ? totalOpening : null,
+      currentValue: totalCurrent,
+      gain: totalCalculation?.gain ?? null,
+      returnPercent: totalCalculation?.returnPercent ?? null,
+      netExternalFlow: totalCalculation?.netExternalFlow ?? null,
+      externalFlowCount: totalCalculation?.externalFlowCount ?? 0,
+      transactionCount: allTransactions.length,
+      status: !allOpeningValuesPresent
+        ? 'needs-opening-value'
+        : (!transactionResult.data ? 'transactions-unavailable' : 'ready'),
+    },
+    snapshotCount: dates.length,
+    firstSnapshotDate: dates[0] || null,
+    lastSnapshotDate: dates.length ? dates[dates.length - 1] : null,
+    transactionsAsOf: transactionResult.data?.fetchedAt || null,
+    warnings,
+  };
+}
+
 async function handleStockStickiesPlaidStatus(env, corsHeaders) {
   try {
     const { item } = await findRobinhoodPlaidItem(env);
@@ -2535,18 +2809,25 @@ async function refreshStockStickiesHoldingsSnapshot(env) {
   }
   const snapshot = normalizeStockStickiesHoldings(payload);
   await env.RENTALS.put(STOCK_STICKIES_HOLDINGS_CACHE_KEY, JSON.stringify(snapshot));
+  await recordStockStickiesPerformanceSnapshot(env, snapshot);
   return snapshot;
 }
 
 async function runScheduledStockStickiesHoldingsRefresh(env, scheduledTime) {
   try {
     const snapshot = await refreshStockStickiesHoldingsSnapshot(env);
+    const performance = await buildStockStickiesPerformance(
+      env,
+      stockStickiesPerformanceYear(new Date(scheduledTime)),
+      snapshot
+    );
     console.log(JSON.stringify({
       event: 'scheduled_stock_stickies_holdings_refresh',
       scheduledTime: new Date(scheduledTime).toISOString(),
       fetchedAt: snapshot.fetchedAt,
       positionCount: snapshot.positions.length,
       cryptoPositionCount: snapshot.cryptoPositionCount,
+      performanceSnapshotCount: performance.snapshotCount,
     }));
   } catch (error) {
     console.error(JSON.stringify({
@@ -2561,7 +2842,12 @@ async function runScheduledStockStickiesHoldingsRefresh(env, scheduledTime) {
 async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
   try {
     const snapshot = await refreshStockStickiesHoldingsSnapshot(env);
-    return jsonResponse({ ...snapshot, source: 'live' }, 200, corsHeaders);
+    const performance = await buildStockStickiesPerformance(
+      env,
+      stockStickiesPerformanceYear(),
+      snapshot
+    );
+    return jsonResponse({ ...snapshot, performance, source: 'live' }, 200, corsHeaders);
   } catch (error) {
     const code = String(error?.code || 'UNKNOWN_ERROR').slice(0, 80);
     const needsConsent = error?.needsConsent === true;
@@ -2576,8 +2862,14 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
       const fetchedAtMs = Date.parse(String(cached?.fetchedAt || ''));
       const cacheAgeMs = Number.isFinite(fetchedAtMs) ? Date.now() - fetchedAtMs : Infinity;
       if (cached?.ok === true && cacheAgeMs >= 0 && cacheAgeMs <= STOCK_STICKIES_HOLDINGS_FALLBACK_MAX_AGE_MS) {
+        const performance = await buildStockStickiesPerformance(
+          env,
+          stockStickiesPerformanceYear(),
+          cached
+        );
         return jsonResponse({
           ...cached,
+          performance,
           source: 'nightly-cache',
           stale: true,
         }, 200, corsHeaders);
@@ -2591,6 +2883,68 @@ async function handleStockStickiesPlaidHoldings(env, corsHeaders) {
       needsConsent,
     }, needsConsent ? 409 : 502, corsHeaders);
   }
+}
+
+async function handleStockStickiesPlaidPerformance(env, corsHeaders) {
+  try {
+    let snapshot = await env.RENTALS.get(STOCK_STICKIES_HOLDINGS_CACHE_KEY, 'json');
+    if (!snapshot) snapshot = await refreshStockStickiesHoldingsSnapshot(env);
+    const performance = await buildStockStickiesPerformance(
+      env,
+      stockStickiesPerformanceYear(),
+      snapshot
+    );
+    return jsonResponse({ ok: true, performance }, 200, corsHeaders);
+  } catch (error) {
+    return jsonResponse({
+      ok: false,
+      error: error instanceof Error ? error.message : 'YTD performance could not be loaded.',
+    }, 502, corsHeaders);
+  }
+}
+
+async function handleSaveStockStickiesPerformanceReconciliation(request, env, corsHeaders) {
+  let body;
+  try {
+    body = await readJsonLimited(request, MAX_API_REQUEST_BYTES);
+  } catch {
+    return jsonResponse({ ok: false, error: 'Invalid JSON body.' }, 400, corsHeaders);
+  }
+  const year = Number(body?.year);
+  if (!Number.isInteger(year) || year < 2020 || year > stockStickiesPerformanceYear()) {
+    return jsonResponse({ ok: false, error: 'Invalid performance year.' }, 400, corsHeaders);
+  }
+  const submitted = body?.openingValues;
+  if (!submitted || typeof submitted !== 'object' || Array.isArray(submitted)) {
+    return jsonResponse({ ok: false, error: 'Opening account values are required.' }, 400, corsHeaders);
+  }
+  const openingValues = {};
+  for (const id of STOCK_STICKIES_ACCOUNT_IDS) {
+    const value = submitted[id];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1_000_000_000) {
+      return jsonResponse({
+        ok: false,
+        error: `A valid non-negative opening value is required for ${id}.`,
+      }, 400, corsHeaders);
+    }
+    openingValues[id] = Math.round(value * 100) / 100;
+  }
+  const config = await env.RENTALS.get(STOCK_STICKIES_PERFORMANCE_CONFIG_KEY, 'json') || {};
+  const nextConfig = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    openingValues: {
+      ...(config.openingValues || {}),
+      [String(year)]: openingValues,
+    },
+  };
+  await env.RENTALS.put(STOCK_STICKIES_PERFORMANCE_CONFIG_KEY, JSON.stringify(nextConfig));
+  let snapshot = await env.RENTALS.get(STOCK_STICKIES_HOLDINGS_CACHE_KEY, 'json');
+  if (!snapshot) snapshot = await refreshStockStickiesHoldingsSnapshot(env);
+  const performance = await buildStockStickiesPerformance(env, year, snapshot, {
+    forceTransactions: true,
+  });
+  return jsonResponse({ ok: true, performance }, 200, corsHeaders);
 }
 
 // Bank-connection failures we can describe in plain language. Anything that

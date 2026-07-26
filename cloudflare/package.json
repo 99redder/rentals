@@ -2,9 +2,11 @@
   "name": "stuff",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "node --test src/performance-calculations.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.110.0"

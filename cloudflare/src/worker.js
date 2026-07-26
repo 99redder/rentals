@@ -4,6 +4,7 @@
 
 import {
   STOCK_STICKIES_ACCOUNT_IDS,
+  anchoredInstitutionPerformance,
   isRecognizedExternalFlow,
   mergeStockStickiesTransactions,
   modifiedDietzPerformance,
@@ -2542,6 +2543,29 @@ function normalizeConfiguredStockStickiesExternalFlows(config, year) {
     .filter(Boolean);
 }
 
+function configuredStockStickiesPerformanceAnchor(config, year, account) {
+  const configured = config?.performanceReconciliations?.[String(year)]?.[account];
+  if (!configured || typeof configured !== 'object') return null;
+  const reportedGain = Number(configured.reportedGain);
+  const reportedRealizedGain = Number(configured.reportedRealizedGain);
+  const anchorValue = Number(configured.anchorValue);
+  const asOf = String(configured.asOf || '').slice(0, 10);
+  if (
+    !Number.isFinite(reportedGain) ||
+    !Number.isFinite(anchorValue) ||
+    !Number.isFinite(Date.parse(`${asOf}T12:00:00Z`))
+  ) return null;
+  return {
+    reportedGain,
+    reportedRealizedGain: Number.isFinite(reportedRealizedGain)
+      ? reportedRealizedGain
+      : null,
+    anchorValue,
+    asOf,
+    source: String(configured.source || 'institution-reported').slice(0, 120),
+  };
+}
+
 async function buildStockStickiesPerformance(env, year, snapshot, options = {}) {
   const config = await env.RENTALS.get(STOCK_STICKIES_PERFORMANCE_CONFIG_KEY, 'json');
   const snapshotStore = await env.RENTALS.get(
@@ -2589,16 +2613,39 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
     const calculation = transactionResult.data && Number.isFinite(openingValue) && hasCompleteCashFlowHistory
       ? modifiedDietzPerformance(openingValue, Number(currentValues[id] || 0), transactions, year, endDate)
       : null;
+    const performanceAnchor = configuredStockStickiesPerformanceAnchor(config, year, id);
+    const anchoredCalculation = performanceAnchor && hasCompleteCashFlowHistory
+      ? anchoredInstitutionPerformance(
+          performanceAnchor.reportedGain,
+          performanceAnchor.anchorValue,
+          Number(currentValues[id] || 0),
+          transactions,
+          performanceAnchor.asOf,
+          endDate
+        )
+      : null;
+    const gain = anchoredCalculation?.gain ?? calculation?.gain ?? null;
     accounts[id] = {
       openingValue: Number.isFinite(openingValue) ? openingValue : null,
       currentValue: Number(currentValues[id] || 0),
-      gain: calculation?.gain ?? null,
-      returnPercent: calculation?.returnPercent ?? null,
+      gain,
+      returnPercent: anchoredCalculation ? null : calculation?.returnPercent ?? null,
       netExternalFlow: calculation?.netExternalFlow ?? null,
       externalFlowCount: calculation?.externalFlowCount ?? 0,
       transactionCount: transactions.length,
       cashFlowCoverage: coverageSource,
       cashFlowCoverageThrough: cashFlowCoverageThrough[id] || null,
+      methodology: anchoredCalculation ? 'institution-reported-anchor' : 'modified-dietz',
+      reconciliationAsOf: anchoredCalculation ? performanceAnchor.asOf : null,
+      reconciliationSource: anchoredCalculation ? performanceAnchor.source : null,
+      reportedRealizedGain: anchoredCalculation ? performanceAnchor.reportedRealizedGain : null,
+      impliedUnrealizedAndOtherGain: anchoredCalculation &&
+        Number.isFinite(performanceAnchor.reportedRealizedGain)
+        ? gain - performanceAnchor.reportedRealizedGain
+        : null,
+      valueChangeAfterReconciliation: anchoredCalculation?.valueChangeAfterAnchor ?? null,
+      netExternalFlowAfterReconciliation:
+        anchoredCalculation?.netExternalFlowAfterAnchor ?? null,
       status: !Number.isFinite(openingValue)
         ? 'needs-opening-value'
         : (!transactionResult.data
@@ -2622,6 +2669,15 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
   );
   const totalCalculation = allOpeningValuesPresent && transactionResult.data && !incompleteCashFlowAccounts.length
     ? modifiedDietzPerformance(totalOpening, totalCurrent, performanceTransactions, year, endDate)
+    : null;
+  const allAccountGainsPresent = STOCK_STICKIES_ACCOUNT_IDS.every(
+    id => Number.isFinite(accounts[id].gain)
+  );
+  const hasInstitutionReportedAccount = STOCK_STICKIES_ACCOUNT_IDS.some(
+    id => accounts[id].methodology === 'institution-reported-anchor'
+  );
+  const reconciledTotalGain = allAccountGainsPresent
+    ? STOCK_STICKIES_ACCOUNT_IDS.reduce((sum, id) => sum + accounts[id].gain, 0)
     : null;
   const warnings = [transactionResult.warning].filter(Boolean);
   if (incompleteCashFlowAccounts.length) {
@@ -2658,14 +2714,18 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
   return {
     year,
     asOf: endDate,
-    methodology: 'modified-dietz',
+    methodology: hasInstitutionReportedAccount
+      ? 'account-sum-with-institution-anchor'
+      : 'modified-dietz',
     reconciled: allOpeningValuesPresent,
     accounts,
     total: {
       openingValue: allOpeningValuesPresent ? totalOpening : null,
       currentValue: totalCurrent,
-      gain: totalCalculation?.gain ?? null,
-      returnPercent: totalCalculation?.returnPercent ?? null,
+      gain: reconciledTotalGain ?? totalCalculation?.gain ?? null,
+      returnPercent: hasInstitutionReportedAccount
+        ? null
+        : totalCalculation?.returnPercent ?? null,
       netExternalFlow: totalCalculation?.netExternalFlow ?? null,
       externalFlowCount: totalCalculation?.externalFlowCount ?? 0,
       transactionCount: performanceTransactions.length,

@@ -69,6 +69,40 @@ export function mergeStockStickiesTransactions(plaidTransactions, manualTransact
   return merged;
 }
 
+export function anchoredInstitutionPerformance(
+  reportedGain,
+  anchorValue,
+  currentValue,
+  transactions,
+  anchorDate,
+  endDate
+) {
+  if (
+    !Number.isFinite(reportedGain) ||
+    !Number.isFinite(anchorValue) ||
+    !Number.isFinite(currentValue)
+  ) return null;
+  const anchorMs = Date.parse(`${anchorDate}T12:00:00Z`);
+  const endMs = Date.parse(`${endDate}T12:00:00Z`);
+  if (!Number.isFinite(anchorMs) || !Number.isFinite(endMs) || endMs < anchorMs) return null;
+  let netExternalFlowAfterAnchor = 0;
+  let externalFlowCountAfterAnchor = 0;
+  for (const transaction of Array.isArray(transactions) ? transactions : []) {
+    const flow = stockStickiesExternalFlow(transaction);
+    const flowMs = Date.parse(`${transaction?.date}T12:00:00Z`);
+    if (flow === null || !Number.isFinite(flowMs) || flowMs <= anchorMs || flowMs > endMs) continue;
+    netExternalFlowAfterAnchor += flow;
+    externalFlowCountAfterAnchor += 1;
+  }
+  const valueChangeAfterAnchor = currentValue - anchorValue;
+  return {
+    gain: reportedGain + valueChangeAfterAnchor - netExternalFlowAfterAnchor,
+    valueChangeAfterAnchor,
+    netExternalFlowAfterAnchor,
+    externalFlowCountAfterAnchor,
+  };
+}
+
 export function modifiedDietzPerformance(openingValue, endingValue, transactions, year, endDate) {
   if (!Number.isFinite(openingValue) || !Number.isFinite(endingValue)) return null;
   const startMs = Date.parse(`${year}-01-01T12:00:00Z`);

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  anchoredInstitutionPerformance,
   mergeStockStickiesTransactions,
   modifiedDietzPerformance,
   stockStickiesAccountValues,
@@ -41,6 +42,25 @@ test('manual reconciliation replaces Plaid external flows without removing trade
     mergeStockStickiesTransactions(plaid, manual).map(transaction => transaction.id),
     ['buy-1', 'roth-deposit', 'manual-deposit', 'manual-withdrawal']
   );
+});
+
+test('institution-reported performance rolls forward without treating later deposits as gains', () => {
+  const result = anchoredInstitutionPerformance(
+    1561.47,
+    13173.692,
+    14273.692,
+    [
+      { date: '2026-07-27', subtype: 'deposit', amount: -500 },
+      { date: '2026-07-27', subtype: 'dividend', amount: -25 },
+    ],
+    '2026-07-26',
+    '2026-07-27'
+  );
+
+  assert.ok(Math.abs(result.gain - 2161.47) < 0.000001);
+  assert.equal(result.valueChangeAfterAnchor, 1100);
+  assert.equal(result.netExternalFlowAfterAnchor, 500);
+  assert.equal(result.externalFlowCountAfterAnchor, 1);
 });
 
 test('account balances win over holdings without dropping fallback-only accounts', () => {

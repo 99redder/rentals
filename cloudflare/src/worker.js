@@ -4,6 +4,7 @@
 
 import {
   STOCK_STICKIES_ACCOUNT_IDS,
+  aggregateTimeWeightedReturn,
   anchoredInstitutionPerformance,
   isRecognizedExternalFlow,
   mergeStockStickiesTransactions,
@@ -2682,6 +2683,17 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
   const reconciledTotalGain = allAccountGainsPresent
     ? STOCK_STICKIES_ACCOUNT_IDS.reduce((sum, id) => sum + accounts[id].gain, 0)
     : null;
+  const totalWeightedCapital = STOCK_STICKIES_ACCOUNT_IDS.every(
+    id => Number.isFinite(accounts[id].weightedCapital) && accounts[id].weightedCapital > 0
+  )
+    ? STOCK_STICKIES_ACCOUNT_IDS.reduce(
+        (sum, id) => sum + accounts[id].weightedCapital,
+        0
+      )
+    : null;
+  const reconciledTotalReturnPercent = aggregateTimeWeightedReturn(
+    STOCK_STICKIES_ACCOUNT_IDS.map(id => accounts[id])
+  );
   const warnings = [transactionResult.warning].filter(Boolean);
   if (incompleteCashFlowAccounts.length) {
     warnings.push(
@@ -2726,9 +2738,8 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       openingValue: allOpeningValuesPresent ? totalOpening : null,
       currentValue: totalCurrent,
       gain: reconciledTotalGain ?? totalCalculation?.gain ?? null,
-      returnPercent: hasInstitutionReportedAccount
-        ? null
-        : totalCalculation?.returnPercent ?? null,
+      returnPercent: reconciledTotalReturnPercent ?? totalCalculation?.returnPercent ?? null,
+      weightedCapital: totalWeightedCapital,
       netExternalFlow: totalCalculation?.netExternalFlow ?? null,
       externalFlowCount: totalCalculation?.externalFlowCount ?? 0,
       transactionCount: performanceTransactions.length,

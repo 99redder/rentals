@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  aggregateTimeWeightedReturn,
   anchoredInstitutionPerformance,
   mergeStockStickiesTransactions,
   modifiedDietzPerformance,
@@ -62,6 +63,16 @@ test('institution-reported performance rolls forward without treating later depo
   assert.equal(result.valueChangeAfterAnchor, 1100);
   assert.equal(result.netExternalFlowAfterAnchor, 500);
   assert.equal(result.externalFlowCountAfterAnchor, 1);
+});
+
+test('all-account return weights account gains by their time-weighted capital', () => {
+  const result = aggregateTimeWeightedReturn([
+    { gain: 10, weightedCapital: 100 },
+    { gain: 30, weightedCapital: 300 },
+    { gain: -5, weightedCapital: 100 },
+  ]);
+
+  assert.ok(Math.abs(result - 7) < 0.000001);
 });
 
 test('account balances win over holdings without dropping fallback-only accounts', () => {

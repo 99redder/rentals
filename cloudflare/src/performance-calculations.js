@@ -103,6 +103,18 @@ export function anchoredInstitutionPerformance(
   };
 }
 
+export function aggregateTimeWeightedReturn(accounts) {
+  if (!Array.isArray(accounts) || !accounts.length) return null;
+  if (!accounts.every(account =>
+    Number.isFinite(account?.gain) &&
+    Number.isFinite(account?.weightedCapital) &&
+    account.weightedCapital > 0
+  )) return null;
+  const gain = accounts.reduce((sum, account) => sum + account.gain, 0);
+  const weightedCapital = accounts.reduce((sum, account) => sum + account.weightedCapital, 0);
+  return weightedCapital > 0 ? (gain / weightedCapital) * 100 : null;
+}
+
 export function modifiedDietzPerformance(openingValue, endingValue, transactions, year, endDate) {
   if (!Number.isFinite(openingValue) || !Number.isFinite(endingValue)) return null;
   const startMs = Date.parse(`${year}-01-01T12:00:00Z`);

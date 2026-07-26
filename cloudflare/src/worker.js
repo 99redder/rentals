@@ -16,6 +16,7 @@ const ALLOWED_ORIGIN = 'https://99redder.github.io';
 const STOCK_STICKIES_ORIGINS = new Set([
   'https://stockstickies.com',
   'https://www.stockstickies.com',
+  'https://mobile.stockstickies.com',
   'https://stock-stickies-mobile.eastern-shore-ai.chatgpt.site',
   'http://localhost:5173',
   'http://127.0.0.1:5173',

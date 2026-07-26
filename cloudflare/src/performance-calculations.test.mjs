@@ -18,6 +18,7 @@ test('contributions and withdrawals are separated from investment gain', () => {
   assert.equal(result.netExternalFlow, 10);
   assert.equal(result.externalFlowCount, 2);
   assert.equal(result.gain, 15);
+  assert.ok(result.weightedCapital > 100);
   assert.ok(result.returnPercent > 12 && result.returnPercent < 15);
 });
 

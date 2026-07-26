@@ -2629,7 +2629,10 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       openingValue: Number.isFinite(openingValue) ? openingValue : null,
       currentValue: Number(currentValues[id] || 0),
       gain,
-      returnPercent: anchoredCalculation ? null : calculation?.returnPercent ?? null,
+      returnPercent: anchoredCalculation && Number.isFinite(calculation?.weightedCapital)
+        ? (gain / calculation.weightedCapital) * 100
+        : calculation?.returnPercent ?? null,
+      weightedCapital: calculation?.weightedCapital ?? null,
       netExternalFlow: calculation?.netExternalFlow ?? null,
       externalFlowCount: calculation?.externalFlowCount ?? 0,
       transactionCount: transactions.length,

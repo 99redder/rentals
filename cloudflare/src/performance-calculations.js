@@ -125,6 +125,7 @@ export function modifiedDietzPerformance(openingValue, endingValue, transactions
   return {
     gain,
     returnPercent: denominator > 0 ? (gain / denominator) * 100 : null,
+    weightedCapital: denominator > 0 ? denominator : null,
     netExternalFlow,
     externalFlowCount,
   };

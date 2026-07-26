@@ -5,6 +5,7 @@
 import {
   STOCK_STICKIES_ACCOUNT_IDS,
   isRecognizedExternalFlow,
+  mergeStockStickiesTransactions,
   modifiedDietzPerformance,
   stockStickiesAccountValues,
 } from './performance-calculations.js';
@@ -2505,6 +2506,42 @@ async function getStockStickiesInvestmentTransactions(env, year, force = false) 
   }
 }
 
+function normalizeConfiguredStockStickiesExternalFlows(config, year) {
+  const configured = config?.manualExternalFlows?.[String(year)];
+  if (!Array.isArray(configured)) return [];
+  return configured
+    .map((transaction, index) => {
+      const stockStickiesAccount = String(transaction?.account || '');
+      const subtype = String(transaction?.subtype || '').toLowerCase();
+      const date = String(transaction?.date || '').slice(0, 10);
+      const externalFlow = Number(transaction?.flow);
+      if (
+        !STOCK_STICKIES_ACCOUNT_IDS.includes(stockStickiesAccount) ||
+        !isRecognizedExternalFlow({ subtype }) ||
+        !date.startsWith(`${year}-`) ||
+        !Number.isFinite(Date.parse(`${date}T12:00:00Z`)) ||
+        !Number.isFinite(externalFlow)
+      ) return null;
+      return {
+        id: String(transaction?.id || `manual:${year}:${stockStickiesAccount}:${date}:${index}`).slice(0, 160),
+        accountId: `manual:${stockStickiesAccount}`,
+        stockStickiesAccount,
+        securityId: null,
+        date,
+        transactionDatetime: null,
+        name: String(transaction?.source || 'Manual reconciliation').slice(0, 240),
+        // Keep the normalized records compatible with Plaid's investor-opposite sign convention.
+        amount: -externalFlow,
+        fees: null,
+        type: 'transfer',
+        subtype,
+        cancelTransactionId: null,
+        source: 'manual-reconciliation',
+      };
+    })
+    .filter(Boolean);
+}
+
 async function buildStockStickiesPerformance(env, year, snapshot, options = {}) {
   const config = await env.RENTALS.get(STOCK_STICKIES_PERFORMANCE_CONFIG_KEY, 'json');
   const snapshotStore = await env.RENTALS.get(
@@ -2530,16 +2567,25 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
   const allTransactions = Array.isArray(transactionResult.data?.transactions)
     ? transactionResult.data.transactions
     : [];
+  const manualExternalFlows = normalizeConfiguredStockStickiesExternalFlows(config, year);
+  const performanceTransactions = mergeStockStickiesTransactions(
+    allTransactions,
+    manualExternalFlows
+  );
   const openingValues = config?.openingValues?.[String(year)] || {};
   const cashFlowCoverage = config?.cashFlowCoverage?.[String(year)] || {};
+  const cashFlowCoverageThrough = config?.cashFlowCoverageThrough?.[String(year)] || {};
   const accounts = {};
   for (const id of STOCK_STICKIES_ACCOUNT_IDS) {
     const rawOpening = openingValues[id];
     const openingValue = rawOpening === null || rawOpening === undefined || rawOpening === ''
       ? null
       : Number(rawOpening);
-    const transactions = allTransactions.filter(transaction => transaction.stockStickiesAccount === id);
-    const hasCompleteCashFlowHistory = cashFlowCoverage[id] !== 'incomplete';
+    const transactions = performanceTransactions.filter(
+      transaction => transaction.stockStickiesAccount === id
+    );
+    const coverageSource = String(cashFlowCoverage[id] || 'plaid');
+    const hasCompleteCashFlowHistory = coverageSource !== 'incomplete';
     const calculation = transactionResult.data && Number.isFinite(openingValue) && hasCompleteCashFlowHistory
       ? modifiedDietzPerformance(openingValue, Number(currentValues[id] || 0), transactions, year, endDate)
       : null;
@@ -2551,7 +2597,8 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       netExternalFlow: calculation?.netExternalFlow ?? null,
       externalFlowCount: calculation?.externalFlowCount ?? 0,
       transactionCount: transactions.length,
-      cashFlowCoverage: hasCompleteCashFlowHistory ? 'plaid' : 'incomplete',
+      cashFlowCoverage: coverageSource,
+      cashFlowCoverageThrough: cashFlowCoverageThrough[id] || null,
       status: !Number.isFinite(openingValue)
         ? 'needs-opening-value'
         : (!transactionResult.data
@@ -2574,13 +2621,25 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
     id => accounts[id].status === 'cash-flow-history-incomplete'
   );
   const totalCalculation = allOpeningValuesPresent && transactionResult.data && !incompleteCashFlowAccounts.length
-    ? modifiedDietzPerformance(totalOpening, totalCurrent, allTransactions, year, endDate)
+    ? modifiedDietzPerformance(totalOpening, totalCurrent, performanceTransactions, year, endDate)
     : null;
   const warnings = [transactionResult.warning].filter(Boolean);
   if (incompleteCashFlowAccounts.length) {
     warnings.push(
       `YTD performance is hidden for ${incompleteCashFlowAccounts.join(', ')} because Plaid did not provide ` +
       'the account’s 2026 deposits and withdrawals. A balance change alone is not investment performance.'
+    );
+  }
+  const manualCoverageAccounts = STOCK_STICKIES_ACCOUNT_IDS.filter(
+    id => String(accounts[id].cashFlowCoverage).startsWith('manual')
+  );
+  if (manualCoverageAccounts.length) {
+    warnings.push(
+      `External cash flows for ${manualCoverageAccounts.join(', ')} were reconciled from ` +
+      `institution exports${manualCoverageAccounts.map(id => accounts[id].cashFlowCoverageThrough)
+        .filter(Boolean).length ? ` through ${manualCoverageAccounts.map(id =>
+          accounts[id].cashFlowCoverageThrough
+        ).filter(Boolean).sort().slice(-1)[0]}` : ''}.`
     );
   }
   const unclassifiedTransferCount = allTransactions.filter(transaction =>
@@ -2609,7 +2668,7 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       returnPercent: totalCalculation?.returnPercent ?? null,
       netExternalFlow: totalCalculation?.netExternalFlow ?? null,
       externalFlowCount: totalCalculation?.externalFlowCount ?? 0,
-      transactionCount: allTransactions.length,
+      transactionCount: performanceTransactions.length,
       status: !allOpeningValuesPresent
         ? 'needs-opening-value'
         : (!transactionResult.data
@@ -2947,7 +3006,8 @@ async function handleSaveStockStickiesPerformanceReconciliation(request, env, co
   }
   const config = await env.RENTALS.get(STOCK_STICKIES_PERFORMANCE_CONFIG_KEY, 'json') || {};
   const nextConfig = {
-    version: 1,
+    ...config,
+    version: 2,
     updatedAt: new Date().toISOString(),
     openingValues: {
       ...(config.openingValues || {}),

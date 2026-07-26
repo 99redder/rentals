@@ -45,6 +45,30 @@ export function stockStickiesExternalFlow(transaction) {
   return Number.isFinite(amount) ? -amount : null;
 }
 
+export function mergeStockStickiesTransactions(plaidTransactions, manualTransactions) {
+  const plaid = Array.isArray(plaidTransactions) ? plaidTransactions : [];
+  const manual = Array.isArray(manualTransactions) ? manualTransactions : [];
+  const manuallyReconciledAccounts = new Set(
+    manual
+      .map(transaction => transaction?.stockStickiesAccount)
+      .filter(account => STOCK_STICKIES_ACCOUNT_IDS.includes(account))
+  );
+  const merged = plaid.filter(transaction =>
+    !(
+      manuallyReconciledAccounts.has(transaction?.stockStickiesAccount) &&
+      isRecognizedExternalFlow(transaction)
+    )
+  );
+  const seen = new Set(merged.map(transaction => String(transaction?.id || '')).filter(Boolean));
+  for (const transaction of manual) {
+    const id = String(transaction?.id || '');
+    if (id && seen.has(id)) continue;
+    merged.push(transaction);
+    if (id) seen.add(id);
+  }
+  return merged;
+}
+
 export function modifiedDietzPerformance(openingValue, endingValue, transactions, year, endDate) {
   if (!Number.isFinite(openingValue) || !Number.isFinite(endingValue)) return null;
   const startMs = Date.parse(`${year}-01-01T12:00:00Z`);

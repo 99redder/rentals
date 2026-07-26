@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  mergeStockStickiesTransactions,
   modifiedDietzPerformance,
   stockStickiesAccountValues,
   stockStickiesExternalFlow,
@@ -23,6 +24,23 @@ test('Plaid cash-direction signs convert to investor cash-flow signs', () => {
   assert.equal(stockStickiesExternalFlow({ subtype: 'contribution', amount: -250 }), 250);
   assert.equal(stockStickiesExternalFlow({ subtype: 'distribution', amount: 100 }), -100);
   assert.equal(stockStickiesExternalFlow({ subtype: 'dividend', amount: -12 }), null);
+});
+
+test('manual reconciliation replaces Plaid external flows without removing trades', () => {
+  const plaid = [
+    { id: 'buy-1', stockStickiesAccount: 'individual', subtype: 'buy', amount: 100 },
+    { id: 'plaid-deposit', stockStickiesAccount: 'individual', subtype: 'deposit', amount: -500 },
+    { id: 'roth-deposit', stockStickiesAccount: 'roth', subtype: 'deposit', amount: -1000 },
+  ];
+  const manual = [
+    { id: 'manual-deposit', stockStickiesAccount: 'individual', subtype: 'deposit', amount: -500 },
+    { id: 'manual-withdrawal', stockStickiesAccount: 'individual', subtype: 'withdrawal', amount: 200 },
+  ];
+
+  assert.deepEqual(
+    mergeStockStickiesTransactions(plaid, manual).map(transaction => transaction.id),
+    ['buy-1', 'roth-deposit', 'manual-deposit', 'manual-withdrawal']
+  );
 });
 
 test('account balances win over holdings without dropping fallback-only accounts', () => {

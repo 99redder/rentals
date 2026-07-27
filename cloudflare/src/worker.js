@@ -1853,7 +1853,10 @@ function sanitizeSaleClosingBreakdown(raw) {
   for (const [code, item] of Object.entries(raw.items)) {
     if (!item || typeof item !== 'object') continue;
     const value = Number(item.value);
-    if (!isFinite(value) || value < 0) continue;
+    // Allow negative line values: proration credits paid to the seller are a
+    // credit that reduces net closing costs. The overall total is still
+    // guarded against going negative by the caller.
+    if (!isFinite(value)) continue;
     items[String(code).slice(0, 64)] = {
       label: String(item.label || code).slice(0, 120),
       value,

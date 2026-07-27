@@ -1912,6 +1912,7 @@ const SALE_CLOSING_COSTS = [
   { code: 'mortgageRelease', name: 'Mortgage Payoff / Release Fees', hint: 'Recording/release/admin fees, not loan principal payoff', defaultValue: () => 150 },
   { code: 'sellerCredits', name: 'Seller Credits / Buyer Concessions', hint: 'Repair credits, closing help, negotiated concessions', defaultValue: () => 0 },
   { code: 'repairs', name: 'Pre-Sale Repairs / Final Utilities', hint: 'Final seller-paid repairs, utilities, cleanout, etc.', defaultValue: () => 0 },
+  { code: 'prorationCredits', name: 'Seller Proration Credits (received)', hint: 'Prorated tax/HOA/condo credits paid TO the seller at closing — enter as a negative (a credit reduces net closing costs)', defaultValue: () => 0 },
   { code: 'other', name: 'Other Closing Costs', hint: 'Anything else from the settlement statement', defaultValue: () => 0 },
 ];
 
@@ -4374,7 +4375,9 @@ async function renderInvestmentReturn() {
   const finalBreakdownRows = saleCloseout?.saleClosingBreakdown?.items
     ? Object.entries(saleCloseout.saleClosingBreakdown.items)
         .filter(([code, item]) => activeSaleCostCodes.has(code) && item && typeof item.value === 'number' && item.value !== 0)
-        .map(([, item]) => row(`− ${item.label}`, item.value, 'var(--danger)'))
+        .map(([, item]) => item.value < 0
+          ? row(`+ ${item.label}`, Math.abs(item.value), 'var(--success)')
+          : row(`− ${item.label}`, item.value, 'var(--danger)'))
         .join('')
     : '';
 

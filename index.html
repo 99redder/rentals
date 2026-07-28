@@ -4281,6 +4281,11 @@ async function renderInvestmentReturn() {
           ${row('Total Purchase Funding', funding.totalFunding, 'var(--text)', true, true)}
           ${funding.contractPrice ? row('Contract Purchase Price', funding.contractPrice, 'var(--text)') : ''}
           ${funding.contractPrice ? row('Funding vs. Contract Price', -funding.fundingGap, Math.abs(funding.fundingGap) < 1 ? 'var(--success)' : 'var(--danger)', false, true) : ''}
+          ${funding.prepaidCosts > 0 ? `
+            <tr><td colspan="2" style="padding:.5rem .75rem;border-top:2px solid var(--border);font-weight:700;font-size:.82rem;color:var(--text-muted)">Prepaid Costs (outside contract price)</td></tr>
+            ${row('Prepaid Closing / Financing Costs (paid to date)', funding.prepaidCosts, 'var(--text)')}
+            ${row('Total Cash Spent to Date (deposit + prepaid)', funding.cashSpentToDate, 'var(--text)', false, true)}
+          ` : ''}
         </table>
         <div style="padding:.6rem .75rem;border-top:2px solid var(--border);color:var(--text-muted);font-size:.82rem">
           ${escHtml(funding.settlementNote)}. Cash to close is read live from the ${CASH_FLOW_YEAR} Cash Flow expense line
@@ -4516,6 +4521,11 @@ async function renderInvestmentReturn() {
                 <input type="text" inputmode="decimal" id="inv-construction-loan" value="${escAttr(moneyInputValue(cc.loanAmount))}" onblur="formatMoneyInput(this)">
               </div>
               <div class="form-group">
+                <label>Prepaid Closing / Financing Costs ($)</label>
+                <input type="text" inputmode="decimal" id="inv-construction-prepaid" value="${escAttr(moneyInputValue(cc.prepaidCosts))}" onblur="formatMoneyInput(this)">
+                <div style="font-size:.78rem;color:var(--text-muted);margin-top:.2rem">Out-of-pocket fees paid before settlement (e.g. lender appraisal). Tracked separately; not part of the contract-price funding.</div>
+              </div>
+              <div class="form-group">
                 <label>Settlement Note</label>
                 <input type="text" id="inv-construction-note" value="${escAttr(cc.settlementNote)}" placeholder="Delivery/settlement expected later in 2026">
               </div>
@@ -4599,14 +4609,16 @@ async function saveInvestmentConfig() {
   if (PRECONSTRUCTION_DEFAULTS[prop]) {
     const deposit = parseMoney(document.getElementById('inv-construction-deposit')?.value);
     const loanAmount = parseMoney(document.getElementById('inv-construction-loan')?.value);
-    if (!isFinite(deposit) || deposit < 0 || !isFinite(loanAmount) || loanAmount < 0) {
-      errEl.textContent = 'Construction deposit and mortgage amount must be non-negative numbers.';
+    const prepaidCosts = parseMoney(document.getElementById('inv-construction-prepaid')?.value);
+    if (!isFinite(deposit) || deposit < 0 || !isFinite(loanAmount) || loanAmount < 0 || !isFinite(prepaidCosts) || prepaidCosts < 0) {
+      errEl.textContent = 'Construction deposit, mortgage, and prepaid costs must be non-negative numbers.';
       errEl.classList.remove('hidden');
       return;
     }
     configToSave.construction = {
       deposit,
       loanAmount,
+      prepaidCosts,
       settlementNote: (document.getElementById('inv-construction-note')?.value || '').trim(),
       settled: !!document.getElementById('inv-construction-settled')?.checked,
     };
@@ -8957,6 +8969,10 @@ function constructionConfig(prop) {
   return {
     deposit: Number.isFinite(Number(saved.deposit)) ? Number(saved.deposit) : defaults.deposit,
     loanAmount: Number.isFinite(Number(saved.loanAmount)) ? Number(saved.loanAmount) : defaults.loanAmount,
+    // Financing/closing costs prepaid out of pocket before settlement (e.g. the
+    // lender appraisal fee). Tracked separately from the deposit and cash to
+    // close, and NOT part of the contract-price funding reconciliation.
+    prepaidCosts: Number.isFinite(Number(saved.prepaidCosts)) ? Number(saved.prepaidCosts) : 0,
     cashToCloseLabel: defaults.cashToCloseLabel,
     settlementNote: String(saved.settlementNote || defaults.settlementNote),
     settled: saved.settled === true,
@@ -8995,6 +9011,10 @@ function constructionFunding(prop) {
     cashInvested: cfg.deposit,
     cashRemaining: cashToClose.amount,
     totalCashAtSettlement: cfg.deposit + cashToClose.amount,
+    // Cash actually out the door so far = deposit + any prepaid closing costs
+    // (the cash to close is not paid until settlement). Prepaid costs stay out
+    // of totalFunding so the funding-vs-contract reconciliation is unaffected.
+    cashSpentToDate: cfg.deposit + cfg.prepaidCosts,
     contractPrice,
     totalFunding,
     fundingGap: contractPrice ? contractPrice - totalFunding : 0,

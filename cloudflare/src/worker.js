@@ -1771,6 +1771,7 @@ async function handleSaveInvestment(env, property, config) {
     saved.construction = {
       deposit: money(c.deposit),
       loanAmount: money(c.loanAmount),
+      prepaidCosts: money(c.prepaidCosts),
       settlementNote: String(c.settlementNote || '').slice(0, 200),
       settled: c.settled === true,
     };

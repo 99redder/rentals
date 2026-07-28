@@ -4380,6 +4380,20 @@ async function renderInvestmentReturn() {
           : row(`− ${item.label}`, item.value, 'var(--danger)'))
         .join('')
     : '';
+  // Optional full line-by-line settlement detail for tax records — a permanent,
+  // itemized snapshot of every settlement cost (nothing buried in the notes or
+  // merged into the coded "Other" bucket). Renders only when present.
+  const itemizedCosts = Array.isArray(saleCloseout?.itemizedCosts) ? saleCloseout.itemizedCosts : [];
+  const itemizedCostsHtml = itemizedCosts.length ? `
+    <details style="margin-top:.85rem" open>
+      <summary style="cursor:pointer;font-weight:700;font-size:.9rem">Itemized Settlement Costs <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">— full detail for tax records</span></summary>
+      <table style="width:100%;border-collapse:collapse;margin-top:.4rem">
+        ${itemizedCosts.map(it => Number(it.amount) < 0
+          ? row(`${escHtml(it.label)} (credit received)`, Math.abs(Number(it.amount)), 'var(--success)')
+          : row(escHtml(it.label), Number(it.amount), 'var(--text)')).join('')}
+        ${row('Net Selling Costs', saleCloseout.saleClosingCosts, 'var(--danger)', false, true)}
+      </table>
+    </details>` : '';
 
   // ── Sale Closeout card ────────────────────────────────────────────────────
   const closeoutCard = `
@@ -4403,6 +4417,7 @@ async function renderInvestmentReturn() {
             ${mortgagePayoff > 0 ? row(mortgagePayoffLabel, mortgagePayoff, 'var(--danger)') : ''}
             ${row('Final Net Sale Proceeds', netSaleProceeds, 'var(--success)', false, true)}
           </table>
+          ${itemizedCostsHtml}
           ${saleCloseout.notes ? `<div style="margin-top:.6rem;color:var(--text-muted);font-size:.85rem">Notes: ${escHtml(saleCloseout.notes)}</div>` : ''}
         ` : `
           <div style="color:var(--text-muted);font-size:.88rem;margin-bottom:.75rem">

@@ -4228,7 +4228,7 @@ async function renderInvestmentReturn() {
         <div class="stat-sub">Purchase + Closing + Improvements</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Est. Net Proceeds</div>
+        <div class="stat-label">${isSold ? 'Net Proceeds' : 'Est. Net Proceeds'}</div>
         <div class="stat-value" style="color:${netSaleProceeds !== null ? 'var(--success)' : 'var(--text-muted)'}">${netSaleProceeds !== null ? fmt(netSaleProceeds) : '—'}</div>
         <div class="stat-sub">Sale Price − Closing − Taxes</div>
       </div>
@@ -4250,7 +4250,7 @@ async function renderInvestmentReturn() {
 
   const totalReturnCard = `
     <div class="card" style="margin-bottom:1rem">
-      <div class="card-header"><div class="card-title">Total Estimated Return</div></div>
+      <div class="card-header"><div class="card-title">${isSold ? 'Total Return' : 'Total Estimated Return'}</div></div>
       <div class="card-body" style="padding:0">
         <table style="width:100%;border-collapse:collapse">
           ${row('Property Appreciation (Net Proceeds − Invested)', propertyAppreciation, propertyAppreciation !== null && propertyAppreciation >= 0 ? 'var(--success)' : 'var(--danger)')}
@@ -4334,7 +4334,7 @@ async function renderInvestmentReturn() {
           ${row('− Federal Capital Gains Tax (15%)', federalCapGainsTax, 'var(--danger)')}
           ${stateCapGainsPct > 0 ? row(`− MD State/Local Capital Gains Tax (${stateCapGainsPct}%)`, stateCapGainsTax, 'var(--danger)') : ''}
           ${mortgagePayoff > 0 ? row(mortgagePayoffLabel, mortgagePayoff, 'var(--danger)') : ''}
-          ${row('Estimated Net Proceeds', netSaleProceeds, netSaleProceeds !== null ? 'var(--success)' : 'var(--text-muted)', false, true)}
+          ${row(isSold ? 'Final Net Proceeds' : 'Estimated Net Proceeds', netSaleProceeds, netSaleProceeds !== null ? 'var(--success)' : 'var(--text-muted)', false, true)}
         </table>
         ${saleValue === null ? `<div style="padding:.5rem .75rem;color:var(--text-muted);font-size:0.85rem">Enter a final sale price in the Close Out Property Sale card to calculate estimated proceeds.</div>` : ''}
       </div>

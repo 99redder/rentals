@@ -3178,7 +3178,11 @@ async function handleStockStickiesPlaidRefresh(env, corsHeaders) {
       code: String(error?.code || 'UNKNOWN_ERROR').slice(0, 80),
       requestId: String(error?.requestId || '').slice(0, 120),
       needsConsent: error?.code === 'ITEM_LOGIN_REQUIRED',
-    }, error?.code === 'ITEM_LOGIN_REQUIRED' ? 409 : 502, corsHeaders);
+    }, error?.code === 'ITEM_LOGIN_REQUIRED'
+      ? 409
+      : error?.code === 'PLAID_UPSTREAM_TIMEOUT'
+        ? 504
+        : 502, corsHeaders);
   }
 }
 
@@ -3351,7 +3355,21 @@ async function plaidPost(env, path, body) {
     },
     body: JSON.stringify(body),
   });
-  const payload = await readJsonLimited(response, MAX_UPSTREAM_JSON_BYTES);
+  let payload;
+  try {
+    payload = await readJsonLimited(response, MAX_UPSTREAM_JSON_BYTES);
+  } catch {
+    const upstreamError = new Error(
+      response.status === 524
+        ? 'Plaid took too long to complete the Robinhood refresh. No Stock Stickies positions were changed. Wait a few minutes, then try again.'
+        : `Plaid returned an unreadable response (${response.status}).`
+    );
+    upstreamError.code = response.status === 524
+      ? 'PLAID_UPSTREAM_TIMEOUT'
+      : 'PLAID_INVALID_RESPONSE';
+    upstreamError.status = response.status || 502;
+    throw upstreamError;
+  }
   return { ok: response.ok, status: response.status, payload };
 }
 

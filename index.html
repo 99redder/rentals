@@ -337,10 +337,10 @@
     /* ── Tables ─────────────────────────────────────────────────────────── */
     .table-wrap {
       overflow-x: auto;
-      /* Keep horizontal scrolling inside the table so it can't chain to the
-         page — otherwise reaching the scroll edge nudges the whole table and
-         the sticky Year column appears to drift. */
-      overscroll-behavior-x: contain;
+      /* Kill the horizontal rubber-band/overscroll bounce entirely: during an
+         elastic overscroll the sticky Year column bounces with its container
+         and appears to drift. `none` also prevents chaining to the page. */
+      overscroll-behavior-x: none;
     }
 
     table {
@@ -2992,21 +2992,28 @@ async function renderHistorical() {
   const headerCols = allShow.map(c => `<th class="text-right">${escHtml(c.name)}</th>`).join('');
   const totalIncomeIdx = showIncome.length;
 
+  // Totals use the same investment view as the Investment Return tab: income &
+  // expenses per histYearOperating (improvements are capital, and owner-occupied
+  // / partial-rental years drop the personal carrying costs). Category columns
+  // still show the actual recorded amounts, so a year's columns won't always sum
+  // to its Net — the footnote explains why.
   const yearRows = years.map(y => {
     const d = summaries[y];
-    const inc = showIncome.reduce((s, c)    => s + (d[c.code] || 0), 0);
-    const exp = allExpenseShow.reduce((s, c) => s + (d[c.code] || 0), 0);
+    const { income: inc, expense: exp } = histYearOperating(d);
     const net = inc - exp;
     const netClass = net > 0 ? 'amount-income' : net < 0 ? 'amount-expense' : '';
+    const rentalMonths = Number.isFinite(Number(d.rental_months)) ? Number(d.rental_months) : null;
+    const isPartialRental = rentalMonths !== null && rentalMonths > 0 && rentalMonths < 12;
     const cols = allShow.map(c => {
       const v = d[c.code] || 0;
       const isIncome = CAT_TYPE[c.code] === 'income';
       return `<td class="text-right ${v === 0 ? '' : isIncome ? 'amount-income' : 'amount-expense'}">${v === 0 ? '—' : fmtShort(v)}</td>`;
     }).join('');
 
+    const badge = (text) => `<span style="font-size:.6rem;font-weight:700;background:var(--text-muted);color:var(--bg);border-radius:3px;padding:.1rem .3rem;margin-left:.4rem;vertical-align:middle;white-space:nowrap">${text}</span>`;
     const prBadge = d.primary_residence
-      ? `<span style="font-size:.65rem;font-weight:700;background:var(--text-muted);color:var(--bg);border-radius:3px;padding:.1rem .3rem;margin-left:.4rem;vertical-align:middle">PRIMARY RES.</span>`
-      : '';
+      ? badge('PRIMARY RES.')
+      : (isPartialRental ? badge(`RENTAL ${rentalMonths}/12`) : '');
 
     return `
       <tr>
@@ -3048,6 +3055,9 @@ async function renderHistorical() {
           </thead>
           <tbody id="hist-body">${emptyMsg}${yearRows}</tbody>
         </table>
+      </div>
+      <div style="padding:.6rem .9rem;border-top:1px solid var(--border);color:var(--text-muted);font-size:.76rem;line-height:1.5">
+        <strong>Total Income / Expenses / Net use the investment view</strong> (same as the Investment Return tab): improvements count as capital (cost basis), not an operating expense; <em>primary-residence</em> years count only repairs &amp; mortgage interest; <em>partial-rental</em> years (e.g. RENTAL 2/12) prorate the carrying costs to the rental months. The category columns show the actual amounts recorded, so a year's columns won't always add up to its Net.
       </div>
     </div>
 

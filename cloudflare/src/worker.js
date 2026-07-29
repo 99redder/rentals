@@ -47,6 +47,9 @@ const MAX_UPSTREAM_JSON_BYTES = 1_000_000;
 const MAX_USDA_PDF_BYTES = 5_000_000;
 const STOCK_STICKIES_HOLDINGS_CACHE_KEY = 'stock_stickies:plaid:robinhood:holdings';
 const STOCK_STICKIES_HOLDINGS_FALLBACK_MAX_AGE_MS = 36 * 60 * 60 * 1000;
+const STOCK_STICKIES_INVESTMENTS_REFRESH_KEY = 'stock_stickies:plaid:robinhood:investments-refresh';
+const STOCK_STICKIES_INVESTMENTS_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+const STOCK_STICKIES_INVESTMENTS_REFRESH_IN_FLIGHT_MS = 90 * 1000;
 const STOCK_STICKIES_PERFORMANCE_CONFIG_KEY = 'stock_stickies:plaid:robinhood:performance:config';
 const STOCK_STICKIES_PERFORMANCE_SNAPSHOT_PREFIX = 'stock_stickies:plaid:robinhood:performance:snapshots:';
 const STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX = 'stock_stickies:plaid:robinhood:performance:transactions:';
@@ -148,6 +151,9 @@ async function handleStockStickiesApi(request, env, url, origin) {
   }
   if (url.pathname === '/api/stock-stickies/plaid/holdings' && request.method === 'GET') {
     return handleStockStickiesPlaidHoldings(env, corsHeaders);
+  }
+  if (url.pathname === '/api/stock-stickies/plaid/refresh' && request.method === 'POST') {
+    return handleStockStickiesPlaidRefresh(env, corsHeaders);
   }
   if (url.pathname === '/api/stock-stickies/plaid/performance' && request.method === 'GET') {
     return handleStockStickiesPlaidPerformance(env, corsHeaders);
@@ -2834,6 +2840,11 @@ async function handleStockStickiesPlaidStatus(env, corsHeaders) {
       investmentsAvailable: availableProducts.includes('investments'),
       itemId: String(item.item_id || ''),
       institution: 'Robinhood',
+      updateType: String(item.update_type || ''),
+      itemError: item.error ? {
+        code: String(item.error.error_code || item.error.error_type || 'UNKNOWN_ERROR').slice(0, 80),
+        message: String(item.error.display_message || item.error.error_message || '').slice(0, 240),
+      } : null,
     }, 200, corsHeaders);
   } catch (error) {
     return jsonResponse({
@@ -3024,6 +3035,151 @@ async function refreshStockStickiesHoldingsSnapshot(env) {
   await env.RENTALS.put(STOCK_STICKIES_HOLDINGS_CACHE_KEY, JSON.stringify(snapshot));
   await recordStockStickiesPerformanceSnapshot(env, snapshot);
   return snapshot;
+}
+
+function stockStickiesPositionQuantityFingerprint(snapshot) {
+  return JSON.stringify(
+    (Array.isArray(snapshot?.positions) ? snapshot.positions : [])
+      .map(position => ({
+        accountId: String(position.accountId || ''),
+        securityId: String(position.securityId || ''),
+        ticker: String(position.ticker || ''),
+        quantity: Number.isFinite(Number(position.quantity)) ? Number(position.quantity) : null,
+      }))
+      .sort((a, b) =>
+        `${a.accountId}:${a.securityId}:${a.ticker}`.localeCompare(
+          `${b.accountId}:${b.securityId}:${b.ticker}`
+        ))
+  );
+}
+
+function stockStickiesLatestInstitutionTimestamp(snapshot) {
+  const timestamps = (Array.isArray(snapshot?.positions) ? snapshot.positions : [])
+    .map(position => Date.parse(String(position.priceAsOf || '')))
+    .filter(Number.isFinite);
+  return timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
+}
+
+async function handleStockStickiesPlaidRefresh(env, corsHeaders) {
+  const startedAt = new Date();
+  const previousRefresh = await env.RENTALS.get(STOCK_STICKIES_INVESTMENTS_REFRESH_KEY, 'json');
+  const previousStartedMs = Date.parse(String(previousRefresh?.startedAt || ''));
+  const previousCompletedMs = Date.parse(String(previousRefresh?.completedAt || ''));
+  const inFlightAgeMs = Number.isFinite(previousStartedMs)
+    ? startedAt.getTime() - previousStartedMs
+    : Infinity;
+  const completedAgeMs = Number.isFinite(previousCompletedMs)
+    ? startedAt.getTime() - previousCompletedMs
+    : Infinity;
+
+  if (previousRefresh?.status === 'refreshing' && inFlightAgeMs >= 0 &&
+      inFlightAgeMs < STOCK_STICKIES_INVESTMENTS_REFRESH_IN_FLIGHT_MS) {
+    return jsonResponse({
+      ok: false,
+      code: 'REFRESH_IN_PROGRESS',
+      error: 'A Robinhood position refresh is already in progress. Try again shortly.',
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((STOCK_STICKIES_INVESTMENTS_REFRESH_IN_FLIGHT_MS - inFlightAgeMs) / 1000)
+      ),
+    }, 409, corsHeaders);
+  }
+
+  if (previousRefresh?.status === 'completed' && completedAgeMs >= 0 &&
+      completedAgeMs < STOCK_STICKIES_INVESTMENTS_REFRESH_COOLDOWN_MS) {
+    return jsonResponse({
+      ok: false,
+      code: 'REFRESH_COOLDOWN',
+      error: 'Robinhood was refreshed less than five minutes ago. Please wait before requesting another paid refresh.',
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((STOCK_STICKIES_INVESTMENTS_REFRESH_COOLDOWN_MS - completedAgeMs) / 1000)
+      ),
+    }, 429, corsHeaders);
+  }
+
+  const previousSnapshot = await env.RENTALS.get(STOCK_STICKIES_HOLDINGS_CACHE_KEY, 'json');
+  await env.RENTALS.put(STOCK_STICKIES_INVESTMENTS_REFRESH_KEY, JSON.stringify({
+    status: 'refreshing',
+    startedAt: startedAt.toISOString(),
+  }), { expirationTtl: 24 * 60 * 60 });
+
+  try {
+    const { accessToken, item } = await findRobinhoodPlaidItem(env);
+    const { ok, status, payload } = await plaidPost(env, '/investments/refresh', {
+      access_token: accessToken,
+    });
+    if (!ok) {
+      const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
+      const requestId = String(payload.request_id || '').slice(0, 120);
+      const error = new Error(
+        code === 'PRODUCT_NOT_SUPPORTED'
+          ? 'Robinhood does not support Plaid’s on-demand Investments Refresh for this connection.'
+          : code === 'PRODUCT_NOT_ENABLED'
+            ? 'Plaid Investments Refresh is not enabled for this production connection.'
+            : code === 'ITEM_LOGIN_REQUIRED'
+              ? 'Robinhood must be reconnected before positions can be refreshed.'
+              : 'Plaid could not complete a fresh Robinhood position extraction.'
+      );
+      error.code = code;
+      error.status = status;
+      error.requestId = requestId;
+      throw error;
+    }
+
+    const snapshot = await refreshStockStickiesHoldingsSnapshot(env);
+    const performance = await buildStockStickiesPerformance(
+      env,
+      stockStickiesPerformanceYear(),
+      snapshot,
+      { forceTransactions: true }
+    );
+    const completedAt = new Date();
+    const refresh = {
+      requested: true,
+      status: 'completed',
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+      requestId: String(payload.request_id || '').slice(0, 120),
+      itemId: String(item.item_id || ''),
+      positionsChanged:
+        stockStickiesPositionQuantityFingerprint(previousSnapshot) !==
+        stockStickiesPositionQuantityFingerprint(snapshot),
+      previousSnapshotFetchedAt: previousSnapshot?.fetchedAt || null,
+      institutionDataAsOf: stockStickiesLatestInstitutionTimestamp(snapshot),
+      cooldownSeconds: Math.round(STOCK_STICKIES_INVESTMENTS_REFRESH_COOLDOWN_MS / 1000),
+    };
+    await env.RENTALS.put(
+      STOCK_STICKIES_INVESTMENTS_REFRESH_KEY,
+      JSON.stringify(refresh),
+      { expirationTtl: 24 * 60 * 60 }
+    );
+    return jsonResponse({ ...snapshot, performance, refresh, source: 'on-demand-refresh' }, 200, corsHeaders);
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    await env.RENTALS.put(STOCK_STICKIES_INVESTMENTS_REFRESH_KEY, JSON.stringify({
+      status: 'failed',
+      startedAt: startedAt.toISOString(),
+      failedAt,
+      code: String(error?.code || 'UNKNOWN_ERROR').slice(0, 80),
+      requestId: String(error?.requestId || '').slice(0, 120),
+    }), { expirationTtl: 24 * 60 * 60 });
+    console.error(JSON.stringify({
+      event: 'stock_stickies_plaid_refresh_error',
+      status: Number(error?.status) || 0,
+      code: String(error?.code || 'UNKNOWN_ERROR').slice(0, 80),
+      requestId: String(error?.requestId || '').slice(0, 120),
+    }));
+    return jsonResponse({
+      ok: false,
+      error: error instanceof Error
+        ? error.message
+        : 'Robinhood positions could not be refreshed.',
+      code: String(error?.code || 'UNKNOWN_ERROR').slice(0, 80),
+      requestId: String(error?.requestId || '').slice(0, 120),
+      needsConsent: error?.code === 'ITEM_LOGIN_REQUIRED',
+    }, error?.code === 'ITEM_LOGIN_REQUIRED' ? 409 : 502, corsHeaders);
+  }
 }
 
 async function runScheduledStockStickiesHoldingsRefresh(env, scheduledTime) {

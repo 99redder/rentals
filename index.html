@@ -3988,7 +3988,11 @@ async function changeMoveInPurchaseCategory(id, category) {
 
 async function renderTaxSummary() {
   const prop = state.currentProperty;
-  await ensureLoaded(prop, 'transactions');
+  await Promise.all([
+    ensureLoaded(prop, 'transactions'),
+    ensureLoaded(prop, 'investment'),
+    ensureLoaded(prop, 'depreciation'),
+  ]);
 
   const yearTxns = state.data[prop].transactions.filter(t => t.date.startsWith(String(CURRENT_YEAR)));
 
@@ -4017,8 +4021,88 @@ async function renderTaxSummary() {
     ? `<div class="error-msg mb-1">No transactions recorded for ${CURRENT_YEAR}. Add entries first.</div>`
     : '';
 
+  // ── Tax Cheat Sheet (finalized sale) ──────────────────────────────────────
+  // Sale-specific filing figures for a sold property. The Income/Expenses/Net
+  // above are NOT repeated here — only what the category table lacks (the sale
+  // gain breakdown, estimated sale tax, and the depreciation deduction).
+  const inv = state.data[prop].investment || {};
+  const sc = inv.saleCloseout || null;
+  const isSold = !!sc?.closedAt;
+  let taxCheatCard = '';
+  if (isSold) {
+    const dc = state.data[prop].depreciation;
+    const acquired = inv.purchaseDate || dc?.purchaseDate || null;
+    const placedInService = dc?.placedInService || null;
+    const amountRealized = sc.grossAfterClosing;                 // sale price − selling costs
+    const accumDepr = sc.cumulativeDepreciation || 0;
+    const adjBasis = sc.totalCapitalInvested - accumDepr;
+    const totalGain = amountRealized - adjBasis;
+    const ltcg = sc.taxableCapitalGain || 0;                     // remaining LT gain
+    const estSaleTax = (sc.federalCapGainsTax || 0) + (sc.stateCapGainsTax || 0) + (sc.depreciationRecaptureTax || 0);
+    // Disposition-year depreciation: straight-line 27.5yr, mid-month convention
+    // in the month of sale (months allowed = saleMonth − 0.5). Not a ledger
+    // transaction, so it is not in the Expenses table above.
+    let finalYearDepr = 0;
+    if (dc?.costBasis) {
+      const saleMonth = parseInt(String(sc.saleDate || '').slice(5, 7), 10) || 12;
+      finalYearDepr = Math.round((dc.costBasis / 27.5) * ((saleMonth - 0.5) / 12) * 100) / 100;
+    }
+    const stateLabel = SALE_STATE_NAMES[sc.saleState] || sc.saleState || '';
+
+    const sec = t => `<tr><td colspan="2" style="padding:.55rem .75rem;background:var(--surface2);font-weight:700;font-size:.8rem;border-top:1px solid var(--border);text-transform:uppercase;letter-spacing:.02em;color:var(--text-muted)">${t}</td></tr>`;
+    const tr = (l, v, opts = {}) => `<tr><td style="padding:.42rem .75rem;border-bottom:1px solid var(--border);${opts.bold ? 'font-weight:700;' : ''}${opts.indent ? 'padding-left:1.6rem;color:var(--text-muted);' : ''}">${l}</td><td style="padding:.42rem .75rem;border-bottom:1px solid var(--border);text-align:right;${opts.bold ? 'font-weight:700;' : ''}${opts.color ? `color:${opts.color};` : ''}">${v}</td></tr>`;
+
+    taxCheatCard = `
+      <details style="max-width:560px;margin-bottom:1rem;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <summary style="cursor:pointer;padding:.7rem .9rem;background:var(--surface2);font-weight:700;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;list-style:none">
+          <span>🧾 Tax Cheat Sheet — ${escHtml(prop)} sale (${escHtml(String(sc.saleDate || '').slice(0, 4) || CURRENT_YEAR)})</span>
+          <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">click to expand · figures for filing</span>
+        </summary>
+        <div style="padding:0">
+          <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+            ${sec('Property &amp; Filing Facts')}
+            ${tr('Property', '95 East Broadway St, Unit 10, Derry, NH 03038')}
+            ${tr('Acquired', acquired ? fmtDate(acquired) : '—')}
+            ${tr('Placed in service (rental)', placedInService ? fmtDate(placedInService) : '—')}
+            ${tr('Sold / settled', fmtDate(sc.saleDate))}
+            ${tr('Holding period', `Long-term${sc.yearsHeld ? ` · ${sc.yearsHeld.toFixed(1)} yrs` : ''}`)}
+            ${tr('Filing note', `MD-resident return taxes the gain; ${stateLabel} has no income/capital-gains tax`)}
+            ${tr('Cash received at closing (HUD-1)', fmt(189544.16))}
+
+            ${sec('Sale of Rental — Form 4797 / Schedule D')}
+            ${tr('Gross sales price', fmt(sc.salePrice))}
+            ${tr('− Selling expenses', fmt(sc.saleClosingCosts), { color: 'var(--danger)' })}
+            ${tr('= Amount realized', fmt(amountRealized), { bold: true })}
+            ${tr('Cost basis (purchase + closing + improvements)', fmt(sc.totalCapitalInvested))}
+            ${tr('− Accumulated depreciation', fmt(accumDepr), { color: 'var(--danger)' })}
+            ${tr('= Adjusted basis', fmt(adjBasis), { bold: true })}
+            ${tr('Total gain', fmt(totalGain), { bold: true, color: 'var(--success)' })}
+            ${tr('Unrecaptured §1250 gain (taxed ≤25%)', fmt(accumDepr), { indent: true })}
+            ${tr('Long-term capital gain (taxed 0/15/20%)', fmt(ltcg), { indent: true })}
+
+            ${sec('Estimated Tax on the Sale')}
+            ${tr('Federal LT capital gains (15%)', fmt(sc.federalCapGainsTax), { color: 'var(--danger)' })}
+            ${tr('Federal §1250 recapture (25%)', fmt(sc.depreciationRecaptureTax), { color: 'var(--danger)' })}
+            ${tr(`MD state + local (${sc.stateCapGainsPct}%)`, fmt(sc.stateCapGainsTax), { color: 'var(--danger)' })}
+            ${tr('Total est. tax on sale', fmt(estSaleTax), { bold: true, color: 'var(--danger)' })}
+
+            ${sec('Schedule E — not in the totals below')}
+            ${tr('Depreciation deduction (partial year, mid-month — est.)', fmt(finalYearDepr), { color: 'var(--danger)' })}
+          </table>
+          <div style="padding:.7rem .9rem;border-top:2px solid var(--border);color:var(--text-muted);font-size:.8rem;line-height:1.5">
+            <strong>Reminders:</strong> The Income / Expenses / Net below are this year's Schedule E rental operations — add the depreciation deduction above on top of them.
+            No §121 exclusion — it was a rental at sale. Depreciation recapture is taxed up to 25% (unrecaptured §1250).
+            <strong>NIIT (3.8%)</strong> likely applies to the gain over the $250k MFJ MAGI threshold and is <em>not</em> in the estimate above (≈ ${fmt(totalGain * 0.038)}).
+            Expenses include the <strong>$250 move-out cleaning placeholder</strong> (pending final bill). Selling-expense line-by-line detail is on the Investment Return tab's Final Sale Closeout card.
+            All tax figures are estimates at standard rates; actuals depend on your full return — confirm with your CPA.
+          </div>
+        </div>
+      </details>`;
+  }
+
   document.getElementById('app').innerHTML = `
     ${emptyNote}
+    ${taxCheatCard}
     <div class="card" style="max-width:560px">
       <div class="card-header">
         <div class="card-title">Tax Summary — ${prop} — ${CURRENT_YEAR}</div>
@@ -4547,90 +4631,6 @@ async function renderInvestmentReturn() {
       </div>
     </div>`;
 
-  // ── Tax Cheat Sheet (finalized sale) ──────────────────────────────────────
-  // One-stop summary of the numbers needed at tax time for a sold property.
-  // Collapsed by default; sits at the very top of the view.
-  let taxCheatCard = '';
-  if (isSold) {
-    const sc = saleCloseout;
-    const taxYear = String(sc.saleDate || '').slice(0, 4) || String(CURRENT_YEAR);
-    const acquired = inv.purchaseDate || dc?.purchaseDate || null;
-    const placedInService = dc?.placedInService || null;
-    const amountRealized = sc.grossAfterClosing;                 // sale price − selling costs
-    const accumDepr = sc.cumulativeDepreciation || 0;
-    const adjBasis = sc.totalCapitalInvested - accumDepr;
-    const totalGain = amountRealized - adjBasis;
-    const ltcg = sc.taxableCapitalGain || 0;                     // remaining LT gain
-    const estSaleTax = (sc.federalCapGainsTax || 0) + (sc.stateCapGainsTax || 0) + (sc.depreciationRecaptureTax || 0);
-    // Final-year Schedule E operations from the current-year ledger.
-    let schedEIncome = 0, schedEExpense = 0;
-    for (const t of txns) {
-      if (!String(t.date || '').startsWith(taxYear)) continue;
-      if (t.type === 'income') schedEIncome += t.amount; else schedEExpense += t.amount;
-    }
-    // Disposition-year depreciation: straight-line 27.5yr, mid-month convention
-    // in the month of sale (months allowed = saleMonth − 0.5).
-    let finalYearDepr = 0;
-    if (dc?.costBasis) {
-      const saleMonth = parseInt(String(sc.saleDate || '').slice(5, 7), 10) || 12;
-      finalYearDepr = Math.round((dc.costBasis / 27.5) * ((saleMonth - 0.5) / 12) * 100) / 100;
-    }
-    const netRental = schedEIncome - schedEExpense - finalYearDepr;
-    const stateLabel = SALE_STATE_NAMES[sc.saleState] || sc.saleState || '';
-
-    const sec = t => `<tr><td colspan="2" style="padding:.55rem .75rem;background:var(--surface2);font-weight:700;font-size:.8rem;border-top:1px solid var(--border);text-transform:uppercase;letter-spacing:.02em;color:var(--text-muted)">${t}</td></tr>`;
-    const tr = (l, v, opts = {}) => `<tr><td style="padding:.42rem .75rem;border-bottom:1px solid var(--border);${opts.bold ? 'font-weight:700;' : ''}${opts.indent ? 'padding-left:1.6rem;color:var(--text-muted);' : ''}">${l}</td><td style="padding:.42rem .75rem;border-bottom:1px solid var(--border);text-align:right;${opts.bold ? 'font-weight:700;' : ''}${opts.color ? `color:${opts.color};` : ''}">${v}</td></tr>`;
-
-    taxCheatCard = `
-      <details style="margin-bottom:1rem;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <summary style="cursor:pointer;padding:.7rem .9rem;background:var(--surface2);font-weight:700;display:flex;align-items:center;gap:.5rem;list-style:none">
-          <span>🧾 Tax Cheat Sheet — ${escHtml(prop)} (${escHtml(taxYear)})</span>
-          <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">click to expand · figures for filing</span>
-        </summary>
-        <div style="padding:0">
-          <table style="width:100%;border-collapse:collapse;font-size:.9rem">
-            ${sec('Property &amp; Filing Facts')}
-            ${tr('Property', '95 East Broadway St, Unit 10, Derry, NH 03038')}
-            ${tr('Acquired', acquired ? fmtDate(acquired) : '—')}
-            ${tr('Placed in service (rental)', placedInService ? fmtDate(placedInService) : '—')}
-            ${tr('Sold / settled', fmtDate(sc.saleDate))}
-            ${tr('Holding period', `Long-term${sc.yearsHeld ? ` · ${sc.yearsHeld.toFixed(1)} yrs` : ''}`)}
-            ${tr('Filing note', `MD-resident return taxes the gain; ${stateLabel} has no income/capital-gains tax`)}
-            ${tr('Cash received at closing (HUD-1)', fmt(189544.16))}
-
-            ${sec('Sale of Rental — Form 4797 / Schedule D')}
-            ${tr('Gross sales price', fmt(sc.salePrice))}
-            ${tr('− Selling expenses', fmt(sc.saleClosingCosts), { color: 'var(--danger)' })}
-            ${tr('= Amount realized', fmt(amountRealized), { bold: true })}
-            ${tr('Cost basis (purchase + closing + improvements)', fmt(sc.totalCapitalInvested))}
-            ${tr('− Accumulated depreciation', fmt(accumDepr), { color: 'var(--danger)' })}
-            ${tr('= Adjusted basis', fmt(adjBasis), { bold: true })}
-            ${tr('Total gain', fmt(totalGain), { bold: true, color: 'var(--success)' })}
-            ${tr('Unrecaptured §1250 gain (taxed ≤25%)', fmt(accumDepr), { indent: true })}
-            ${tr('Long-term capital gain (taxed 0/15/20%)', fmt(ltcg), { indent: true })}
-
-            ${sec('Estimated Tax on the Sale')}
-            ${tr('Federal LT capital gains (15%)', fmt(sc.federalCapGainsTax), { color: 'var(--danger)' })}
-            ${tr('Federal §1250 recapture (25%)', fmt(sc.depreciationRecaptureTax), { color: 'var(--danger)' })}
-            ${tr(`MD state + local (${sc.stateCapGainsPct}%)`, fmt(sc.stateCapGainsTax), { color: 'var(--danger)' })}
-            ${tr('Total est. tax on sale', fmt(estSaleTax), { bold: true, color: 'var(--danger)' })}
-
-            ${sec(`${taxYear} Rental Operations — Schedule E (final year)`)}
-            ${tr('Rental income', fmt(schedEIncome), { color: 'var(--success)' })}
-            ${tr('Operating expenses', fmt(schedEExpense), { color: 'var(--danger)' })}
-            ${tr('Depreciation (partial year, mid-month — est.)', fmt(finalYearDepr), { color: 'var(--danger)' })}
-            ${tr('Net rental income/(loss)', fmtSigned(netRental), { bold: true })}
-          </table>
-          <div style="padding:.7rem .9rem;border-top:2px solid var(--border);color:var(--text-muted);font-size:.8rem;line-height:1.5">
-            <strong>Reminders:</strong> No §121 exclusion — it was a rental at sale. Depreciation recapture is taxed up to 25% (unrecaptured §1250).
-            <strong>NIIT (3.8%)</strong> likely applies to the gain over the $250k MFJ MAGI threshold and is <em>not</em> included above (≈ ${fmt(totalGain * 0.038)}).
-            Operating expenses include the <strong>$250 move-out cleaning placeholder</strong> (pending final bill). Selling-expense line-by-line detail is in the Itemized Settlement Costs table on the Final Sale Closeout card below.
-            All tax figures are estimates at standard rates; actuals depend on your full return — confirm with your CPA.
-          </div>
-        </div>
-      </details>`;
-  }
-
   document.getElementById('app').innerHTML = `
     <div class="card" style="max-width:2100px">
       <div class="card-header">
@@ -4638,10 +4638,9 @@ async function renderInvestmentReturn() {
         <button class="btn btn-ghost btn-sm no-print" onclick="window.print()">Print</button>
       </div>
       <div class="card-body">
-        ${taxCheatCard}
         ${isSold ? `
           <div style="background:var(--success-light);border:1px solid #86efac;border-radius:6px;padding:.75rem 1rem;margin-bottom:1rem;font-size:0.9rem;color:#166534">
-            Sold on ${fmtDate(saleCloseout.saleDate)}. This property is closed and read-only; all records are historical.
+            Sold on ${fmtDate(saleCloseout.saleDate)}. This property is closed and read-only; all records are historical. See the <strong>Tax Summary</strong> tab for the filing cheat sheet.
           </div>` : (!isConfigured ? `
           <div style="background:var(--warning-bg,#fef9c3);border:1px solid var(--warning-border,#fde68a);border-radius:6px;padding:.75rem 1rem;margin-bottom:1rem;font-size:0.9rem;color:#92400e">
             Enter the purchase price and closing costs below to calculate your all-time investment return.

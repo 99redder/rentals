@@ -4161,6 +4161,29 @@ async function renderTaxSummary() {
 
 // ── View: Investment Return ────────────────────────────────────────────────────
 
+// Operating cash-flow contribution of one historical-year summary toward
+// Investment Return. Two rules keep the return economically honest:
+//  • Improvements are capital (they raise cost basis / sale proceeds), never an
+//    operating expense — otherwise they'd drag the return twice.
+//  • For years the property was the owner's primary residence, income is $0 and
+//    only Repairs & Maintenance + mortgage interest count; the other carrying
+//    costs (taxes, insurance, HOA, utilities, PMI) were the cost of living
+//    there, not investment costs.
+function histYearOperating(d) {
+  if (!d) return { income: 0, expense: 0 };
+  if (d.primary_residence) {
+    return { income: 0, expense: (d.repairs || 0) + (d.mortgage_interest || 0) };
+  }
+  let income = 0, expense = 0;
+  for (const c of CATEGORIES.income) income += (d[c.code] || 0);
+  for (const c of CATEGORIES.expense) {
+    if (c.code === 'improvements') continue;   // capital, tracked in basis
+    expense += (d[c.code] || 0);
+  }
+  expense += (d.mortgage_interest || 0) + (d.pmi || 0);
+  return { income, expense };
+}
+
 async function renderInvestmentReturn() {
   const prop = state.currentProperty;
   const loadKeys = ['transactions', 'summaries', 'depreciation', 'investment'];
@@ -4259,16 +4282,14 @@ async function renderInvestmentReturn() {
   let allYearsIncome = 0, allYearsExpenses = 0;
   const histYears = Object.keys(summs).filter(y => y !== yearStr).sort();
   for (const yr of histYears) {
-    const d = summs[yr];
-    for (const c of CATEGORIES.income)   allYearsIncome   += (d[c.code] || 0);
-    for (const c of CATEGORIES.expense)  allYearsExpenses += (d[c.code] || 0);
-    // Also include hist-only categories (mortgage_interest, pmi)
-    allYearsExpenses += (d.mortgage_interest || 0) + (d.pmi || 0);
+    const { income, expense } = histYearOperating(summs[yr]);
+    allYearsIncome   += income;
+    allYearsExpenses += expense;
   }
   for (const t of txns) {
     if (t.date.startsWith(yearStr)) {
       if (t.type === 'income') allYearsIncome += t.amount;
-      else allYearsExpenses += t.amount;
+      else if (t.category !== 'improvements') allYearsExpenses += t.amount;  // improvements are capital
     }
   }
   const cumNetCashFlow = allYearsIncome - allYearsExpenses;
@@ -4813,14 +4834,14 @@ async function closeOutInvestmentSale() {
   let allYearsIncome = 0, allYearsExpenses = 0;
   for (const [yr, d] of Object.entries(summs)) {
     if (yr === yearStr) continue;
-    for (const c of CATEGORIES.income) allYearsIncome += (d[c.code] || 0);
-    for (const c of CATEGORIES.expense) allYearsExpenses += (d[c.code] || 0);
-    allYearsExpenses += (d.mortgage_interest || 0) + (d.pmi || 0);
+    const { income, expense } = histYearOperating(d);
+    allYearsIncome += income;
+    allYearsExpenses += expense;
   }
   for (const t of txns) {
     if (t.date.startsWith(yearStr)) {
       if (t.type === 'income') allYearsIncome += t.amount;
-      else allYearsExpenses += t.amount;
+      else if (t.category !== 'improvements') allYearsExpenses += t.amount;  // improvements are capital
     }
   }
   const cumNetCashFlow = isPrimaryResidence ? 0 : allYearsIncome - allYearsExpenses;

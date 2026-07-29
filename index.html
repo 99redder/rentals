@@ -3023,8 +3023,7 @@ async function renderHistorical() {
         <td class="text-right amount-expense">${fmtShort(exp)}</td>
         <td class="text-right ${netClass}">${net < 0 ? '−' : ''}${fmtShort(Math.abs(net))}</td>
         <td class="text-right no-print">
-          ${isPropertyClosed(prop) ? '<span style="color:var(--text-muted);font-size:0.82rem">Historical</span>' : `<button class="btn btn-ghost btn-sm" onclick="openEditYear('${y}')">Edit</button>
-          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteYear('${y}')">×</button>`}
+          ${isPropertyClosed(prop) ? '<span style="color:var(--text-muted);font-size:0.82rem">Historical</span>' : `<button class="btn btn-ghost btn-sm" onclick="openEditYear('${y}')">Edit</button>`}
         </td>
       </tr>`;
   }).join('');

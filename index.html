@@ -337,6 +337,10 @@
     /* ── Tables ─────────────────────────────────────────────────────────── */
     .table-wrap {
       overflow-x: auto;
+      /* Keep horizontal scrolling inside the table so it can't chain to the
+         page — otherwise reaching the scroll edge nudges the whole table and
+         the sticky Year column appears to drift. */
+      overscroll-behavior-x: contain;
     }
 
     table {

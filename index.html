@@ -4277,7 +4277,8 @@ async function renderInvestmentReturn() {
     ? '− Mortgage Payoff (linked)'
     : (!isSold && liveMortgage.planned ? '− Mortgage Payoff (planned loan at settlement)' : '− Mortgage Payoff');
 
-  let netSaleProceeds     = null;
+  let netSaleProceeds     = null;   // cash in hand after loan payoff (informational)
+  let returnProceeds      = null;   // proceeds BEFORE loan payoff — the basis for the return
   let saleClosingAmt      = null;
   let federalCapGainsTax  = null;
   let stateCapGainsTax    = null;
@@ -4296,9 +4297,17 @@ async function renderInvestmentReturn() {
     federalCapGainsTax = isSold ? saleCloseout.federalCapGainsTax : Math.max(0, taxableCapitalGain) * 0.15;
     stateCapGainsTax   = isSold ? saleCloseout.stateCapGainsTax : Math.max(0, taxableCapitalGain) * (stateCapGainsPct / 100);
     if (isSold) primaryResidenceExclusion = saleCloseout.primaryResidenceExclusion ?? primaryResidenceExclusion;
+    // The mortgage is financing, not investment return: capital invested is the
+    // FULL purchase price (unleveraged), so the loan you borrowed to buy and
+    // repay at sale is a wash. Subtracting the payoff here while comparing to the
+    // full price would double-count the debt and understate the return. So the
+    // return is measured on proceeds before payoff; cash-in-hand keeps the payoff.
+    returnProceeds = isSold
+      ? saleCloseout.netSaleProceeds + (typeof savedMortgagePayoff === 'number' ? savedMortgagePayoff : 0)
+      : grossAfterClosing - depreciationRecaptureTax - (federalCapGainsTax || 0) - (stateCapGainsTax || 0);
     netSaleProceeds = isSold
       ? saleCloseout.netSaleProceeds - (typeof savedMortgagePayoff === 'number' ? 0 : mortgagePayoff)
-      : grossAfterClosing - depreciationRecaptureTax - (federalCapGainsTax || 0) - (stateCapGainsTax || 0) - mortgagePayoff;
+      : returnProceeds - mortgagePayoff;
   }
 
   // ── All-Years Cash Flow ───────────────────────────────────────────────────
@@ -4319,7 +4328,7 @@ async function renderInvestmentReturn() {
 
   // ── Total Return ──────────────────────────────────────────────────────────
   const hasEnoughData = totalCapitalInvested > 0;
-  const propertyAppreciation = isSold ? saleCloseout.propertyAppreciation : ((netSaleProceeds !== null) ? netSaleProceeds - totalCapitalInvested : null);
+  const propertyAppreciation = isSold ? saleCloseout.propertyAppreciation : ((returnProceeds !== null) ? returnProceeds - totalCapitalInvested : null);
   // Primary residences have no rental cash flow component
   const totalReturn = isSold ? saleCloseout.totalReturn : ((propertyAppreciation !== null)
     ? propertyAppreciation + (PRIMARY_PROPERTIES.has(prop) ? 0 : cumNetCashFlow)
@@ -4484,8 +4493,11 @@ async function renderInvestmentReturn() {
           }
           ${row('− Federal Capital Gains Tax (15%)', federalCapGainsTax, 'var(--danger)')}
           ${stateCapGainsPct > 0 ? row(`− MD State/Local Capital Gains Tax (${stateCapGainsPct}%)`, stateCapGainsTax, 'var(--danger)') : ''}
-          ${mortgagePayoff > 0 ? row(mortgagePayoffLabel, mortgagePayoff, 'var(--danger)') : ''}
-          ${row(isSold ? 'Final Net Proceeds' : 'Estimated Net Proceeds', netSaleProceeds, netSaleProceeds !== null ? 'var(--success)' : 'var(--text-muted)', false, true)}
+          ${row((mortgagePayoff > 0 ? (isSold ? 'Net Proceeds (before loan payoff)' : 'Est. Net Proceeds (before loan payoff)') : (isSold ? 'Final Net Proceeds' : 'Estimated Net Proceeds')), returnProceeds, returnProceeds !== null ? 'var(--success)' : 'var(--text-muted)', mortgagePayoff <= 0, true)}
+          ${mortgagePayoff > 0 ? `
+          ${row(mortgagePayoffLabel + ' (financing — not counted in return)', mortgagePayoff, 'var(--text-muted)')}
+          ${row('Cash to You After Loan Payoff', netSaleProceeds, 'var(--text-muted)', false, false)}
+          ` : ''}
         </table>
         ${saleValue === null ? `<div style="padding:.5rem .75rem;color:var(--text-muted);font-size:0.85rem">Enter a final sale price in the Close Out Property Sale card to calculate estimated proceeds.</div>` : ''}
       </div>
@@ -4852,7 +4864,10 @@ async function closeOutInvestmentSale() {
   const federalCapGainsTax = Math.max(0, taxableCapitalGain) * 0.15;
   const stateCapGainsTax = Math.max(0, taxableCapitalGain) * (stateCapGainsPct / 100);
   const mortgagePayoff = propertyMortgagePayoff(prop).amount;
-  const netSaleProceeds = grossAfterClosing - depreciationRecaptureTax - federalCapGainsTax - stateCapGainsTax - mortgagePayoff;
+  // Return basis excludes the loan payoff (financing is a wash against the full
+  // unleveraged capital invested); cash-in-hand keeps it. See renderInvestmentReturn.
+  const returnProceeds = grossAfterClosing - depreciationRecaptureTax - federalCapGainsTax - stateCapGainsTax;
+  const netSaleProceeds = returnProceeds - mortgagePayoff;
 
   let allYearsIncome = 0, allYearsExpenses = 0;
   for (const [yr, d] of Object.entries(summs)) {
@@ -4868,7 +4883,7 @@ async function closeOutInvestmentSale() {
     }
   }
   const cumNetCashFlow = isPrimaryResidence ? 0 : allYearsIncome - allYearsExpenses;
-  const propertyAppreciation = netSaleProceeds - totalCapitalInvested;
+  const propertyAppreciation = returnProceeds - totalCapitalInvested;
   const totalReturn = propertyAppreciation + cumNetCashFlow;
   const roiPct = (totalReturn / totalCapitalInvested) * 100;
 

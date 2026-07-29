@@ -540,8 +540,27 @@
     }
 
     /* ── Historical Table ───────────────────────────────────────────────── */
-    .hist-table th, .hist-table td { padding: 0.55rem 0.75rem; font-size: 0.82rem; }
-    .hist-table td.year-cell { font-weight: 700; color: var(--text); }
+    /* Separate borders so the sticky Year column paints its background/border
+       cleanly while the rest of the table scrolls under it. */
+    .hist-table { border-collapse: separate; border-spacing: 0; }
+    .hist-table th, .hist-table td { padding: 0.4rem 0.55rem; font-size: 0.78rem; }
+    /* Let long category headers wrap onto multiple lines so each column can be
+       narrow — overrides the global th { white-space: nowrap } that otherwise
+       forces the whole table very wide. */
+    .hist-table th { white-space: normal; vertical-align: bottom; line-height: 1.2; }
+    .hist-table th.text-right { min-width: 3.2rem; }
+    .hist-table td.year-cell { font-weight: 700; color: var(--text); white-space: nowrap; }
+    /* Pin the Year column while scrolling across horizontally. */
+    .hist-table th:first-child,
+    .hist-table td.year-cell {
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      background: var(--surface);
+      border-right: 2px solid var(--border);
+    }
+    .hist-table thead th:first-child { z-index: 3; background: var(--surface2); }
+    .hist-table tbody tr:hover td.year-cell { background: var(--surface2); }
     .hist-table tr.total-row td { font-weight: 700; background: var(--surface2); border-top: 2px solid var(--border); }
 
     /* ── Tax Summary ────────────────────────────────────────────────────── */

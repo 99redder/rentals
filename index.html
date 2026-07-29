@@ -4162,25 +4162,39 @@ async function renderTaxSummary() {
 // ── View: Investment Return ────────────────────────────────────────────────────
 
 // Operating cash-flow contribution of one historical-year summary toward
-// Investment Return. Two rules keep the return economically honest:
+// Investment Return. Rules that keep the return economically honest:
 //  • Improvements are capital (they raise cost basis / sale proceeds), never an
 //    operating expense — otherwise they'd drag the return twice.
-//  • For years the property was the owner's primary residence, income is $0 and
-//    only Repairs & Maintenance + mortgage interest count; the other carrying
-//    costs (taxes, insurance, HOA, utilities, PMI) were the cost of living
-//    there, not investment costs.
+//  • Repairs & Maintenance and mortgage interest count for any period of
+//    ownership (per the chosen primary-residence treatment).
+//  • The remaining carrying costs (taxes, insurance, HOA, utilities, PMI, and
+//    rental operating fees) only count for the portion of the year the property
+//    was actually a rental. `rental_months` (0–12) sets that portion; if it is
+//    absent it defaults to 0 for a flagged primary-residence year, else 12.
+//    A full primary year → income $0 + repairs + mortgage interest only; a full
+//    rental year → everything; a mid-year conversion year → prorated.
 function histYearOperating(d) {
   if (!d) return { income: 0, expense: 0 };
-  if (d.primary_residence) {
-    return { income: 0, expense: (d.repairs || 0) + (d.mortgage_interest || 0) };
+  let rentalMonths = 12;
+  if (Number.isFinite(Number(d.rental_months))) {
+    rentalMonths = Math.min(12, Math.max(0, Number(d.rental_months)));
+  } else if (d.primary_residence) {
+    rentalMonths = 0;
   }
-  let income = 0, expense = 0;
-  for (const c of CATEGORIES.income) income += (d[c.code] || 0);
+  const rentalFrac = rentalMonths / 12;
+
+  // Rent is only earned while it's a rental, so income is $0 in a full primary year.
+  const income = rentalMonths > 0
+    ? CATEGORIES.income.reduce((s, c) => s + (d[c.code] || 0), 0)
+    : 0;
+
+  // Carrying costs that only apply during the rental portion of the year.
+  let carrying = d.pmi || 0;
   for (const c of CATEGORIES.expense) {
-    if (c.code === 'improvements') continue;   // capital, tracked in basis
-    expense += (d[c.code] || 0);
+    if (c.code === 'improvements' || c.code === 'repairs') continue;  // capital / counted in full
+    carrying += (d[c.code] || 0);
   }
-  expense += (d.mortgage_interest || 0) + (d.pmi || 0);
+  const expense = (d.repairs || 0) + (d.mortgage_interest || 0) + carrying * rentalFrac;
   return { income, expense };
 }
 

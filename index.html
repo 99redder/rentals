@@ -4552,15 +4552,21 @@ async function renderInvestmentReturn() {
   // itemized snapshot of every settlement cost (nothing buried in the notes or
   // merged into the coded "Other" bucket). Renders only when present.
   const itemizedCosts = Array.isArray(saleCloseout?.itemizedCosts) ? saleCloseout.itemizedCosts : [];
+  const anyOffHud = itemizedCosts.some(it => it.offHud);
+  const offHudMark = ' <span title="Paid outside settlement — not on the HUD-1" style="color:var(--warning,#b45309);font-weight:700">‡</span>';
   const itemizedCostsHtml = itemizedCosts.length ? `
     <details style="margin-top:.85rem" open>
       <summary style="cursor:pointer;font-weight:700;font-size:.9rem">Itemized Settlement Costs <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">— full detail for tax records</span></summary>
       <table style="width:100%;border-collapse:collapse;margin-top:.4rem">
-        ${itemizedCosts.map(it => Number(it.amount) < 0
-          ? row(`${escHtml(it.label)} (credit received)`, Math.abs(Number(it.amount)), 'var(--success)')
-          : row(escHtml(it.label), Number(it.amount), 'var(--text)')).join('')}
+        ${itemizedCosts.map(it => {
+          const mark = it.offHud ? offHudMark : '';
+          return Number(it.amount) < 0
+            ? row(`${escHtml(it.label)} (credit received)${mark}`, Math.abs(Number(it.amount)), 'var(--success)')
+            : row(`${escHtml(it.label)}${mark}`, Number(it.amount), 'var(--text)');
+        }).join('')}
         ${row('Net Selling Costs', saleCloseout.saleClosingCosts, 'var(--danger)', false, true)}
       </table>
+      ${anyOffHud ? `<div style="padding:.5rem .1rem 0;color:var(--text-muted);font-size:.78rem;line-height:1.5">‡ Paid <strong>outside settlement — not on the HUD-1</strong>. Don't look for these on the settlement statement (paid directly, e.g. to the notary / courier / cleaner).</div>` : ''}
     </details>` : '';
 
   // ── Sale Closeout card ────────────────────────────────────────────────────

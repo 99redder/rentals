@@ -8807,6 +8807,18 @@ function cfAutoExpenseItems() {
     .filter(item => !dismissed.has(item.id));
 }
 
+// IRS/MD quarterly estimated-tax due date for income realized on a given date.
+// Q1 (Jan–Mar) → Apr 15 · Q2 (Apr–May) → Jun 15 · Q3 (Jun–Aug) → Sep 15 ·
+// Q4 (Sep–Dec) → Jan 15 of the next year.
+function estimatedTaxDueDate(saleIso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(saleIso || '')) return '';
+  const [y, m] = saleIso.split('-').map(Number);
+  if (m <= 3) return `${y}-04-15`;
+  if (m <= 5) return `${y}-06-15`;
+  if (m <= 8) return `${y}-09-15`;
+  return `${y + 1}-01-15`;
+}
+
 function cfPropertySaleTaxItems(prop) {
   const sc = state.data[prop]?.investment?.saleCloseout;
   if (!sc?.closedAt) return [];   // only for finalized sales
@@ -8820,20 +8832,22 @@ function cfPropertySaleTaxItems(prop) {
   const agi = Number(state.cfAgi);
   const niitApplies = Number.isFinite(agi) && agi > TP_NIIT_THRESHOLD;
   const mdSurchargeApplies = Number.isFinite(agi) && agi > MD_CG_SURCHARGE_AGI;
+  const dueDate = estimatedTaxDueDate(sc.saleDate);   // quarterly estimated-tax due date for the sale
+  const dueLabel = dueDate ? fmtDate(dueDate) : 'filing';
   const items = [];
   if (federal > 0) items.push({
     id: `auto-sale-tax-fed-${prop}`,
-    auto: true, dismissible: true, date: sc.saleDate || '',
+    auto: true, dismissible: true, date: dueDate || sc.saleDate || '',
     name: `${prop} Federal Sale Taxes (est.)`,
     amount: federal,
-    note: `Federal tax on the ${prop} sale = LTCG (15%) ${fmt(ltcg)} + depreciation recapture (25%) ${fmt(recapture)}.${niitApplies ? ` NIIT (3.8%) also applies at your AGI (${fmt(agi)} > ${fmt(TP_NIIT_THRESHOLD)}) and is not included above.` : ''} Set aside for filing.`
+    note: `Federal tax on the ${prop} sale = LTCG (15%) ${fmt(ltcg)} + depreciation recapture (25%) ${fmt(recapture)}.${niitApplies ? ` NIIT (3.8%) also applies at your AGI (${fmt(agi)} > ${fmt(TP_NIIT_THRESHOLD)}) and is not included above.` : ''} Federal estimated-tax payment due ${dueLabel}.`
   });
   if (stateTax > 0) items.push({
     id: `auto-sale-tax-state-${prop}`,
-    auto: true, dismissible: true, date: sc.saleDate || '',
+    auto: true, dismissible: true, date: dueDate || sc.saleDate || '',
     name: `${prop} State Sale Taxes (est.)`,
     amount: stateTax,
-    note: `Maryland state + local tax on the ${prop} sale (${pct}%).${mdSurchargeApplies ? ` MD 2% capital-gains surcharge also applies at your AGI (${fmt(agi)} > ${fmt(MD_CG_SURCHARGE_AGI)}) and is not included above.` : ''} Set aside for filing.`
+    note: `Maryland state + local tax on the ${prop} sale (${pct}%).${mdSurchargeApplies ? ` MD 2% capital-gains surcharge also applies at your AGI (${fmt(agi)} > ${fmt(MD_CG_SURCHARGE_AGI)}) and is not included above.` : ''} MD estimated-tax payment due ${dueLabel}.`
   });
   return items;
 }

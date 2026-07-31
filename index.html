@@ -8759,15 +8759,46 @@ function cfRobinhoodChecking() {
   return tpN(state.savings?.accounts?.robinhoodChecking);
 }
 
-function cfTotals(autoIncome = []) {
+function cfTotals(autoIncome = [], autoExpenses = []) {
   const income = cfRobinhoodChecking() +
     [...autoIncome, ...(state.cashFlow?.income || [])].reduce((s, item) => s + tpN(item.amount), 0);
-  const expenses = (state.cashFlow?.expenses || []).reduce((s, item) => s + tpN(item.amount), 0);
+  const expenses = [...autoExpenses, ...(state.cashFlow?.expenses || [])].reduce((s, item) => s + tpN(item.amount), 0);
   return { income, expenses, excess: income - expenses };
 }
 
 function cfAutoIncomeItems() {
-  return CASH_FLOW_AUTO_PROCEEDS_PROPS.map(prop => cfPropertySaleProceedsItem(prop));
+  // A finalized sale's proceeds land in the linked bank balance (pinned income),
+  // so don't also project them here — that would double-count. Only unsold
+  // (draft/estimate) properties contribute a projected proceeds line.
+  return CASH_FLOW_AUTO_PROCEEDS_PROPS
+    .filter(prop => !state.data[prop]?.investment?.saleCloseout?.closedAt)
+    .map(prop => cfPropertySaleProceedsItem(prop));
+}
+
+// Finalized sales instead contribute their estimated sale tax as an expense —
+// cash that's earmarked to be paid at filing.
+function cfAutoExpenseItems() {
+  return CASH_FLOW_AUTO_PROCEEDS_PROPS
+    .map(prop => cfPropertySaleTaxItem(prop))
+    .filter(Boolean);
+}
+
+function cfPropertySaleTaxItem(prop) {
+  const sc = state.data[prop]?.investment?.saleCloseout;
+  if (!sc?.closedAt) return null;   // only for finalized sales
+  const fed = sc.federalCapGainsTax || 0;
+  const st  = sc.stateCapGainsTax || 0;
+  const rec = sc.depreciationRecaptureTax || 0;
+  const tax = fed + st + rec;
+  if (tax <= 0) return null;
+  return {
+    id: `auto-sale-tax-${prop}`,
+    auto: true,
+    date: sc.saleDate || '',
+    name: `${prop} Sale Taxes (est.)`,
+    amount: tax,
+    note: `Estimated tax on the ${prop} sale — federal LTCG ${fmt(fed)} + MD state/local ${fmt(st)}${rec ? ` + depreciation recapture ${fmt(rec)}` : ''}. Set aside for filing; NIIT not included.`
+  };
 }
 
 function cfPropertySaleProceedsItem(prop) {
@@ -8844,7 +8875,8 @@ function cfPropertySaleProceedsItem(prop) {
 function _renderCashFlowHtml() {
   const cf = state.cashFlow;
   const autoIncome = cfAutoIncomeItems();
-  const totals = cfTotals(autoIncome);
+  const autoExpenses = cfAutoExpenseItems();
+  const totals = cfTotals(autoIncome, autoExpenses);
   const excessPositive = totals.excess >= 0;
   const stat = (label, value, color, sub = '') => `
     <div style="padding:1rem 1.1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)">
@@ -8864,7 +8896,7 @@ function _renderCashFlowHtml() {
     ${bankSyncBannerHtml()}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.85rem;margin-bottom:1rem">
       ${stat('Income Events', totals.income, 'var(--success)', `1 pinned + ${autoIncome.length} auto + ${cf.income.length} manual`)}
-      ${stat('Expense Events', totals.expenses, 'var(--danger)', `${cf.expenses.length} item${cf.expenses.length === 1 ? '' : 's'}`)}
+      ${stat('Expense Events', totals.expenses, 'var(--danger)', `${autoExpenses.length} auto + ${cf.expenses.length} manual`)}
       <div style="padding:1rem 1.1rem;background:${excessPositive ? 'rgba(16,185,129,.10)' : 'rgba(220,38,38,.08)'};border:1px solid ${excessPositive ? 'rgba(16,185,129,.35)' : 'rgba(220,38,38,.30)'};border-radius:var(--radius)">
         <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:.25rem">${excessPositive ? 'Excess Left Over' : 'Shortfall'}</div>
         <div style="font-size:1.75rem;font-weight:850;line-height:1;color:${excessPositive ? 'var(--success)' : 'var(--danger)'}">${fmtSigned(totals.excess)}</div>
@@ -8873,7 +8905,7 @@ function _renderCashFlowHtml() {
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem;align-items:start">
       ${cfColumnHtml('income', 'Income', 'var(--success)', autoIncome)}
-      ${cfColumnHtml('expenses', 'Expenses', 'var(--danger)')}
+      ${cfColumnHtml('expenses', 'Expenses', 'var(--danger)', autoExpenses)}
     </div>
   `;
 }

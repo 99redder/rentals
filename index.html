@@ -8806,9 +8806,25 @@ function cfAutoIncomeItems() {
 // cash that's earmarked to be paid at filing.
 function cfAutoExpenseItems() {
   const dismissed = new Set(state.cashFlow?.dismissedAuto || []);
-  return CASH_FLOW_AUTO_PROCEEDS_PROPS
-    .flatMap(prop => cfPropertySaleTaxItems(prop))
-    .filter(item => !dismissed.has(item.id));
+  const items = CASH_FLOW_AUTO_PROCEEDS_PROPS.flatMap(prop => cfPropertySaleTaxItems(prop));
+  const critical = cfCriticalSavingsItem();
+  if (critical) items.push(critical);
+  return items.filter(item => !dismissed.has(item.id));
+}
+
+// One rolled-up expense line for every Savings obligation flagged "critical".
+function cfCriticalSavingsItem() {
+  const critical = (state.savings?.obligations || []).filter(o => o.critical);
+  if (!critical.length) return null;
+  const total = critical.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+  if (total <= 0) return null;
+  return {
+    id: 'auto-critical-savings',
+    auto: true, dismissible: true, date: '',
+    name: 'Critical Savings Objectives',
+    amount: total,
+    note: `Total annual amount of ${critical.length} Savings obligation${critical.length === 1 ? '' : 's'} marked critical: ${critical.map(o => `${o.name} (${fmt(o.amount)})`).join(', ')}. Manage these on the Savings tab.`
+  };
 }
 
 // IRS/MD quarterly estimated-tax due date for income realized on a given date.
@@ -10268,8 +10284,12 @@ function _renderSavingsHtml() {
       : `${p.ppy}× / yr`;
     return `<tr style="${p.isDone ? 'opacity:.68' : ''}">
       <td style="padding:.5rem .6rem;border-bottom:1px solid var(--border)">
-        <div style="font-weight:600">${escHtml(o.name)}</div>
-        ${o.note ? `<div style="font-size:.7rem;color:var(--text-muted)">${escHtml(o.note)}</div>` : ''}
+        <div style="font-weight:600;display:flex;align-items:center;gap:.4rem">
+          <button type="button" onclick="savToggleCritical('${escAttr(o.id)}')" title="${o.critical ? 'Unmark critical' : 'Mark critical'}" style="background:none;border:none;cursor:pointer;padding:0;line-height:1;font-size:1.05rem;color:${o.critical ? '#f59e0b' : 'var(--text-muted)'}">${o.critical ? '★' : '☆'}</button>
+          <span>${escHtml(o.name)}</span>
+          ${o.critical ? `<span style="display:inline-block;padding:.06rem .4rem;border-radius:999px;background:rgba(245,158,11,.14);color:#b45309;font-size:.62rem;font-weight:750;text-transform:uppercase;letter-spacing:.02em">Critical</span>` : ''}
+        </div>
+        ${o.note ? `<div style="font-size:.7rem;color:var(--text-muted);margin-left:1.5rem">${escHtml(o.note)}</div>` : ''}
       </td>
       <td style="padding:.5rem .6rem;border-bottom:1px solid var(--border);text-align:right;font-weight:600;white-space:nowrap">${fmt(o.amount)}</td>
       <td style="padding:.5rem .6rem;border-bottom:1px solid var(--border);text-align:center;color:var(--text-muted);font-size:.78rem;white-space:nowrap">${freqLabel}</td>
@@ -10384,6 +10404,14 @@ async function savTogglePaid(id, idx, checked) {
   while (arr.length < ppy) arr.push(false);
   arr[idx] = !!checked;
   state.savings.payments[year][id] = arr;
+  await saveSavings();
+  _renderSavingsHtml();
+}
+
+async function savToggleCritical(id) {
+  const o = state.savings.obligations.find(x => x.id === id);
+  if (!o) return;
+  o.critical = !o.critical;
   await saveSavings();
   _renderSavingsHtml();
 }

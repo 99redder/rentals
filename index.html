@@ -8781,27 +8781,34 @@ function cfAutoIncomeItems() {
 function cfAutoExpenseItems() {
   const dismissed = new Set(state.cashFlow?.dismissedAuto || []);
   return CASH_FLOW_AUTO_PROCEEDS_PROPS
-    .map(prop => cfPropertySaleTaxItem(prop))
-    .filter(item => item && !dismissed.has(item.id));
+    .flatMap(prop => cfPropertySaleTaxItems(prop))
+    .filter(item => !dismissed.has(item.id));
 }
 
-function cfPropertySaleTaxItem(prop) {
+function cfPropertySaleTaxItems(prop) {
   const sc = state.data[prop]?.investment?.saleCloseout;
-  if (!sc?.closedAt) return null;   // only for finalized sales
-  const fed = sc.federalCapGainsTax || 0;
-  const st  = sc.stateCapGainsTax || 0;
-  const rec = sc.depreciationRecaptureTax || 0;
-  const tax = fed + st + rec;
-  if (tax <= 0) return null;
-  return {
-    id: `auto-sale-tax-${prop}`,
-    auto: true,
-    dismissible: true,
-    date: sc.saleDate || '',
-    name: `${prop} Sale Taxes (est.)`,
-    amount: tax,
-    note: `Estimated tax on the ${prop} sale — federal LTCG ${fmt(fed)} + MD state/local ${fmt(st)}${rec ? ` + depreciation recapture ${fmt(rec)}` : ''}. Set aside for filing; NIIT not included.`
-  };
+  if (!sc?.closedAt) return [];   // only for finalized sales
+  const ltcg = sc.federalCapGainsTax || 0;          // federal long-term cap gains (15%)
+  const recapture = sc.depreciationRecaptureTax || 0; // federal §1250 recapture (25%)
+  const federal = ltcg + recapture;
+  const stateTax = sc.stateCapGainsTax || 0;
+  const pct = sc.stateCapGainsPct || 8.95;
+  const items = [];
+  if (federal > 0) items.push({
+    id: `auto-sale-tax-fed-${prop}`,
+    auto: true, dismissible: true, date: sc.saleDate || '',
+    name: `${prop} Federal Sale Taxes (est.)`,
+    amount: federal,
+    note: `Federal tax on the ${prop} sale = LTCG (15%) ${fmt(ltcg)} + depreciation recapture (25%) ${fmt(recapture)}. NIIT (3.8%) not included. Set aside for filing.`
+  });
+  if (stateTax > 0) items.push({
+    id: `auto-sale-tax-state-${prop}`,
+    auto: true, dismissible: true, date: sc.saleDate || '',
+    name: `${prop} State Sale Taxes (est.)`,
+    amount: stateTax,
+    note: `Maryland state + local tax on the ${prop} sale (${pct}%). MD 2% capital-gains surcharge not included. Set aside for filing.`
+  });
+  return items;
 }
 
 function cfPropertySaleProceedsItem(prop) {

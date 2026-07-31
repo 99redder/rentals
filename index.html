@@ -8754,7 +8754,10 @@ async function loadCashFlowDetails() {
     if (MAINTENANCE_BASIS_PROPERTIES.has(prop)) keys.push('maintenance');
     return keys.map(key => ensureLoaded(prop, key));
   }));
-  state.cfAgi = await cfComputeAgi();
+  const taxCtx = await cfComputeAgi();
+  state.cfAgi = taxCtx.agi;
+  state.cfNiit = taxCtx.niit;
+  state.cfMdSurcharge = taxCtx.mdSurcharge;
 }
 
 // Projected AGI from the Tax Planning tab, so the sale-tax lines can flag NIIT /
@@ -8774,8 +8777,9 @@ async function cfComputeAgi() {
       return { prop, income, expenses, net: income - expenses, deprAmt };
     });
     if (tp.rental_depr === undefined) tp.rental_depr = rentalRows.reduce((s, p) => s + p.deprAmt, 0);
-    return tpCalc(tp, rentalRows).agi;
-  } catch { return null; }
+    const r = tpCalc(tp, rentalRows);
+    return { agi: r.agi, niit: r.niit || 0, mdSurcharge: (r.md && r.md.cgSurcharge) || 0 };
+  } catch { return { agi: null, niit: 0, mdSurcharge: 0 }; }
 }
 
 function cfRobinhoodChecking() {
@@ -8829,25 +8833,30 @@ function cfPropertySaleTaxItems(prop) {
   const pct = sc.stateCapGainsPct || 8.95;
   // Flag NIIT / MD-surcharge only when the Tax Planning AGI actually crosses
   // each threshold (NIIT 3.8% over $250k; MD 2% cap-gains surcharge over $350k).
+  // NIIT (federal) and the MD 2% surcharge only apply above their AGI thresholds;
+  // the actual amounts come from the Tax Planning calc (capped by AGI over the
+  // threshold), so they match that tab and are folded into the amount to reserve.
   const agi = Number(state.cfAgi);
-  const niitApplies = Number.isFinite(agi) && agi > TP_NIIT_THRESHOLD;
-  const mdSurchargeApplies = Number.isFinite(agi) && agi > MD_CG_SURCHARGE_AGI;
+  const niit = (Number.isFinite(agi) && agi > TP_NIIT_THRESHOLD) ? (Number(state.cfNiit) || 0) : 0;
+  const mdSurcharge = (Number.isFinite(agi) && agi > MD_CG_SURCHARGE_AGI) ? (Number(state.cfMdSurcharge) || 0) : 0;
+  const federalTotal = federal + niit;
+  const stateTotal = stateTax + mdSurcharge;
   const dueDate = estimatedTaxDueDate(sc.saleDate);   // quarterly estimated-tax due date for the sale
   const dueLabel = dueDate ? fmtDate(dueDate) : 'filing';
   const items = [];
-  if (federal > 0) items.push({
+  if (federalTotal > 0) items.push({
     id: `auto-sale-tax-fed-${prop}`,
     auto: true, dismissible: true, date: dueDate || sc.saleDate || '',
-    name: `${prop} Federal Sale Taxes (est.)`,
-    amount: federal,
-    note: `Federal tax on the ${prop} sale = LTCG (15%) ${fmt(ltcg)} + depreciation recapture (25%) ${fmt(recapture)}.${niitApplies ? ` NIIT (3.8%) also applies at your AGI (${fmt(agi)} > ${fmt(TP_NIIT_THRESHOLD)}) and is not included above.` : ''} Federal estimated-tax payment due ${dueLabel}.`
+    name: `${prop} Federal Sale Taxes`,
+    amount: federalTotal,
+    note: `Federal tax on the ${prop} sale = LTCG (15%) ${fmt(ltcg)} + depreciation recapture (25%) ${fmt(recapture)}${niit > 0 ? ` + NIIT (3.8%) ${fmt(niit)} [AGI ${fmt(agi)} > ${fmt(TP_NIIT_THRESHOLD)}]` : ''}. Federal estimated-tax payment due ${dueLabel}.`
   });
-  if (stateTax > 0) items.push({
+  if (stateTotal > 0) items.push({
     id: `auto-sale-tax-state-${prop}`,
     auto: true, dismissible: true, date: dueDate || sc.saleDate || '',
-    name: `${prop} State Sale Taxes (est.)`,
-    amount: stateTax,
-    note: `Maryland state + local tax on the ${prop} sale (${pct}%).${mdSurchargeApplies ? ` MD 2% capital-gains surcharge also applies at your AGI (${fmt(agi)} > ${fmt(MD_CG_SURCHARGE_AGI)}) and is not included above.` : ''} MD estimated-tax payment due ${dueLabel}.`
+    name: `${prop} State Sale Taxes`,
+    amount: stateTotal,
+    note: `Maryland state + local tax on the ${prop} sale (${pct}%)${mdSurcharge > 0 ? ` + MD 2% capital-gains surcharge ${fmt(mdSurcharge)} [AGI ${fmt(agi)} > ${fmt(MD_CG_SURCHARGE_AGI)}]` : ''}. MD estimated-tax payment due ${dueLabel}.`
   });
   return items;
 }
@@ -9051,18 +9060,18 @@ function cfAutoRow(item, color) {
   const expanded = cfIncomeExpanded(item.id);
   const amountColor = item.amount > 0 ? color : 'var(--text-muted)';
   return `<tr style="background:var(--surface)">
-    <td colspan="2" style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'}">
+    <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'}">
       <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" style="padding:.05rem .25rem;font-size:.75rem;line-height:1" onclick="cfToggleIncomeDetails('${escAttr(item.id)}')" title="${expanded ? 'Hide details' : 'Show details'}">${expanded ? '▾' : '▸'}</button>
         <span style="font-weight:650">${escHtml(item.name || 'Untitled')}</span>
         <span style="display:inline-block;padding:.08rem .38rem;border-radius:999px;background:rgba(37,99,235,.10);color:var(--primary);font-size:.66rem;font-weight:750;text-transform:uppercase">Auto</span>
       </div>
     </td>
+    <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};white-space:nowrap;color:var(--text-muted);font-size:.8rem">${item.date ? fmtDate(item.date) : '—'}</td>
     <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;white-space:nowrap;font-weight:700;color:${amountColor}">${fmt(item.amount || 0)}</td>
     <td style="padding:.55rem .4rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;color:var(--text-muted);font-size:.72rem;white-space:nowrap">${item.dismissible ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.1rem .35rem;font-size:1rem;line-height:1" title="Remove (e.g. after paying)" onclick="cfDismissAuto('${escAttr(item.id)}')">×</button>` : 'Auto'}</td>
   </tr>
   ${expanded ? `<tr style="background:var(--surface)"><td colspan="4" style="padding:0 .6rem .65rem 2.25rem;border-bottom:1px solid var(--border);font-size:.72rem;color:var(--text-muted)">
-    <div>Date: ${item.date ? fmtDate(item.date) : 'Worksheet'}</div>
     ${item.note ? `<div>${escHtml(item.note)}</div>` : ''}
     <div>Source: property page sale worksheet</div>
   </td></tr>` : ''}`;

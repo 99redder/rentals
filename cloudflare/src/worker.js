@@ -1080,6 +1080,11 @@ async function handleSaveCashFlow(env, year, data) {
       : 0,
     income: sanitizeItems(data.income),
     expenses: sanitizeItems(data.expenses),
+    // Ids of auto-generated lines the user has dismissed (e.g. a sale-tax
+    // expense removed after it's been paid).
+    dismissedAuto: Array.isArray(data.dismissedAuto)
+      ? [...new Set(data.dismissedAuto.filter(x => typeof x === 'string').map(x => x.slice(0, 80)))].slice(0, 100)
+      : [],
   };
   await env.RENTALS.put(`cash_flow:${year}`, JSON.stringify(saved));
   return jsonResponse({ success: true, data: saved });

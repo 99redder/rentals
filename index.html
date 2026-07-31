@@ -8712,7 +8712,8 @@ function normalizeCashFlow(raw) {
     year: CASH_FLOW_YEAR,
     robinhoodChecking: tpN(raw?.robinhoodChecking),
     income: normalizeItems(raw?.income),
-    expenses: normalizeItems(raw?.expenses)
+    expenses: normalizeItems(raw?.expenses),
+    dismissedAuto: Array.isArray(raw?.dismissedAuto) ? raw.dismissedAuto.filter(x => typeof x === 'string') : []
   };
 }
 
@@ -8778,9 +8779,10 @@ function cfAutoIncomeItems() {
 // Finalized sales instead contribute their estimated sale tax as an expense —
 // cash that's earmarked to be paid at filing.
 function cfAutoExpenseItems() {
+  const dismissed = new Set(state.cashFlow?.dismissedAuto || []);
   return CASH_FLOW_AUTO_PROCEEDS_PROPS
     .map(prop => cfPropertySaleTaxItem(prop))
-    .filter(Boolean);
+    .filter(item => item && !dismissed.has(item.id));
 }
 
 function cfPropertySaleTaxItem(prop) {
@@ -8794,6 +8796,7 @@ function cfPropertySaleTaxItem(prop) {
   return {
     id: `auto-sale-tax-${prop}`,
     auto: true,
+    dismissible: true,
     date: sc.saleDate || '',
     name: `${prop} Sale Taxes (est.)`,
     amount: tax,
@@ -8907,6 +8910,7 @@ function _renderCashFlowHtml() {
       ${cfColumnHtml('income', 'Income', 'var(--success)', autoIncome)}
       ${cfColumnHtml('expenses', 'Expenses', 'var(--danger)', autoExpenses)}
     </div>
+    ${(state.cashFlow?.dismissedAuto?.length) ? `<div style="margin-top:.85rem;font-size:.8rem;color:var(--text-muted)">${state.cashFlow.dismissedAuto.length} auto line${state.cashFlow.dismissedAuto.length === 1 ? '' : 's'} removed. <button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;color:var(--primary)" onclick="cfRestoreDismissed()">Restore</button></div>` : ''}
   `;
 }
 
@@ -9007,7 +9011,7 @@ function cfAutoRow(item, color) {
       </div>
     </td>
     <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;white-space:nowrap;font-weight:700;color:${amountColor}">${fmt(item.amount || 0)}</td>
-    <td style="padding:.55rem .4rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;color:var(--text-muted);font-size:.72rem;white-space:nowrap">Auto</td>
+    <td style="padding:.55rem .4rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;color:var(--text-muted);font-size:.72rem;white-space:nowrap">${item.dismissible ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.1rem .35rem;font-size:1rem;line-height:1" title="Remove (e.g. after paying)" onclick="cfDismissAuto('${escAttr(item.id)}')">×</button>` : 'Auto'}</td>
   </tr>
   ${expanded ? `<tr style="background:var(--surface)"><td colspan="4" style="padding:0 .6rem .65rem 2.25rem;border-bottom:1px solid var(--border);font-size:.72rem;color:var(--text-muted)">
     <div>Date: ${item.date ? fmtDate(item.date) : 'Worksheet'}</div>
@@ -9132,6 +9136,31 @@ async function cfDelete(type, id) {
       _renderCashFlowHtml();
     }
   });
+}
+
+// Dismiss an auto-generated line (e.g. a sale-tax expense once it's been paid).
+// Persisted by id in state.cashFlow.dismissedAuto and reversible via Restore.
+async function cfDismissAuto(id) {
+  const item = [...cfAutoIncomeItems(), ...cfAutoExpenseItems()].find(x => x.id === id);
+  const label = item ? `"${item.name}" (${fmt(item.amount || 0)})` : 'this auto line';
+  showBrandedNotice({
+    title: 'Remove Auto Line',
+    type: 'danger',
+    message: `${label} will be removed from the ${CASH_FLOW_YEAR} cash flow. You can restore it later.`,
+    confirmLabel: 'Remove',
+    onConfirm: async () => {
+      if (!Array.isArray(state.cashFlow.dismissedAuto)) state.cashFlow.dismissedAuto = [];
+      if (!state.cashFlow.dismissedAuto.includes(id)) state.cashFlow.dismissedAuto.push(id);
+      await saveCashFlow();
+      _renderCashFlowHtml();
+    }
+  });
+}
+
+async function cfRestoreDismissed() {
+  state.cashFlow.dismissedAuto = [];
+  await saveCashFlow();
+  _renderCashFlowHtml();
 }
 
 // ── View: Net Worth ──────────────────────────────────────────────────────────

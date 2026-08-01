@@ -200,9 +200,17 @@
       if(state.view==='savings' && (force||!state.data.savings)) state.data.savings=(await api({action:'get_savings'})).data||{};
       // Cached read only snapshot only. Never call refresh_net_worth_plaid from the PWA.
       if(state.view==='networth' && (force||!state.data.netWorth)) state.data.netWorth=(await api({action:'get_net_worth'})).data||{};
-      if(state.view==='cashflow' && (force||!state.data.cashflow||!state.data.savings||!state.data.netWorth||!state.data.moveIn)){
-        const [cashflow,savings,netWorth,moveIn]=await Promise.all([api({action:'get_cash_flow',year:String(YEAR)}),api({action:'get_savings'}),api({action:'get_net_worth'}),api({action:'get_move_in_purchases',property:'4781MC'})]);
-        state.data.cashflow=cashflow.data||{};state.data.savings=savings.data||{};state.data.netWorth=netWorth.data||{};state.data.moveIn=moveIn.entries||[];
+      if(state.view==='cashflow' && (force||!state.data.cashflow||!state.data.savings||!state.data.netWorth||!state.data.moveIn||!state.data.investments||!state.data.tax)){
+        const [cashflow,savings,netWorth,moveIn,tax,...invs]=await Promise.all([
+          api({action:'get_cash_flow',year:String(YEAR)}),
+          api({action:'get_savings'}),
+          api({action:'get_net_worth'}),
+          api({action:'get_move_in_purchases',property:'4781MC'}),
+          api({action:'get_tax_planning',year:String(YEAR)}),
+          ...CASH_FLOW_AUTO_PROPS.map(prop=>api({action:'get_investment',property:prop}))
+        ]);
+        state.data.cashflow=cashflow.data||{};state.data.savings=savings.data||{};state.data.netWorth=netWorth.data||{};state.data.moveIn=moveIn.entries||[];state.data.tax=tax.data||{};
+        state.data.investments=Object.fromEntries(CASH_FLOW_AUTO_PROPS.map((p,i)=>[p,invs[i]?.config||null]));
       }
       if(state.view==='savings' && (force||!state.data.robinhood)){state.robinhoodLoading=true;pullRobinhood=true;}
       if(state.view==='mom' && (force||!state.data.mom)) state.data.mom=(await api({action:'get_mom_budget'})).data||{};
@@ -239,6 +247,38 @@
       ${card('Expense categories',categoryRows,'Tap to expand')}`;
   }
 
+  // Quarterly estimated-tax due date for a sale realized on saleIso.
+  function estTaxDueDate(saleIso){if(!/^\d{4}-\d{2}-\d{2}$/.test(saleIso||''))return '';const [y,m]=saleIso.split('-').map(Number);if(m<=3)return`${y}-04-15`;if(m<=5)return`${y}-06-15`;if(m<=8)return`${y}-09-15`;return`${y+1}-01-15`;}
+  // AGI/NIIT/MD-surcharge snapshot, so sale-tax reserves match the desktop.
+  function cfTaxSnapshot(){const tp=state.data.tax||{},rental=[...RENTALS].map(prop=>({prop,...txnTotals(yearTxns(prop))}));return mobileTaxCalc(tp,rental);}
+  // Mirror desktop cfPropertySaleTaxItems: finalized sales reserve federal + state tax.
+  function cfSaleTaxItems(prop,tax){
+    const sc=state.data.investments?.[prop]?.saleCloseout;
+    if(!sc?.closedAt)return [];
+    const ltcg=n(sc.federalCapGainsTax),recapture=n(sc.depreciationRecaptureTax),stateTax=n(sc.stateCapGainsTax),pct=n(sc.stateCapGainsPct)||8.95;
+    const agi=n(tax?.agi),niit=agi>250000?n(tax?.niit):0,surcharge=agi>350000?n(tax?.surcharge):0;
+    const federalTotal=ltcg+recapture+niit,stateTotal=stateTax+surcharge,date=estTaxDueDate(sc.saleDate)||sc.saleDate||'';
+    const items=[];
+    if(federalTotal>0)items.push({id:`auto-sale-tax-fed-${prop}`,name:`${prop} Federal Sale Taxes`,amount:federalTotal,date,note:`Federal tax reserved for the ${prop} sale${niit>0?' incl. NIIT':''}`});
+    if(stateTotal>0)items.push({id:`auto-sale-tax-state-${prop}`,name:`${prop} State Sale Taxes`,amount:stateTotal,date,note:`Maryland state + local tax reserved for the ${prop} sale (${pct}%)${surcharge>0?' incl. 2% surcharge':''}`});
+    return items;
+  }
+  // Mirror desktop cfCriticalSavingsItem: one rolled-up line for critical obligations.
+  function cfCriticalSavingsItem(){
+    const critical=(state.data.savings?.obligations||[]).filter(o=>o.critical);
+    if(!critical.length)return null;
+    const total=sum(critical);
+    if(total<=0)return null;
+    return {id:'auto-critical-savings',name:'Critical Savings Objectives',amount:total,date:'',note:`${critical.length} Savings obligation${critical.length===1?'':'s'} marked critical · manage on the Savings tab`};
+  }
+  function cfAutoExpenses(){
+    const tax=cfTaxSnapshot(),dismissed=new Set(state.data.cashflow?.dismissedAuto||[]);
+    const items=CASH_FLOW_AUTO_PROPS.flatMap(prop=>cfSaleTaxItems(prop,tax));
+    const critical=cfCriticalSavingsItem();
+    if(critical)items.push(critical);
+    return items.filter(item=>!dismissed.has(item.id));
+  }
+
   function renderCashFlow(){
     const cf=state.data.cashflow||{};
     const checking=n(state.data.savings?.accounts?.robinhoodChecking);
@@ -249,22 +289,24 @@
       const asset=properties.find(item=>item.id===`property-${prop}`)||{};
       return {name:`${prop} Sale Net Proceeds After Taxes${n(asset.mortgagePayoff)?' & Mortgage Payoff':''}`,amount:n(asset.value),date:'',note:`Auto from ${prop} sale worksheet`};
     });
+    const autoExpenses=cfAutoExpenses();
     const manualIncome=Array.isArray(cf.income)?cf.income:[];
     const expenses=Array.isArray(cf.expenses)?cf.expenses:[];
     const totalIncome=checking+sum(autoIncome)+sum(manualIncome);
-    const totalExpenses=sum(expenses,cfExpenseAmount);
+    const totalExpenses=sum(autoExpenses)+sum(expenses,cfExpenseAmount);
     const excess=totalIncome-totalExpenses;
     const dateNote=item=>[item.date||'Unscheduled',item.note||''].filter(Boolean).join(' · ');
     const incomeRows=row('Robinhood Joint Checking Current Balance',money(checking),'Pinned · Plaid','good')
       +autoIncome.map(item=>row(item.name,money(item.amount),`${item.note} · Auto`,item.amount?'good':'')).join('')
       +manualIncome.slice().sort((a,b)=>String(a.date||'9999').localeCompare(String(b.date||'9999'))).map(item=>row(item.name||'Untitled',money(item.amount),`${dateNote(item)} · Manual`,'good')).join('');
-    const expenseRows=expenses.slice().sort((a,b)=>cfExpenseAmount(b)-cfExpenseAmount(a)).map(item=>{
-      const linked=isMoveInStuffLine(item.name);
-      const note=linked?[item.date||'Unscheduled','Linked · Move-In Purchases total'].filter(Boolean).join(' · '):dateNote(item);
-      return row(item.name||'Untitled',money(cfExpenseAmount(item)),note,'bad');
-    }).join('');
+    const expenseRows=autoExpenses.map(item=>row(item.name,money(item.amount),`${dateNote(item)} · Auto`,'bad')).join('')
+      +expenses.slice().sort((a,b)=>cfExpenseAmount(b)-cfExpenseAmount(a)).map(item=>{
+        const linked=isMoveInStuffLine(item.name);
+        const note=linked?[item.date||'Unscheduled','Linked · Move-In Purchases total'].filter(Boolean).join(' · '):dateNote(item);
+        return row(item.name||'Untitled',money(cfExpenseAmount(item)),note,'bad');
+      }).join('');
     return `<div class="hero"><div class="hero-label">${excess>=0?'Excess left over':'Shortfall'}</div><div class="hero-value">${excess<0?'−':''}${money(Math.abs(excess))}</div><div class="hero-note">${money(totalIncome)} income minus ${money(totalExpenses)} expenses</div></div>
-      <div class="grid">${stat('Income events',money(totalIncome),`1 pinned · ${autoIncome.length} auto · ${manualIncome.length} manual`,'good')}${stat('Expense events',money(totalExpenses),`${expenses.length} items`,'bad')}${stat(excess>=0?'Excess':'Shortfall',money(Math.abs(excess)),'expected amount',tone(excess))}</div>
+      <div class="grid">${stat('Income events',money(totalIncome),`1 pinned · ${autoIncome.length} auto · ${manualIncome.length} manual`,'good')}${stat('Expense events',money(totalExpenses),`${autoExpenses.length} auto · ${expenses.length} manual`,'bad')}${stat(excess>=0?'Excess':'Shortfall',money(Math.abs(excess)),'expected amount',tone(excess))}</div>
       ${card('Income',incomeRows,'2026')}
       ${card('Expenses',expenseRows,'Amount order')}`;
   }

@@ -25,6 +25,11 @@ stuff/
 ├── mom-budget-manifest.webmanifest
 ├── mom-budget-sw.js            # Network-first PWA service worker
 ├── mom-budget-icon.svg / .png  # PWA icons
+├── mobile/                     # Authenticated read-only phone PWA ("Red's Stuff Snapshot")
+│   ├── index.html              #   Self-contained: reimplements Budget, Cash Flow, Tax,
+│   │                           #   Savings, Net Worth, Mom, Properties as read-only views
+│   ├── manifest.webmanifest
+│   └── sw.js                   #   Network-first SW — bump CACHE_NAME on any mobile/ change
 ├── .gitignore                  # Excludes node_modules, .DS_Store, .wrangler/
 ├── package.json                # Root — only has wrangler as a dev dep
 ├── package-lock.json
@@ -333,6 +338,16 @@ This page has no password gate and no editing controls. It is meant to be instal
 The page fetches only `get_mom_budget_public_summary`, a public Worker action that returns precomputed read-only numbers. It must never call `get_mom_budget`, `save_mom_budget`, or any authenticated/editing action. **The worker keeps its own parallel copy of the Mom Budget math** (`normalizeMomBudget` / `momBudgetTemplateTotals` / `calcMomBudgetMonth`) — when changing the frontend's `mbCalcMonth`/template, mirror it here or the phone shows stale numbers. (Groceries and Gas were removed from both.) The `month.fairShare` field is computed by `calcFairShareFromBudget(budget)` — a mirror of the frontend `fsCalc()` (shared budget expenses ÷ household size) that reads the `budget` KV record directly, so it stays accurate even if the `mom_budget` record's fair-share line is stale. `FS_SHARED_CAT_DEFAULTS` in the worker must match index.html.
 
 The service worker is intentionally network-first and calls `registration.update()` on launch so the installed PWA gets the newest page/assets when opened. If changing the phone PWA files, bump `CACHE_NAME` in `mom-budget-sw.js` if cached asset behavior matters.
+
+### Mobile Snapshot PWA (`mobile/index.html`)
+
+Separate **authenticated, read-only** phone PWA ("Red's Stuff Snapshot") — distinct from the public Mom Budget phone page. It logs in with the same password/session as the desktop app and shows read-only versions of **Budget, Cash Flow, Tax, Savings, Net Worth, Mom, and Properties** in a bottom-tab layout.
+
+**It reimplements the desktop view math in its own `<script>`** (`renderCashFlow`, `renderNetWorth`, `mobileTaxCalc`, `momMonth`, etc.) reading the same Worker actions. **This is a parallel implementation that silently goes stale when desktop logic changes** — when you change a calculation in `index.html` (cash-flow derivations, net-worth asset building, tax brackets, Mom Budget math), mirror it here or the PWA shows different numbers. Known mirrors already in place:
+- **Cash Flow "4781MC Move In Stuff"** derives from the 4781MC Move-In Purchases total (`cfExpenseAmount` / `CF_MOVE_IN_STUFF_LABEL`); the cashflow load path fetches `get_move_in_purchases`.
+- **Sold properties** are dropped from Cash Flow auto-income (filtered to those still present in `propertyAssets`) and from Net Worth (relies on the desktop rebuilding+saving `net_worth.propertyAssets`, which excludes closed sales).
+
+It only reads; it never calls `refresh_net_worth_plaid` or any save/editing action. Network-first SW (`mobile/sw.js`) with `reg.update()` on launch — **bump `CACHE_NAME` on any `mobile/` change** so installed apps pull the new page.
 
 ### Savings View
 

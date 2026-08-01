@@ -1110,7 +1110,11 @@ async function handleGetLaterCategories(env, property) {
   const propertyError = requireLaterListProperty(property);
   if (propertyError) return propertyError;
   const stored = await env.RENTALS.get(`later_categories:${property}`, 'json');
-  const categories = Array.isArray(stored) && stored.length ? stored : MOVE_IN_CATEGORIES_DEFAULT.slice();
+  if (Array.isArray(stored) && stored.length) return jsonResponse({ categories: stored });
+  // Until the Later List has its own categories, mirror the current Move-In
+  // Purchases categories (falling back to the shared default when those are unset).
+  const moveIn = await env.RENTALS.get(`move_in_categories:${property}`, 'json');
+  const categories = Array.isArray(moveIn) && moveIn.length ? moveIn : MOVE_IN_CATEGORIES_DEFAULT.slice();
   return jsonResponse({ categories });
 }
 

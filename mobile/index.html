@@ -154,6 +154,12 @@
   const esc = v => String(v ?? '').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const tone = v => n(v) < 0 ? 'bad' : 'good';
   const sum = (items, fn=x=>n(x.amount)) => (items||[]).reduce((t,x)=>t+fn(x),0);
+  // Mirror desktop: the "4781MC Move In Stuff" cash-flow expense derives its amount
+  // live from the 4781MC Move-In Purchases total, not the stored amount.
+  const CF_MOVE_IN_STUFF_LABEL = '4781MC Move In Stuff';
+  const isMoveInStuffLine = name => String(name||'').trim().toLowerCase() === CF_MOVE_IN_STUFF_LABEL.toLowerCase();
+  const moveInPurchasesTotal = () => sum(state.data.moveIn||[], e=>n(e.estimatedPrice));
+  const cfExpenseAmount = item => (isMoveInStuffLine(item?.name) && Array.isArray(state.data.moveIn)) ? moveInPurchasesTotal() : n(item?.amount);
 
   async function api(body) {
     const token=localStorage.getItem(SESSION_TOKEN_KEY)||'';
@@ -194,9 +200,9 @@
       if(state.view==='savings' && (force||!state.data.savings)) state.data.savings=(await api({action:'get_savings'})).data||{};
       // Cached read only snapshot only. Never call refresh_net_worth_plaid from the PWA.
       if(state.view==='networth' && (force||!state.data.netWorth)) state.data.netWorth=(await api({action:'get_net_worth'})).data||{};
-      if(state.view==='cashflow' && (force||!state.data.cashflow||!state.data.savings||!state.data.netWorth)){
-        const [cashflow,savings,netWorth]=await Promise.all([api({action:'get_cash_flow',year:String(YEAR)}),api({action:'get_savings'}),api({action:'get_net_worth'})]);
-        state.data.cashflow=cashflow.data||{};state.data.savings=savings.data||{};state.data.netWorth=netWorth.data||{};
+      if(state.view==='cashflow' && (force||!state.data.cashflow||!state.data.savings||!state.data.netWorth||!state.data.moveIn)){
+        const [cashflow,savings,netWorth,moveIn]=await Promise.all([api({action:'get_cash_flow',year:String(YEAR)}),api({action:'get_savings'}),api({action:'get_net_worth'}),api({action:'get_move_in_purchases',property:'4781MC'})]);
+        state.data.cashflow=cashflow.data||{};state.data.savings=savings.data||{};state.data.netWorth=netWorth.data||{};state.data.moveIn=moveIn.entries||[];
       }
       if(state.view==='savings' && (force||!state.data.robinhood)){state.robinhoodLoading=true;pullRobinhood=true;}
       if(state.view==='mom' && (force||!state.data.mom)) state.data.mom=(await api({action:'get_mom_budget'})).data||{};
@@ -237,20 +243,26 @@
     const cf=state.data.cashflow||{};
     const checking=n(state.data.savings?.accounts?.robinhoodChecking);
     const properties=state.data.netWorth?.propertyAssets||[];
-    const autoIncome=CASH_FLOW_AUTO_PROPS.map(prop=>{
+    // Only unsold properties project proceeds — a sold property's proceeds already
+    // sit in the checking balance, and it is dropped from propertyAssets.
+    const autoIncome=CASH_FLOW_AUTO_PROPS.filter(prop=>properties.some(item=>item.id===`property-${prop}`)).map(prop=>{
       const asset=properties.find(item=>item.id===`property-${prop}`)||{};
       return {name:`${prop} Sale Net Proceeds After Taxes${n(asset.mortgagePayoff)?' & Mortgage Payoff':''}`,amount:n(asset.value),date:'',note:`Auto from ${prop} sale worksheet`};
     });
     const manualIncome=Array.isArray(cf.income)?cf.income:[];
     const expenses=Array.isArray(cf.expenses)?cf.expenses:[];
     const totalIncome=checking+sum(autoIncome)+sum(manualIncome);
-    const totalExpenses=sum(expenses);
+    const totalExpenses=sum(expenses,cfExpenseAmount);
     const excess=totalIncome-totalExpenses;
     const dateNote=item=>[item.date||'Unscheduled',item.note||''].filter(Boolean).join(' · ');
     const incomeRows=row('Robinhood Joint Checking Current Balance',money(checking),'Pinned · Plaid','good')
       +autoIncome.map(item=>row(item.name,money(item.amount),`${item.note} · Auto`,item.amount?'good':'')).join('')
       +manualIncome.slice().sort((a,b)=>String(a.date||'9999').localeCompare(String(b.date||'9999'))).map(item=>row(item.name||'Untitled',money(item.amount),`${dateNote(item)} · Manual`,'good')).join('');
-    const expenseRows=expenses.slice().sort((a,b)=>n(b.amount)-n(a.amount)).map(item=>row(item.name||'Untitled',money(item.amount),dateNote(item),'bad')).join('');
+    const expenseRows=expenses.slice().sort((a,b)=>cfExpenseAmount(b)-cfExpenseAmount(a)).map(item=>{
+      const linked=isMoveInStuffLine(item.name);
+      const note=linked?[item.date||'Unscheduled','Linked · Move-In Purchases total'].filter(Boolean).join(' · '):dateNote(item);
+      return row(item.name||'Untitled',money(cfExpenseAmount(item)),note,'bad');
+    }).join('');
     return `<div class="hero"><div class="hero-label">${excess>=0?'Excess left over':'Shortfall'}</div><div class="hero-value">${excess<0?'−':''}${money(Math.abs(excess))}</div><div class="hero-note">${money(totalIncome)} income minus ${money(totalExpenses)} expenses</div></div>
       <div class="grid">${stat('Income events',money(totalIncome),`1 pinned · ${autoIncome.length} auto · ${manualIncome.length} manual`,'good')}${stat('Expense events',money(totalExpenses),`${expenses.length} items`,'bad')}${stat(excess>=0?'Excess':'Shortfall',money(Math.abs(excess)),'expected amount',tone(excess))}</div>
       ${card('Income',incomeRows,'2026')}

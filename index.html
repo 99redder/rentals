@@ -3756,7 +3756,7 @@ function renderMoveInPurchasesSection(prop) {
           </div>
           <div class="form-group">
             <label>Target / Added Date</label>
-            <input type="date" id="mip-date" value="${MOVE_IN_PURCHASE_DEFAULT_DATE}">
+            <input type="date" id="mip-date" value="${MOVE_IN_PURCHASE_DEFAULT_DATE}" min="2026-01-01" max="2099-12-31">
           </div>
           <div class="form-group">
             <label>Estimated Price ($)</label>
@@ -4285,7 +4285,7 @@ function renderLaterListSection(prop) {
           </div>
           <div class="form-group">
             <label>Target / Added Date</label>
-            <input type="date" id="ll-date" value="${LATER_LIST_DEFAULT_DATE}">
+            <input type="date" id="ll-date" value="${LATER_LIST_DEFAULT_DATE}" min="2026-01-01" max="2099-12-31">
           </div>
           <div class="form-group">
             <label>Estimated Price ($)</label>

@@ -10088,7 +10088,10 @@ function nwSetAssetSort(sort) {
 }
 
 function nwBuildPropertyAssets() {
-  return PROPERTIES.map(prop => {
+  // A finalized sale's net proceeds land in the linked bank balance (counted as a
+  // Plaid account), so a sold property must not also appear as a property asset —
+  // that would double-count the same cash.
+  return PROPERTIES.filter(prop => !isPropertyClosed(prop)).map(prop => {
     // A build that has not settled is worth the cash actually put in — the
     // deposit. Its cash to close is still in the bank (counted there) and its
     // mortgage has not been drawn, so neither belongs in net worth yet.

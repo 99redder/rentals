@@ -9408,72 +9408,75 @@ function cfSaleTaxExpenseItems() {
   ];
 }
 
-// Federal/state sale-tax components for one property — actual amounts for a
-// finalized sale, or projected amounts recomputed live from the Investment Return
-// sale-closeout draft for a not-yet-closed property (a capital loss yields $0
-// gains tax but still recaptures depreciation). Returns null when there is no
-// sale to reserve for (no closeout and no draft sale price).
+// Sale-gain components for one property, from the same math the Investment Return
+// tab uses (`calcPropertySaleTaxDetails` — actual closeout numbers for a finalized
+// sale, live draft numbers for a projected one). `taxableGain` is the signed
+// long-term capital gain (negative for a projected loss); `recapture` is the
+// (non-negative) unrecaptured §1250 depreciation gain. Returns null when there is
+// no sale to reserve for (no closeout and no draft sale price).
 function cfPropertySaleTaxComponents(prop) {
+  const details = calcPropertySaleTaxDetails(prop);  // reads the live draft when unsold
+  if (!details) return null;
   const inv = state.data[prop]?.investment || {};
   const sc = inv.saleCloseout || null;
-  if (sc?.closedAt) {
-    const ltcgTax = Number(sc.federalCapGainsTax) || 0;
-    const recaptureTax = Number(sc.depreciationRecaptureTax) || 0;
-    return {
-      prop, projected: false,
-      federal: ltcgTax + recaptureTax,
-      state: Number(sc.stateCapGainsTax) || 0,
-      statePct: sc.stateCapGainsPct || 8.95,
-      saleDate: sc.saleDate || '',
-    };
-  }
-  const details = calcPropertySaleTaxDetails(prop);  // reads the live draft
-  if (!details) return null;
-  const statePct = (typeof inv.stateCapGainsPct === 'number' && inv.stateCapGainsPct > 0) ? inv.stateCapGainsPct : 8.95;
-  const ltcgTax = Math.max(0, details.taxableGain) * 0.15;
-  const recaptureTax = Math.max(0, details.depreciationRecapture) * 0.25;
+  const statePct = (typeof sc?.stateCapGainsPct === 'number' && sc.stateCapGainsPct > 0) ? sc.stateCapGainsPct
+    : ((typeof inv.stateCapGainsPct === 'number' && inv.stateCapGainsPct > 0) ? inv.stateCapGainsPct : 8.95);
   return {
-    prop, projected: true,
-    federal: ltcgTax + recaptureTax,
-    state: Math.max(0, details.taxableGain) * (statePct / 100),
+    prop,
+    projected: !sc?.closedAt,
+    taxableGain: Number(details.taxableGain) || 0,               // signed
+    recapture: Math.max(0, Number(details.depreciationRecapture) || 0),
     statePct,
-    saleDate: loadSaleCloseoutDraft(prop)?.date || '',
-    capitalGain: details.capitalGain,
-    taxableGain: details.taxableGain,
-    depreciationRecapture: details.depreciationRecapture,
   };
 }
 
 // One combined Federal line + one combined State line for the CF_COMBINED_SALE_TAX_PROPS
 // sales, reserved together on the (variable) projected sale's quarterly estimated-tax
-// due date. NIIT / MD surcharge are return-level, so they are folded in once.
+// due date. The two sales are NETTED on Schedule D: a projected capital loss on one
+// first offsets the other's long-term gain, then reduces the §1250 recapture gain —
+// so a 6AL loss genuinely lowers the combined reserve. NIIT / MD surcharge are
+// return-level, so they are folded in once.
 function cfCombinedSaleTaxItems(parts) {
   if (!parts.length) return [];
   const label = parts.map(p => p.prop).join(' + ');
   const agi = Number(state.cfAgi);
   const niit = (Number.isFinite(agi) && agi > TP_NIIT_THRESHOLD) ? (Number(state.cfNiit) || 0) : 0;
   const mdSurcharge = (Number.isFinite(agi) && agi > MD_CG_SURCHARGE_AGI) ? (Number(state.cfMdSurcharge) || 0) : 0;
-  const federalTotal = parts.reduce((s, p) => s + p.federal, 0) + niit;
-  const stateTotal = parts.reduce((s, p) => s + p.state, 0) + mdSurcharge;
+
+  // Federal: a net regular LT loss offsets the §1250 recapture gain (recapture is
+  // taxed last on the Schedule D worksheet).
+  const netRegular = parts.reduce((s, p) => s + p.taxableGain, 0);   // signed
+  const recap = parts.reduce((s, p) => s + p.recapture, 0);          // ≥ 0
+  const regularTaxed = Math.max(0, netRegular);
+  const recapTaxed = Math.max(0, recap + Math.min(0, netRegular));
+  const federalCapGains = regularTaxed * 0.15 + recapTaxed * 0.25;
+  const federalTotal = federalCapGains + niit;
+
+  // MD (state + local) taxes the net LT capital gain (this app's model excludes
+  // recapture from the state figure); a loss nets it down, floored at 0.
+  const stateSigned = parts.reduce((s, p) => s + p.taxableGain * (p.statePct / 100), 0);
+  const stateTotal = Math.max(0, stateSigned) + mdSurcharge;
+
   // Due date follows the projected sale (defaults to Sep 15, 2026 when unscheduled).
   const projected = parts.find(p => p.projected);
-  const dueDate = estimatedTaxDueDate(projected?.saleDate) || '2026-09-15';
+  const dueDate = estimatedTaxDueDate(projected ? (loadSaleCloseoutDraft(projected.prop)?.date || '') : '') || '2026-09-15';
   const dueLabel = fmtDate(dueDate);
-  const partNote = key => parts.map(p => `${p.prop} ${p.projected ? 'projected' : 'actual'} ${fmt(p[key])}`).join(' + ');
+  const gainNote = parts.map(p => `${p.prop} ${p.projected ? 'projected' : 'actual'} LT gain ${fmt(p.taxableGain)}${p.recapture ? ` + recapture ${fmt(p.recapture)}` : ''}`).join('; ');
+
   const items = [];
   if (federalTotal > 0) items.push({
     id: 'auto-sale-tax-fed-combined',
     auto: true, dismissible: true, date: dueDate,
     name: `${label} Federal Sale Taxes`,
     amount: federalTotal,
-    note: `Combined federal estimated tax due ${dueLabel} for the ${label} sales: ${partNote('federal')}${niit > 0 ? ` + NIIT ${fmt(niit)}` : ''}. 6AL is recomputed live from its Investment Return sale worksheet — a projected capital loss owes no gains tax, but its depreciation recapture (25%) is still due.`
+    note: `Combined federal estimated tax due ${dueLabel}, netting the ${label} sales (${gainNote}): LT gains 15% ${fmt(regularTaxed * 0.15)} + depreciation recapture 25% ${fmt(recapTaxed * 0.25)}${niit > 0 ? ` + NIIT ${fmt(niit)}` : ''}. 6AL is recomputed live from its Investment Return sale worksheet — a projected capital loss nets against 95EB's gain (and its recapture).`
   });
   if (stateTotal > 0) items.push({
     id: 'auto-sale-tax-state-combined',
     auto: true, dismissible: true, date: dueDate,
     name: `${label} State Sale Taxes`,
     amount: stateTotal,
-    note: `Combined Maryland state + local estimated tax due ${dueLabel} for the ${label} sales: ${partNote('state')}${mdSurcharge > 0 ? ` + 2% surcharge ${fmt(mdSurcharge)}` : ''}. 6AL projected live from its Investment Return sale worksheet.`
+    note: `Combined Maryland state + local estimated tax due ${dueLabel} on the netted ${label} long-term gain${mdSurcharge > 0 ? ` + 2% surcharge ${fmt(mdSurcharge)}` : ''}. 6AL projected live from its Investment Return sale worksheet.`
   });
   return items;
 }
@@ -9554,13 +9557,19 @@ function cfPropertySaleProceedsItem(prop) {
   const date = isSold ? (saleCloseout.saleDate || '') : (closeoutDraft.date || '');
   const mortgageInfo = propertyMortgagePayoff(prop);
   const mortgagePayoff = mortgageInfo.amount;
+  // Properties whose sale taxes are broken out into the combined sale-tax expense
+  // lines show PRE-TAX proceeds here, so the tax is not subtracted twice (income
+  // pre-tax − combined tax expense lines = correct after-tax cash flow).
+  const preTax = CF_COMBINED_SALE_TAX_PROPS.includes(prop);
   const base = {
     id: `auto-sale-${prop}`,
     auto: true,
     date,
-    name: `${prop} Sale Net Proceeds After Taxes${mortgagePayoff ? ' & Mortgage Payoff' : ''}`,
+    name: `${prop} Sale Net Proceeds ${preTax ? 'Before Taxes' : 'After Taxes'}${mortgagePayoff ? ' & Mortgage Payoff' : ''}`,
     amount: 0,
-    note: `Auto from ${prop} Investment Return sale worksheet after closing costs and estimated sale taxes${mortgagePayoff ? `, less ${fmt(mortgagePayoff)} ${mortgageInfo.live ? 'live ' : ''}mortgage payoff` : ''}`
+    note: preTax
+      ? `Auto from ${prop} Investment Return sale worksheet after closing costs${mortgagePayoff ? `, less ${fmt(mortgagePayoff)} ${mortgageInfo.live ? 'live ' : ''}mortgage payoff` : ''} — before income taxes (reserved separately in the combined ${CF_COMBINED_SALE_TAX_PROPS.join(' + ')} sale-tax expense lines)`
+      : `Auto from ${prop} Investment Return sale worksheet after closing costs and estimated sale taxes${mortgagePayoff ? `, less ${fmt(mortgagePayoff)} ${mortgageInfo.live ? 'live ' : ''}mortgage payoff` : ''}`
   };
   if (!salePrice) {
     return { ...base, note: `${base.note} - enter a sale price to calculate` };
@@ -9600,9 +9609,11 @@ function cfPropertySaleProceedsItem(prop) {
   const stateCapGainsPct = ((typeof inv.stateCapGainsPct === 'number' && inv.stateCapGainsPct > 0) ? inv.stateCapGainsPct : 8.95);
   const federalCapGainsTax = Math.max(0, saleTax.taxableGain) * 0.15;
   const stateCapGainsTax = Math.max(0, saleTax.taxableGain) * (stateCapGainsPct / 100);
-  const netSaleProceeds = isSold
-    ? (saleCloseout.netSaleProceeds || 0)
-    : grossAfterClosing - depreciationRecaptureTax - federalCapGainsTax - stateCapGainsTax;
+  const netSaleProceeds = preTax
+    ? grossAfterClosing   // proceeds before income tax; tax is a separate expense line
+    : (isSold
+        ? (saleCloseout.netSaleProceeds || 0)
+        : grossAfterClosing - depreciationRecaptureTax - federalCapGainsTax - stateCapGainsTax);
   const cashFlowProceeds = isSold && typeof saleCloseout.mortgagePayoff === 'number'
     ? netSaleProceeds
     : netSaleProceeds - mortgagePayoff;

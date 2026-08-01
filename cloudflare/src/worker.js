@@ -2220,6 +2220,11 @@ function normalizeNetWorth(raw) {
     federalTax: Number.isFinite(Number(item.federalTax)) ? Number(item.federalTax) : 0,
     stateTax: Number.isFinite(Number(item.stateTax)) ? Number(item.stateTax) : 0,
     depreciationRecaptureTax: Number.isFinite(Number(item.depreciationRecaptureTax)) ? Number(item.depreciationRecaptureTax) : 0,
+    // Signed LT gain + recapture amount, so the read-only PWA can mirror the
+    // combined sale-tax netting (normalizeNetWorth strips unknown keys).
+    taxableGain: Number.isFinite(Number(item.taxableGain)) ? Number(item.taxableGain) : 0,
+    depreciationRecapture: Number.isFinite(Number(item.depreciationRecapture)) ? Number(item.depreciationRecapture) : 0,
+    stateCapGainsPct: Number.isFinite(Number(item.stateCapGainsPct)) ? Number(item.stateCapGainsPct) : 0,
     // New builds still under construction are carried at the deposit paid.
     preconstruction: item.preconstruction === true,
     deposit: Number.isFinite(Number(item.deposit)) ? Number(item.deposit) : 0,

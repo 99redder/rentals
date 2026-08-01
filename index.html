@@ -10260,6 +10260,11 @@ function nwBuildPropertyAssets() {
       federalTax,
       stateTax,
       depreciationRecaptureTax,
+      // Signed LT gain + recapture amount, so the read-only PWA can mirror the
+      // combined 6AL+95EB sale-tax netting without re-porting the sale math.
+      taxableGain: Number(details.taxableGain) || 0,
+      depreciationRecapture: Math.max(0, Number(details.depreciationRecapture) || 0),
+      stateCapGainsPct: stateRate,
       source: details.source,
     };
   });

@@ -143,6 +143,7 @@
   const PROPERTIES = ['6AL','95EB','446BB','731WO','4781MC'];
   const RENTALS = new Set(['6AL','95EB','446BB']);
   const CASH_FLOW_AUTO_PROPS = ['6AL','95EB','731WO'];
+  const CF_COMBINED_SALE_TAX_PROPS = ['6AL','95EB'];  // netted into one Fed + State line
   const EXPENSE_CATS = ['Weekly Spending','Retirement Savings','School Savings','Investments','Misc Savings','Utilities','Services','Mortgage','Cars','Insurance','Travel'];
   const TITLES = {budget:'Monthly Budget',cashflow:'2026 Cash Flow',tax:'Tax Planning',savings:'Savings',networth:'Net Worth',mom:'Mom Budget',properties:'Properties'};
   const CAT_NAMES = {rent:'Rent Received',deposit:'Security Deposit',late_fee:'Late Fees',other_income:'Other Income',taxes:'Property Taxes',insurance:'Insurance',repairs:'Repairs & Maintenance',improvements:'Improvements',utilities:'Utilities',hoa:'HOA Fees',management:'Property Management',auto:'Auto',legal:'Legal & Professional',marketing:'Advertising',other_expense:'Other Expenses'};
@@ -251,7 +252,7 @@
   function estTaxDueDate(saleIso){if(!/^\d{4}-\d{2}-\d{2}$/.test(saleIso||''))return '';const [y,m]=saleIso.split('-').map(Number);if(m<=3)return`${y}-04-15`;if(m<=5)return`${y}-06-15`;if(m<=8)return`${y}-09-15`;return`${y+1}-01-15`;}
   // AGI/NIIT/MD-surcharge snapshot, so sale-tax reserves match the desktop.
   function cfTaxSnapshot(){const tp=state.data.tax||{},rental=[...RENTALS].map(prop=>({prop,...txnTotals(yearTxns(prop))}));return mobileTaxCalc(tp,rental);}
-  // Mirror desktop cfPropertySaleTaxItems: finalized sales reserve federal + state tax.
+  // Mirror desktop cfPropertySaleTaxItems: a single finalized sale reserves fed + state tax.
   function cfSaleTaxItems(prop,tax){
     const sc=state.data.investments?.[prop]?.saleCloseout;
     if(!sc?.closedAt)return [];
@@ -263,6 +264,39 @@
     if(stateTotal>0)items.push({id:`auto-sale-tax-state-${prop}`,name:`${prop} State Sale Taxes`,amount:stateTotal,date,note:`Maryland state + local tax reserved for the ${prop} sale (${pct}%)${surcharge>0?' incl. 2% surcharge':''}`});
     return items;
   }
+  // Signed LT gain + §1250 recapture for one property — actual (finalized closeout)
+  // or projected (from the desktop-materialized propertyAssets). Mirror of desktop
+  // cfPropertySaleTaxComponents. Returns null when there is no sale to reserve for.
+  function cfSaleGainComponents(prop){
+    const sc=state.data.investments?.[prop]?.saleCloseout;
+    if(sc?.closedAt){
+      return {prop,projected:false,taxableGain:n(sc.taxableCapitalGain),recapture:n(sc.depreciationRecaptureTax)/0.25,statePct:n(sc.stateCapGainsPct)||8.95};
+    }
+    const asset=(state.data.netWorth?.propertyAssets||[]).find(a=>a.id===`property-${prop}`);
+    if(!asset||n(asset.salePrice)<=0)return null;
+    return {prop,projected:true,taxableGain:n(asset.taxableGain),recapture:n(asset.depreciationRecapture),statePct:n(asset.stateCapGainsPct)||n(state.data.investments?.[prop]?.stateCapGainsPct)||8.95};
+  }
+  // Mirror desktop cfCombinedSaleTaxItems — Schedule-D netting of the two sales.
+  function cfCombinedSaleTax(parts,tax){
+    if(!parts.length)return [];
+    const label=parts.map(p=>p.prop).join(' + ');
+    const agi=n(tax?.agi),niit=agi>250000?n(tax?.niit):0,surcharge=agi>350000?n(tax?.surcharge):0;
+    const netRegular=parts.reduce((s,p)=>s+p.taxableGain,0),recap=parts.reduce((s,p)=>s+p.recapture,0);
+    const regularTaxed=Math.max(0,netRegular),recapTaxed=Math.max(0,recap+Math.min(0,netRegular));
+    const federalTotal=regularTaxed*0.15+recapTaxed*0.25+niit;
+    const stateSigned=parts.reduce((s,p)=>s+p.taxableGain*(p.statePct/100),0),stateTotal=Math.max(0,stateSigned)+surcharge;
+    const date='2026-09-15',items=[];
+    if(federalTotal>0)items.push({id:'auto-sale-tax-fed-combined',name:`${label} Federal Sale Taxes`,amount:federalTotal,date,note:`Combined federal estimated tax netting the ${label} sales — LT gains 15% + depreciation recapture 25%${niit>0?' + NIIT':''}`});
+    if(stateTotal>0)items.push({id:'auto-sale-tax-state-combined',name:`${label} State Sale Taxes`,amount:stateTotal,date,note:`Combined Maryland state + local estimated tax on the netted ${label} long-term gain${surcharge>0?' + 2% surcharge':''}`});
+    return items;
+  }
+  // Combined lines once a projected sale exists; otherwise original per-property lines.
+  function cfSaleTaxExpenseItems(tax){
+    const parts=CASH_FLOW_AUTO_PROPS.filter(p=>CF_COMBINED_SALE_TAX_PROPS.includes(p)).map(cfSaleGainComponents).filter(Boolean);
+    if(!parts.some(p=>p.projected))return CASH_FLOW_AUTO_PROPS.flatMap(prop=>cfSaleTaxItems(prop,tax));
+    const otherProps=CASH_FLOW_AUTO_PROPS.filter(p=>!CF_COMBINED_SALE_TAX_PROPS.includes(p));
+    return [...cfCombinedSaleTax(parts,tax),...otherProps.flatMap(prop=>cfSaleTaxItems(prop,tax))];
+  }
   // Mirror desktop cfCriticalSavingsItem: one rolled-up line for critical obligations.
   function cfCriticalSavingsItem(){
     const critical=(state.data.savings?.obligations||[]).filter(o=>o.critical);
@@ -273,7 +307,7 @@
   }
   function cfAutoExpenses(){
     const tax=cfTaxSnapshot(),dismissed=new Set(state.data.cashflow?.dismissedAuto||[]);
-    const items=CASH_FLOW_AUTO_PROPS.flatMap(prop=>cfSaleTaxItems(prop,tax));
+    const items=[...cfSaleTaxExpenseItems(tax)];
     const critical=cfCriticalSavingsItem();
     if(critical)items.push(critical);
     return items.filter(item=>!dismissed.has(item.id));
@@ -287,7 +321,10 @@
     // sit in the checking balance, and it is dropped from propertyAssets.
     const autoIncome=CASH_FLOW_AUTO_PROPS.filter(prop=>properties.some(item=>item.id===`property-${prop}`)).map(prop=>{
       const asset=properties.find(item=>item.id===`property-${prop}`)||{};
-      return {name:`${prop} Sale Net Proceeds After Taxes${n(asset.mortgagePayoff)?' & Mortgage Payoff':''}`,amount:n(asset.value),date:'',note:`Auto from ${prop} sale worksheet`};
+      // Combined-tax properties show PRE-TAX proceeds here (tax is a separate expense line).
+      const preTax=CF_COMBINED_SALE_TAX_PROPS.includes(prop);
+      const amount=preTax?n(asset.value)+n(asset.federalTax)+n(asset.stateTax)+n(asset.depreciationRecaptureTax):n(asset.value);
+      return {name:`${prop} Sale Net Proceeds ${preTax?'Before Taxes':'After Taxes'}${n(asset.mortgagePayoff)?' & Mortgage Payoff':''}`,amount,date:'',note:preTax?`Auto from ${prop} sale worksheet · before income taxes (reserved in the combined sale-tax lines)`:`Auto from ${prop} sale worksheet`};
     });
     const autoExpenses=cfAutoExpenses();
     const manualIncome=Array.isArray(cf.income)?cf.income:[];

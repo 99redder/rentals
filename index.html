@@ -9734,7 +9734,7 @@ function cfDisplayRow(type, item, color) {
     <td style="padding:.55rem .6rem;border-bottom:1px solid var(--border);white-space:nowrap;color:var(--text-muted)">${item.date ? fmtDate(item.date) : 'Unscheduled'}</td>
     <td style="padding:.55rem .6rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;font-weight:700;color:${color}">${fmt(displayAmount)}</td>
     <td style="padding:.55rem .4rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
-      <button class="btn btn-ghost btn-sm" style="padding:.16rem .35rem;font-size:.75rem" onclick="cfEdit('${type}', '${escAttr(item.id)}')">Edit</button>
+      ${moveInLinked ? '' : `<button class="btn btn-ghost btn-sm" style="padding:.16rem .35rem;font-size:.75rem" onclick="cfEdit('${type}', '${escAttr(item.id)}')">Edit</button>`}
       <button class="btn btn-ghost btn-sm" style="padding:.16rem .35rem;font-size:.75rem;color:var(--danger)" onclick="cfDelete('${type}', '${escAttr(item.id)}')">Delete</button>
     </td>
   </tr>`;

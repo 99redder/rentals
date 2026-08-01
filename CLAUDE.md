@@ -54,12 +54,12 @@ A full table of contents is in the `NAVIGATION GUIDE` block comment at the very 
 ### Navigation (two-tier)
 ```
 Property tabs:  [6AL]  [95EB]  [446BB]  [731WO]  [4781MC]
-View tabs:      [Current Year]  [Tax Summary]  [Investment Return]  [Historical]  [Maintenance]  [Move-In Purchases]  [All Properties]
+View tabs:      [Current Year]  [Tax Summary]  [Investment Return]  [Historical]  [Maintenance]  [Move-In Purchases]  [Later List]  [All Properties]
 Header buttons: [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ Solar]  [Tax Planning]  [💰 Savings]  [Net Worth]  [Cash Flow]
 ```
 - Property tabs are hidden for the global header views (`GLOBAL_HEADER_VIEWS`: `tax-planning`, `net-worth`, `budget`, `cash-flow`, `mom-budget`, `solar`, `deductions`, `savings`) and for **All Properties**.
 - **731WO** and **4781MC** are primary residences — only show Investment Return and Maintenance views (`PRIMARY_PROPERTIES` / `PRIMARY_VIEWS` constants).
-- **Move-In Purchases** is available only on **4781MC** (`MOVE_IN_PURCHASE_PROPERTY`).
+- **Move-In Purchases** and **Later List** are available only on **4781MC** (`MOVE_IN_PURCHASE_PROPERTY` / `LATER_LIST_PROPERTY`).
 - Switching property tabs reloads the current view for the new property.
 
 ### Views
@@ -78,6 +78,7 @@ Header buttons: [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ So
 | Deductions Tracker | `deductions` | Global itemized deductions log for the current year |
 | Savings | `savings` | Account balances + annual obligations tracker with paid/unpaid checkboxes per year |
 | Move-In Purchases | `move-in-purchases` | **4781MC only** — move-in shopping list with per-item categories, price totals, and an edit mode |
+| Later List | `later-list` | **4781MC only** — same setup as Move-In Purchases, for purchases planned *after* move-in; independent KV records |
 | Net Worth | `net-worth` | Assets minus liabilities — linked bank balances, manual items, vehicles, property equity, treasury portfolio; includes the bank-sync warning banner + **Reconnect** flow |
 
 ### State Model
@@ -620,6 +621,19 @@ All of these reject any property other than `4781MC` (`requireMoveInPurchaseProp
 | `get_move_in_categories` | — | `{ categories: [...] }` — seeds `MOVE_IN_CATEGORIES_DEFAULT` when unset |
 | `save_move_in_categories` | `categories: [...]` | `{ categories: [...] }` — trims, drops blanks, de-dupes case-insensitively, caps at 100 |
 
+#### Later List (per-property — 4781MC only)
+All of these reject any property other than `4781MC` (`requireLaterListProperty`) with a 400. Same entry/category shapes and normalizers as Move-In Purchases, but backed by `later_list:{property}` / `later_categories:{property}`.
+
+| Action | Extra payload | Returns |
+|---|---|---|
+| `get_later_list` | — | `{ entries: [...] }` |
+| `save_later_list` | `entries: [...]` | `{ entries: [...] }` — full overwrite; used by category rename/delete cascades |
+| `add_later_item` | `entry: { item, date, estimatedPrice, productLink, notes, purchased, category }` | `{ entry: { id, ... } }` — server-side UUID |
+| `update_later_item` | `id`, `entry: {...}` | `{ entry: {...} }` |
+| `delete_later_item` | `id` | `{ success: true }` |
+| `get_later_categories` | — | `{ categories: [...] }` — seeds `MOVE_IN_CATEGORIES_DEFAULT` when unset |
+| `save_later_categories` | `categories: [...]` | `{ categories: [...] }` — trims, drops blanks, de-dupes case-insensitively, caps at 100 |
+
 #### Net Worth (global — not per-property)
 | Action | Extra payload | Returns |
 |---|---|---|
@@ -688,6 +702,8 @@ savings                    →  { accounts: {robinhoodChecking, robinhoodBrokera
 net_worth                  →  { manualItems, vehicles, propertyAssets, plaidAccounts, treasuryPortfolio, plaidRefreshedAt, history }
 move_in_purchases:{property}  →  Array of move-in purchase objects (4781MC only)
 move_in_categories:{property} →  Array of category name strings (4781MC only)
+later_list:{property}         →  Array of later-list purchase objects (4781MC only)
+later_categories:{property}   →  Array of category name strings (4781MC only)
 ```
 Valid properties: `6AL`, `95EB`, `446BB`, `731WO`, `4781MC`
 
@@ -756,6 +772,11 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-07-31 — Later List view + Cash Flow "Move In Stuff" auto-derives
+
+- **New `Later List` view tab (4781MC only)** — a full parallel of Move-In Purchases for purchases planned *after* move-in. Its own state keys (`state.data['4781MC'].laterList` / `laterCategories`), constants (`LATER_LIST_PROPERTY`, `LATER_LIST_DEFAULT_DATE = '2027-06-01'`, `LATER_LIST_CATEGORIES_DEFAULT`, `LATER_LIST_UNCATEGORIZED`, `LATER_LIST_CATEGORY_ICONS`), functions (`renderLaterList`/`renderLaterListSection`/`llRowHtml`/`llTableHtml`/`saveLaterListItem`/`toggleLaterListItem`/`deleteLaterListItem` + a `ll…Category` family), the `#ll-categories-modal`, and worker actions `get_later_list`/`save_later_list`/`add_later_item`/`update_later_item`/`delete_later_item`/`get_later_categories`/`save_later_categories` backed by `later_list:{property}` / `later_categories:{property}` KV. **Reuses the existing `.mip-*` CSS** (no new styles) and the shared `normalizeMoveInPurchase`/`normalizeMoveInCategories` worker normalizers. Section starts at `// ── View: Later List`. Worker deploy required for the new actions.
+- **Cash Flow "4781MC Move In Stuff" expense now derives its amount live** from the 4781MC Move-In Purchases total (sum of `estimatedPrice`) instead of a manual entry. Matched by name via `cfIsMoveInStuffLine()` (`CF_MOVE_IN_STUFF_LABEL`); `cfItemAmount(item)` returns `cfMoveInPurchasesTotal()` for that line (else `tpN(item.amount)`) and is used in `cfTotals`, the column total, and the amount sort. The row shows a **Linked** badge + note, and its amount input is disabled in edit mode. `loadCashFlowDetails` now `ensureLoaded`s `moveInPurchases` so the total is available.
 
 ### 2026-07-25 — Fair Share: quick-math derivation digest
 

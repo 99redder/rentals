@@ -1458,6 +1458,7 @@
     <button class="view-btn" data-view="historical">Historical</button>
     <button class="view-btn" data-view="maintenance">Maintenance</button>
     <button class="view-btn" data-view="move-in-purchases">Move in Purchases</button>
+    <button class="view-btn" data-view="later-list">Later List</button>
     <button class="view-btn" data-view="portfolio">All Properties</button>
   </div>
 </header>
@@ -1646,6 +1647,22 @@
   </div>
 </div>
 
+<div class="modal-overlay hidden" id="ll-categories-modal" onclick="handleModalOverlayClick(event,'ll-categories-modal')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ll-cat-title" style="max-width:560px">
+    <div class="modal-header">
+      <div class="modal-icon primary">🏷️</div>
+      <div>
+        <div class="modal-title" id="ll-cat-title">Manage Categories</div>
+        <div class="modal-subtitle">Add, rename, or delete later-list categories</div>
+      </div>
+    </div>
+    <div class="modal-body" id="ll-cat-modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeLaterListCategoriesModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Fair Share Cost-Sharing Agreement Modal ── -->
 <div class="modal-overlay hidden" id="fs-agreement-modal" onclick="handleModalOverlayClick(event,'fs-agreement-modal')">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="fs-agreement-title" style="max-width:780px">
@@ -1818,6 +1835,26 @@ const MOVE_IN_CATEGORY_ICONS = {
 const MOVE_IN_CATEGORY_ICON_FALLBACK = '🏷️';
 function moveInCategoryIcon(name) {
   return MOVE_IN_CATEGORY_ICONS[name] || MOVE_IN_CATEGORY_ICON_FALLBACK;
+}
+
+// Later List — same setup as Move-In Purchases, for purchases planned after move-in.
+const LATER_LIST_PROPERTY = '4781MC';
+const LATER_LIST_DEFAULT_DATE = '2027-06-01';
+const LATER_LIST_CATEGORIES_DEFAULT = ['Living Room', 'Basement', 'Craft Room', 'Office', 'Kitchen / Dining Room', 'Ellie', 'Mom', 'Other'];
+const LATER_LIST_UNCATEGORIZED = 'Other';
+const LATER_LIST_CATEGORY_ICONS = {
+  'Living Room': '🛋️',
+  'Basement': '🧰',
+  'Craft Room': '🎨',
+  'Office': '💼',
+  'Kitchen / Dining Room': '🍽️',
+  'Ellie': '🧸',
+  'Mom': '👵',
+  'Other': '📦',
+};
+const LATER_LIST_CATEGORY_ICON_FALLBACK = '🏷️';
+function laterListCategoryIcon(name) {
+  return LATER_LIST_CATEGORY_ICONS[name] || LATER_LIST_CATEGORY_ICON_FALLBACK;
 }
 const PRIMARY_VIEWS = new Set(['investment-return', 'maintenance']);
 const GLOBAL_HEADER_VIEWS = new Set(['tax-planning', 'net-worth', 'budget', 'cash-flow', 'mom-budget', 'solar', 'deductions', 'savings']);
@@ -2115,11 +2152,11 @@ const state = {
   currentView: 'current-year',
   password: '', // legacy only; runtime auth uses HttpOnly session cookie
   data: {
-    '6AL':   { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null },
-    '95EB':  { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null },
-    '446BB': { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null },
-    '731WO': { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null },
-    '4781MC': { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null }
+    '6AL':   { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null, laterList: null, laterCategories: null },
+    '95EB':  { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null, laterList: null, laterCategories: null },
+    '446BB': { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null, laterList: null, laterCategories: null },
+    '731WO': { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null, laterList: null, laterCategories: null },
+    '4781MC': { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null, laterList: null, laterCategories: null }
   },
   pendingDefaultPrompt: null,  // { category, amount } after a save
   pendingMaintPrompt: null,    // { date, amount, description, category } after expense save
@@ -2176,18 +2213,24 @@ async function ensureLoaded(property, key) {
     maintenance:  'get_maintenance',
     investment:   'get_investment',
     moveInPurchases: 'get_move_in_purchases',
-    moveInCategories: 'get_move_in_categories'
+    moveInCategories: 'get_move_in_categories',
+    laterList: 'get_later_list',
+    laterCategories: 'get_later_categories'
   };
 
   const result = await callApi({ action: actionMap[key], property });
   if (key === 'depreciation' || key === 'investment') {
     state.data[property][key] = result.config || null; // null means not configured
-  } else if (key === 'maintenance' || key === 'moveInPurchases') {
+  } else if (key === 'maintenance' || key === 'moveInPurchases' || key === 'laterList') {
     state.data[property][key] = result.entries || [];
   } else if (key === 'moveInCategories') {
     state.data[property][key] = Array.isArray(result.categories) && result.categories.length
       ? result.categories
       : MOVE_IN_CATEGORIES_DEFAULT.slice();
+  } else if (key === 'laterCategories') {
+    state.data[property][key] = Array.isArray(result.categories) && result.categories.length
+      ? result.categories
+      : LATER_LIST_CATEGORIES_DEFAULT.slice();
   } else {
     state.data[property][key] = result[key] || (key === 'transactions' ? [] : {});
   }
@@ -2395,6 +2438,7 @@ function onSaleCloseoutFieldInput() {
 
 function isViewAvailableForProperty(prop, view) {
   if (view === 'move-in-purchases') return prop === MOVE_IN_PURCHASE_PROPERTY;
+  if (view === 'later-list') return prop === LATER_LIST_PROPERTY;
   if (view === 'portfolio') return true;
   if (PRIMARY_PROPERTIES.has(prop)) return PRIMARY_VIEWS.has(view);
   return true;
@@ -2493,6 +2537,7 @@ async function renderView() {
       case 'historical':    await renderHistorical();   break;
       case 'maintenance':   await renderMaintenance();  break;
       case 'move-in-purchases': await renderMoveInPurchases(); break;
+      case 'later-list': await renderLaterList(); break;
       case 'add-entry':     await renderAddEntry();     break;
       case 'portfolio':     await renderPortfolio();    break;
       case 'tax-planning':  await renderTaxPlanning();   break;
@@ -2691,6 +2736,7 @@ function handleModalOverlayClick(e, modalId) {
     if (modalId === 'solar-calc-modal') closeSolarCalcModal();
     if (modalId === 'fs-agreement-modal') closeFsAgreementModal();
     if (modalId === 'mip-categories-modal') closeMoveInCategoriesModal();
+    if (modalId === 'll-categories-modal') closeLaterListCategoriesModal();
   }
 }
 
@@ -4013,6 +4059,530 @@ async function changeMoveInPurchaseCategory(id, category) {
   } catch (err) {
     alert('Failed to update: ' + err.message);
     renderMoveInPurchases();
+  }
+}
+
+// ── View: Later List ──────────────────────────────────────────────────────────
+// Same setup as Move-In Purchases, for purchases planned to do AFTER move-in.
+
+let _llSort = 'category';  // 'category' | 'name' | 'price-desc' | 'price-asc'
+let _llEditMode = false;   // when off, per-item category dropdown + edit/delete are hidden
+let _llSearch = '';        // free-text filter over item name, notes, and category
+
+const LL_SORTS = [
+  { key: 'category',   label: 'Category' },
+  { key: 'name',       label: 'Name' },
+  { key: 'price-desc', label: 'Price ↓' },
+  { key: 'price-asc',  label: 'Price ↑' },
+];
+
+function setLaterListSort(mode) {
+  _llSort = mode;
+  renderLaterList();
+}
+
+function toggleLaterListEditMode() {
+  _llEditMode = !_llEditMode;
+  renderLaterList();
+}
+
+// Re-renders on every keystroke, so restore focus + caret afterwards.
+function llSetSearch(value) {
+  _llSearch = value;
+  renderLaterList().then(() => {
+    const el = document.getElementById('ll-search');
+    if (!el) return;
+    el.focus();
+    const n = el.value.length;
+    try { el.setSelectionRange(n, n); } catch (_) { /* type=search may refuse */ }
+  });
+}
+
+function llCategoryOptionsHtml(cats, current) {
+  return cats.map(c =>
+    `<option value="${escAttr(c)}"${c === current ? ' selected' : ''}>${escHtml(c)}</option>`
+  ).join('');
+}
+
+async function renderLaterList() {
+  const prop = state.currentProperty;
+  if (prop !== LATER_LIST_PROPERTY) {
+    state.currentView = defaultViewForProperty(prop);
+    await renderView();
+    return;
+  }
+  await ensureLoaded(prop, 'laterList');
+  await ensureLoaded(prop, 'laterCategories');
+  document.getElementById('app').innerHTML = renderLaterListSection(prop);
+}
+
+// Category list for the property, always including any categories referenced by
+// existing items (so nothing renders as an orphan) with defaults as a fallback.
+function laterListCategories(prop) {
+  const stored = state.data[prop].laterCategories;
+  const list = Array.isArray(stored) && stored.length ? stored.slice() : LATER_LIST_CATEGORIES_DEFAULT.slice();
+  for (const e of (state.data[prop].laterList || [])) {
+    const c = (e.category || '').trim();
+    if (c && !list.includes(c)) list.push(c);
+  }
+  return list;
+}
+
+function laterListCategoryOf(entry) {
+  const c = (entry.category || '').trim();
+  return c || LATER_LIST_UNCATEGORIZED;
+}
+
+function llSortEntries(list) {
+  return list.slice().sort((a, b) => {
+    if (!!a.purchased !== !!b.purchased) return a.purchased ? 1 : -1;
+    if (_llSort === 'price-desc') return (Number(b.estimatedPrice) || 0) - (Number(a.estimatedPrice) || 0);
+    if (_llSort === 'price-asc') return (Number(a.estimatedPrice) || 0) - (Number(b.estimatedPrice) || 0);
+    if (_llSort === 'name') return String(a.item || '').localeCompare(String(b.item || ''));
+    // 'category' groups elsewhere; within a group fall back to price high → low.
+    return (Number(b.estimatedPrice) || 0) - (Number(a.estimatedPrice) || 0);
+  });
+}
+
+function llFilterEntries(list) {
+  const q = _llSearch.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter(e =>
+    String(e.item || '').toLowerCase().includes(q) ||
+    String(e.notes || '').toLowerCase().includes(q) ||
+    laterListCategoryOf(e).toLowerCase().includes(q));
+}
+
+function llRowHtml(prop, e) {
+  const productLink = normalizePurchaseLink(e.productLink);
+  const current = laterListCategoryOf(e);
+  const categoryCell = _llEditMode
+    ? `<select class="mip-cat-select no-print" aria-label="Category" onchange="changeLaterListCategory('${escAttr(e.id)}', this.value)">${llCategoryOptionsHtml(laterListCategories(prop), current)}</select>`
+    : `<span class="mip-pill">${escHtml(current)}</span>`;
+  return `
+    <tr class="mip-row${e.purchased ? ' is-done' : ''}${_llEditMode ? ' is-editing' : ''}">
+      <td class="no-print" style="width:38px;text-align:center">
+        <input type="checkbox" ${e.purchased ? 'checked' : ''} onchange="toggleLaterListItem('${escAttr(e.id)}', this.checked)" aria-label="Mark ${escAttr(e.item)} purchased">
+      </td>
+      <td>
+        <div class="mip-name">${escHtml(e.item)}</div>
+        ${e.notes ? `<div class="mip-sub">${escHtml(e.notes)}</div>` : ''}
+        ${productLink ? `<div style="margin-top:.2rem"><a class="mip-link" href="${escAttr(productLink)}" target="_blank" rel="noopener noreferrer">View product ↗</a></div>` : ''}
+      </td>
+      <td class="mip-cat-col">${categoryCell}</td>
+      <td class="mip-num">${fmt(e.estimatedPrice || 0)}</td>
+      <td class="mip-num no-print" style="width:1%">
+        ${_llEditMode ? `<span class="mip-act">
+          <button class="mip-icon-btn" title="Edit item" onclick="editLaterListItem('${escAttr(e.id)}')">Edit</button>
+          <button class="mip-icon-btn is-danger" title="Delete item" aria-label="Delete ${escAttr(e.item)}" onclick="deleteLaterListItem('${escAttr(e.id)}')">✕</button>
+        </span>` : ''}
+      </td>
+    </tr>`;
+}
+
+function llTableHtml(rowsHtml) {
+  return `<table class="mip-table">
+      <thead><tr>
+        <th class="no-print"></th>
+        <th style="width:100%">Item</th>
+        <th class="mip-cat-col">Category</th>
+        <th class="mip-num">Est. Price</th>
+        <th class="no-print"></th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+}
+
+function renderLaterListSection(prop) {
+  const all = state.data[prop].laterList || [];
+  const visible = llSortEntries(llFilterEntries(all));
+
+  // Totals always reflect the whole list, not the current filter.
+  const total = all.reduce((s, e) => s + (Number(e.estimatedPrice) || 0), 0);
+  const purchasedTotal = all.reduce((s, e) => s + (e.purchased ? (Number(e.estimatedPrice) || 0) : 0), 0);
+  const remainingTotal = total - purchasedTotal;
+  const purchasedCount = all.filter(e => e.purchased).length;
+  const pct = total > 0 ? Math.round((purchasedTotal / total) * 100) : 0;
+  const searching = _llSearch.trim() !== '';
+
+  let bodyHtml;
+  if (all.length === 0) {
+    bodyHtml = `<div class="mip-empty">
+      <div style="font-size:1.6rem;margin-bottom:.4rem">📦</div>
+      Nothing on the list yet.<br>Use <b>+ Add Item</b> to add your first later-list item.
+    </div>`;
+  } else if (visible.length === 0) {
+    bodyHtml = `<div class="mip-empty">No items match “${escHtml(_llSearch)}”.</div>`;
+  } else if (_llSort === 'category') {
+    const cats = laterListCategories(prop);
+    const groups = new Map(cats.map(c => [c, []]));
+    for (const e of visible) {
+      const c = laterListCategoryOf(e);
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push(e);
+    }
+    const groupHtml = [...groups.entries()].map(([cat, items]) => {
+      if (!items.length) return '';
+      const groupTotal = items.reduce((s, e) => s + (Number(e.estimatedPrice) || 0), 0);
+      return `
+        <tr class="mip-grp">
+          <td colspan="3">${laterListCategoryIcon(cat)} ${escHtml(cat)} <span class="mip-grp-count">${items.length}</span></td>
+          <td class="mip-num">${fmt(groupTotal)}</td>
+          <td class="no-print"></td>
+        </tr>` + items.map(e => llRowHtml(prop, e)).join('');
+    }).join('');
+    bodyHtml = `<div class="table-wrap">${llTableHtml(groupHtml)}</div>`;
+  } else {
+    bodyHtml = `<div class="table-wrap">${llTableHtml(visible.map(e => llRowHtml(prop, e)).join(''))}</div>`;
+  }
+
+  const sortBtns = LL_SORTS.map(s =>
+    `<button class="${_llSort === s.key ? 'is-on' : ''}" onclick="setLaterListSort('${s.key}')">${s.label}</button>`
+  ).join('');
+
+  return `
+    <div style="max-width:${_llEditMode ? '900px' : '780px'};margin:0 auto">
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-label">Estimated Total</div><div class="stat-value">${fmt(total)}</div></div>
+      <div class="stat-card"><div class="stat-label">Still Needed</div><div class="stat-value" style="color:var(--warning)">${fmt(remainingTotal)}</div></div>
+      <div class="stat-card"><div class="stat-label">Purchased</div><div class="stat-value" style="color:var(--success)">${fmt(purchasedTotal)}</div></div>
+    </div>
+
+    <div class="card mt-2">
+      <div class="mip-head">
+        <div>
+          <div class="mip-title">Later List</div>
+          <div class="mip-meta">4781 MC · after move-in · <b>${all.length}</b> item${all.length === 1 ? '' : 's'} · <b>${purchasedCount}</b> purchased${searching ? ` · <b>${visible.length}</b> shown` : ''}</div>
+        </div>
+        <button class="btn btn-primary btn-sm no-print" onclick="openAddLaterListItem()">+ Add Item</button>
+      </div>
+      ${all.length ? `<div class="mip-progress no-print" title="${pct}% of the estimated total purchased"><i style="width:${pct}%"></i></div>` : ''}
+
+      <div class="mip-toolbar no-print">
+        <input id="ll-search" class="mip-search" type="text" placeholder="Search items…"
+               value="${escAttr(_llSearch)}" oninput="llSetSearch(this.value)" aria-label="Search later list">
+        <span class="mip-tool-label">Sort</span>
+        <div class="mip-seg">${sortBtns}</div>
+        <span class="mip-spacer"></span>
+        ${_llEditMode ? `<button class="mip-tbtn" onclick="openLaterListCategoriesModal()">⚙ Categories</button>` : ''}
+        <button class="mip-tbtn ${_llEditMode ? 'is-on' : ''}" onclick="toggleLaterListEditMode()">${_llEditMode ? '✓ Done' : '✎ Edit'}</button>
+      </div>
+
+      ${bodyHtml}
+    </div>
+
+    <div class="card mt-2 hidden" id="later-form-card">
+      <div class="card-header">
+        <div class="card-title" id="later-form-title">Add Later-List Item</div>
+        <button class="btn btn-ghost btn-sm" onclick="closeLaterListForm()">Cancel</button>
+      </div>
+      <div class="card-body">
+        <input type="hidden" id="ll-edit-id">
+        <div class="year-form-grid">
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Item</label>
+            <input type="text" id="ll-item" placeholder="Patio furniture, upgraded fixtures, art...">
+          </div>
+          <div class="form-group">
+            <label>Target / Added Date</label>
+            <input type="date" id="ll-date" value="${LATER_LIST_DEFAULT_DATE}">
+          </div>
+          <div class="form-group">
+            <label>Estimated Price ($)</label>
+            <input type="text" inputmode="decimal" id="ll-estimated-price" placeholder="0.00" onblur="formatMoneyInput(this)">
+          </div>
+          <div class="form-group" style="align-self:end">
+            <label style="display:flex;gap:.45rem;align-items:center;font-weight:600;text-transform:none;letter-spacing:0;color:var(--text)">
+              <input type="checkbox" id="ll-purchased"> Purchased
+            </label>
+          </div>
+          <div class="form-group">
+            <label>Category</label>
+            <select id="ll-category" style="font-size:.875rem;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text);width:100%;box-sizing:border-box">
+              ${llCategoryOptionsHtml(laterListCategories(prop), LATER_LIST_UNCATEGORIZED)}
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Product Link</label>
+            <input type="url" id="ll-product-link" placeholder="https://...">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Notes</label>
+            <textarea id="ll-notes" rows="3" placeholder="Optional — size, model, store, priority, room, etc."
+                      style="resize:vertical;font-family:inherit;font-size:.875rem;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text);width:100%;box-sizing:border-box"></textarea>
+          </div>
+        </div>
+        <div class="form-actions mt-2">
+          <button class="btn btn-primary" id="later-form-submit" onclick="saveLaterListItem()">Save Item</button>
+          <button class="btn btn-ghost" onclick="closeLaterListForm()">Cancel</button>
+        </div>
+        <div id="later-form-error" class="error-msg mt-1 hidden"></div>
+      </div>
+    </div>
+    </div>`;
+}
+
+function openAddLaterListItem() {
+  const card = document.getElementById('later-form-card');
+  if (card) {
+    card.classList.remove('hidden');
+    document.getElementById('ll-item').focus();
+  }
+}
+
+function closeLaterListForm() {
+  const card = document.getElementById('later-form-card');
+  if (card) card.classList.add('hidden');
+  const editId = document.getElementById('ll-edit-id');
+  if (editId) editId.value = '';
+  const item = document.getElementById('ll-item');
+  if (item) item.value = '';
+  const date = document.getElementById('ll-date');
+  if (date) date.value = LATER_LIST_DEFAULT_DATE;
+  const price = document.getElementById('ll-estimated-price');
+  if (price) price.value = '';
+  const productLink = document.getElementById('ll-product-link');
+  if (productLink) productLink.value = '';
+  const notes = document.getElementById('ll-notes');
+  if (notes) notes.value = '';
+  const purchased = document.getElementById('ll-purchased');
+  if (purchased) purchased.checked = false;
+  const category = document.getElementById('ll-category');
+  if (category) category.value = LATER_LIST_UNCATEGORIZED;
+  const title = document.getElementById('later-form-title');
+  if (title) title.textContent = 'Add Later-List Item';
+  const submit = document.getElementById('later-form-submit');
+  if (submit) submit.textContent = 'Save Item';
+  const err = document.getElementById('later-form-error');
+  if (err) err.classList.add('hidden');
+}
+
+function editLaterListItem(id) {
+  const entry = (state.data[LATER_LIST_PROPERTY].laterList || []).find(e => e.id === id);
+  if (!entry) return;
+  document.getElementById('ll-edit-id').value = id;
+  document.getElementById('ll-item').value = entry.item || '';
+  document.getElementById('ll-date').value = entry.date || LATER_LIST_DEFAULT_DATE;
+  document.getElementById('ll-estimated-price').value = moneyInputValue(entry.estimatedPrice);
+  document.getElementById('ll-product-link').value = entry.productLink || '';
+  document.getElementById('ll-notes').value = entry.notes || '';
+  document.getElementById('ll-purchased').checked = !!entry.purchased;
+  document.getElementById('ll-category').value = laterListCategoryOf(entry);
+  document.getElementById('later-form-title').textContent = 'Edit Later-List Item';
+  document.getElementById('later-form-submit').textContent = 'Update Item';
+  openAddLaterListItem();
+  document.getElementById('later-form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function saveLaterListItem() {
+  const prop = LATER_LIST_PROPERTY;
+  const editId = document.getElementById('ll-edit-id').value;
+  const item = document.getElementById('ll-item').value.trim();
+  const date = document.getElementById('ll-date').value;
+  const estimatedPrice = parseMoney(document.getElementById('ll-estimated-price').value);
+  const productLink = normalizePurchaseLink(document.getElementById('ll-product-link').value);
+  const notes = document.getElementById('ll-notes').value.trim();
+  const purchased = document.getElementById('ll-purchased').checked;
+  const category = document.getElementById('ll-category').value;
+  const errEl = document.getElementById('later-form-error');
+
+  if (!item) { errEl.textContent = 'Item is required.'; errEl.classList.remove('hidden'); return; }
+
+  try {
+    if (editId) {
+      const result = await callApi({ action: 'update_later_item', property: prop, id: editId, entry: { item, date, estimatedPrice, productLink, notes, purchased, category } });
+      const idx = state.data[prop].laterList.findIndex(e => e.id === editId);
+      if (idx !== -1) state.data[prop].laterList[idx] = result.entry;
+    } else {
+      const result = await callApi({ action: 'add_later_item', property: prop, entry: { item, date, estimatedPrice, productLink, notes, purchased, category } });
+      state.data[prop].laterList.push(result.entry);
+    }
+    closeLaterListForm();
+    renderLaterList();
+  } catch (e) {
+    errEl.textContent = 'Save failed: ' + e.message;
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function toggleLaterListItem(id, purchased) {
+  const prop = LATER_LIST_PROPERTY;
+  const entries = state.data[prop].laterList || [];
+  const entry = entries.find(e => e.id === id);
+  if (!entry) return;
+  try {
+    const result = await callApi({ action: 'update_later_item', property: prop, id, entry: { ...entry, purchased } });
+    const idx = entries.findIndex(e => e.id === id);
+    if (idx !== -1) state.data[prop].laterList[idx] = result.entry;
+    renderLaterList();
+  } catch (err) {
+    alert(`Failed to update: ${err.message}`);
+    renderLaterList();
+  }
+}
+
+async function deleteLaterListItem(id) {
+  const prop = LATER_LIST_PROPERTY;
+  const entry = (state.data[prop].laterList || []).find(e => e.id === id);
+  const detail = entry
+    ? `${entry.item || 'Item'} — ${fmt(entry.estimatedPrice || 0)}${entry.notes ? ` · ${entry.notes}` : ''}`
+    : 'This later-list item will be permanently removed.';
+  showBrandedNotice({
+    title: 'Delete Later-List Item',
+    type: 'danger',
+    message: detail,
+    confirmLabel: 'Yes, Delete',
+    onConfirm: async () => {
+      try {
+        await callApi({ action: 'delete_later_item', property: prop, id });
+        state.data[prop].laterList = state.data[prop].laterList.filter(e => e.id !== id);
+        renderLaterList();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    }
+  });
+}
+
+// ── Later List Categories ─────────────────────────────────────────────────────
+
+function renderLaterListCategoriesModalBody(prop) {
+  const cats = laterListCategories(prop);
+  const entries = state.data[prop].laterList || [];
+  const rows = cats.map((c, i) => {
+    const items = entries.filter(e => laterListCategoryOf(e) === c);
+    const catTotal = items.reduce((s, e) => s + (Number(e.estimatedPrice) || 0), 0);
+    return `
+      <div style="display:flex;gap:.5rem;align-items:center;padding:.45rem 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+        <input type="text" value="${escAttr(c)}" id="ll-cat-name-${i}" onkeydown="if(event.key==='Enter') renameLaterListCategory('${escAttr(c)}', this.value)"
+               style="flex:1;min-width:150px;font-size:.85rem;padding:.35rem .5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text)">
+        <span style="font-size:.78rem;color:var(--text-muted);white-space:nowrap">${items.length} item${items.length === 1 ? '' : 's'} · ${fmt(catTotal)}</span>
+        <button class="btn btn-ghost btn-sm" style="padding:.2rem .5rem" onclick="renameLaterListCategory('${escAttr(c)}', document.getElementById('ll-cat-name-${i}').value)">Rename</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.2rem .5rem" onclick="deleteLaterListCategory('${escAttr(c)}')">Delete</button>
+      </div>`;
+  }).join('');
+  return `
+    <div style="margin-bottom:1rem">${rows || '<div style="color:var(--text-muted);font-size:.85rem">No categories yet.</div>'}</div>
+    <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding-top:.6rem;border-top:1px solid var(--border)">
+      <input type="text" id="ll-new-category" placeholder="New category name" onkeydown="if(event.key==='Enter') addLaterListCategory()"
+             style="flex:1;min-width:170px;font-size:.85rem;padding:.4rem .5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text)">
+      <button class="btn btn-primary btn-sm" onclick="addLaterListCategory()">+ Add Category</button>
+    </div>
+    <div id="ll-category-error" class="error-msg mt-1 hidden"></div>`;
+}
+
+function openLaterListCategoriesModal() {
+  document.getElementById('ll-cat-modal-body').innerHTML = renderLaterListCategoriesModalBody(LATER_LIST_PROPERTY);
+  document.getElementById('ll-categories-modal').classList.remove('hidden');
+}
+
+function closeLaterListCategoriesModal() {
+  const m = document.getElementById('ll-categories-modal');
+  if (m) m.classList.add('hidden');
+}
+
+function laterListCategoriesModalOpen() {
+  const m = document.getElementById('ll-categories-modal');
+  return m && !m.classList.contains('hidden');
+}
+
+function llCategoryError(msg) {
+  const errEl = document.getElementById('ll-category-error');
+  if (!errEl) return;
+  errEl.textContent = msg;
+  errEl.classList.remove('hidden');
+}
+
+async function saveLaterListCategoriesList(prop, list) {
+  const result = await callApi({ action: 'save_later_categories', property: prop, categories: list });
+  state.data[prop].laterCategories = Array.isArray(result.categories) ? result.categories : list;
+}
+
+// Re-render the main list and, if the manage modal is open, repopulate its body.
+function refreshLaterListCategoriesUI() {
+  renderLaterList().then(() => {
+    if (laterListCategoriesModalOpen()) {
+      document.getElementById('ll-cat-modal-body').innerHTML = renderLaterListCategoriesModalBody(LATER_LIST_PROPERTY);
+    }
+  });
+}
+
+async function addLaterListCategory() {
+  const prop = LATER_LIST_PROPERTY;
+  const name = (document.getElementById('ll-new-category').value || '').trim();
+  document.getElementById('ll-category-error').classList.add('hidden');
+  if (!name) { llCategoryError('Category name is required.'); return; }
+  const list = laterListCategories(prop);
+  if (list.some(c => c.toLowerCase() === name.toLowerCase())) { llCategoryError('That category already exists.'); return; }
+  try {
+    await saveLaterListCategoriesList(prop, [...list, name]);
+    refreshLaterListCategoriesUI();
+  } catch (e) { llCategoryError('Save failed: ' + e.message); }
+}
+
+async function renameLaterListCategory(oldName, newNameRaw) {
+  const prop = LATER_LIST_PROPERTY;
+  const newName = (newNameRaw || '').trim();
+  document.getElementById('ll-category-error').classList.add('hidden');
+  if (!newName) { llCategoryError('Category name cannot be empty.'); return; }
+  if (newName === oldName) return;
+  const list = laterListCategories(prop);
+  if (list.some(c => c.toLowerCase() === newName.toLowerCase() && c !== oldName)) { llCategoryError('That category already exists.'); return; }
+  const newList = list.map(c => (c === oldName ? newName : c));
+  const entries = state.data[prop].laterList || [];
+  const affected = entries.filter(e => laterListCategoryOf(e) === oldName);
+  try {
+    await saveLaterListCategoriesList(prop, newList);
+    if (affected.length) {
+      const updated = entries.map(e => (laterListCategoryOf(e) === oldName ? { ...e, category: newName } : e));
+      const res = await callApi({ action: 'save_later_list', property: prop, entries: updated });
+      state.data[prop].laterList = res.entries || updated;
+    }
+    refreshLaterListCategoriesUI();
+  } catch (e) { llCategoryError('Save failed: ' + e.message); }
+}
+
+function deleteLaterListCategory(name) {
+  const prop = LATER_LIST_PROPERTY;
+  const entries = state.data[prop].laterList || [];
+  const affected = entries.filter(e => laterListCategoryOf(e) === name);
+  const fallback = name === LATER_LIST_UNCATEGORIZED ? '' : LATER_LIST_UNCATEGORIZED;
+  const msg = affected.length
+    ? `${affected.length} item${affected.length === 1 ? '' : 's'} in "${name}" will move to "${fallback || LATER_LIST_UNCATEGORIZED}".`
+    : `The "${name}" category will be removed.`;
+  showBrandedNotice({
+    title: 'Delete Category',
+    type: 'danger',
+    message: msg,
+    confirmLabel: 'Yes, Delete',
+    onConfirm: async () => {
+      try {
+        const list = laterListCategories(prop).filter(c => c !== name);
+        await saveLaterListCategoriesList(prop, list);
+        if (affected.length) {
+          const updated = entries.map(e => (laterListCategoryOf(e) === name ? { ...e, category: fallback } : e));
+          const res = await callApi({ action: 'save_later_list', property: prop, entries: updated });
+          state.data[prop].laterList = res.entries || updated;
+        }
+        refreshLaterListCategoriesUI();
+      } catch (e) { alert('Delete failed: ' + e.message); }
+    }
+  });
+}
+
+async function changeLaterListCategory(id, category) {
+  const prop = LATER_LIST_PROPERTY;
+  const entries = state.data[prop].laterList || [];
+  const entry = entries.find(e => e.id === id);
+  if (!entry) return;
+  try {
+    const result = await callApi({ action: 'update_later_item', property: prop, id, entry: { ...entry, category } });
+    const idx = entries.findIndex(e => e.id === id);
+    if (idx !== -1) state.data[prop].laterList[idx] = result.entry;
+    renderLaterList();
+  } catch (err) {
+    alert('Failed to update: ' + err.message);
+    renderLaterList();
   }
 }
 
@@ -8748,6 +9318,8 @@ async function loadCashFlowDetails() {
   await ensureNetWorthLoaded(true);
   // Needed so the cash-to-close badge knows whether a build has settled.
   await Promise.all(Object.keys(PRECONSTRUCTION_DEFAULTS).map(prop => ensureLoaded(prop, 'investment')));
+  // The "Move In Stuff" expense derives its amount from the Move-In Purchases list.
+  await ensureLoaded(MOVE_IN_PURCHASE_PROPERTY, 'moveInPurchases');
   await Promise.all(CASH_FLOW_AUTO_PROCEEDS_PROPS.map(prop => ensureSaleCloseoutDraftLoaded(prop)));
   await Promise.all(CASH_FLOW_AUTO_PROCEEDS_PROPS.flatMap(prop => {
     const keys = ['transactions', 'summaries', 'depreciation', 'investment'];
@@ -8789,7 +9361,7 @@ function cfRobinhoodChecking() {
 function cfTotals(autoIncome = [], autoExpenses = []) {
   const income = cfRobinhoodChecking() +
     [...autoIncome, ...(state.cashFlow?.income || [])].reduce((s, item) => s + tpN(item.amount), 0);
-  const expenses = [...autoExpenses, ...(state.cashFlow?.expenses || [])].reduce((s, item) => s + tpN(item.amount), 0);
+  const expenses = [...autoExpenses, ...(state.cashFlow?.expenses || [])].reduce((s, item) => s + cfItemAmount(item), 0);
   return { income, expenses, excess: income - expenses };
 }
 
@@ -8990,7 +9562,7 @@ function _renderCashFlowHtml() {
 function cfColumnHtml(type, title, color, autoItems = []) {
   const items = (state.cashFlow?.[type] || []).slice();
   if (type === 'expenses' && _cfExpenseSort === 'amount') {
-    items.sort((a, b) => tpN(b.amount) - tpN(a.amount) || (a.name || '').localeCompare(b.name || ''));
+    items.sort((a, b) => cfItemAmount(b) - cfItemAmount(a) || (a.name || '').localeCompare(b.name || ''));
   } else {
     items.sort((a, b) => {
       const ad = a.date || '9999-99-99';
@@ -8999,7 +9571,7 @@ function cfColumnHtml(type, title, color, autoItems = []) {
     });
   }
   const pinnedTotal = type === 'income' ? cfRobinhoodChecking() : 0;
-  const total = pinnedTotal + [...autoItems, ...items].reduce((s, item) => s + tpN(item.amount), 0);
+  const total = pinnedTotal + [...autoItems, ...items].reduce((s, item) => s + cfItemAmount(item), 0);
   const pinnedRow = type === 'income' ? cfPinnedCheckingRow(color) : '';
   const autoRows = autoItems.map(item => cfAutoRow(item, color)).join('');
   const rows = items.map(item => (_cfEdit?.type === type && _cfEdit?.id === item.id)
@@ -9102,6 +9674,30 @@ function cfConstructionPropertyFor(name) {
   ) || null;
 }
 
+// The "4781MC Move In Stuff" expense line derives its amount live from the sum of
+// the 4781MC Move-In Purchases list, rather than being entered manually.
+const CF_MOVE_IN_STUFF_LABEL = '4781MC Move In Stuff';
+
+function cfIsMoveInStuffLine(name) {
+  return String(name || '').trim().toLowerCase() === CF_MOVE_IN_STUFF_LABEL.toLowerCase();
+}
+
+function cfMoveInStuffLoaded() {
+  return Array.isArray(state.data?.[MOVE_IN_PURCHASE_PROPERTY]?.moveInPurchases);
+}
+
+function cfMoveInPurchasesTotal() {
+  return (state.data?.[MOVE_IN_PURCHASE_PROPERTY]?.moveInPurchases || [])
+    .reduce((s, e) => s + (Number(e.estimatedPrice) || 0), 0);
+}
+
+// Effective amount for a cash-flow item — the linked "Move In Stuff" expense uses
+// the live Move-In Purchases total; everything else uses its stored amount.
+function cfItemAmount(item) {
+  if (cfIsMoveInStuffLine(item?.name) && cfMoveInStuffLoaded()) return cfMoveInPurchasesTotal();
+  return tpN(item?.amount);
+}
+
 function cfDisplayRow(type, item, color) {
   if (type === 'income') {
     const expanded = cfIncomeExpanded(item.id);
@@ -9125,14 +9721,18 @@ function cfDisplayRow(type, item, color) {
     </td></tr>` : ''}`;
   }
   const linkedBuild = cfConstructionPropertyFor(item.name);
+  const moveInLinked = cfIsMoveInStuffLine(item.name);
+  const displayAmount = cfItemAmount(item);
+  const moveInCount = moveInLinked ? (state.data?.[MOVE_IN_PURCHASE_PROPERTY]?.moveInPurchases || []).length : 0;
   return `<tr>
     <td style="padding:.55rem .6rem;border-bottom:1px solid var(--border)">
-      <div style="font-weight:650">${escHtml(item.name || 'Untitled')}${linkedBuild ? ` <span style="display:inline-block;padding:.08rem .38rem;border-radius:999px;background:rgba(37,99,235,.10);color:var(--primary);font-size:.66rem;font-weight:750;text-transform:uppercase">Linked</span>` : ''}</div>
+      <div style="font-weight:650">${escHtml(item.name || 'Untitled')}${(linkedBuild || moveInLinked) ? ` <span style="display:inline-block;padding:.08rem .38rem;border-radius:999px;background:rgba(37,99,235,.10);color:var(--primary);font-size:.66rem;font-weight:750;text-transform:uppercase">Linked</span>` : ''}</div>
       ${linkedBuild ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:.1rem">Feeds the ${escHtml(linkedBuild)} Investment Return purchase-funding card — cash still due at settlement.</div>` : ''}
+      ${moveInLinked ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:.1rem">Derives live from the 4781MC Move-In Purchases total (${moveInCount} item${moveInCount === 1 ? '' : 's'}).</div>` : ''}
       ${item.note ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:.1rem">${escHtml(item.note)}</div>` : ''}
     </td>
     <td style="padding:.55rem .6rem;border-bottom:1px solid var(--border);white-space:nowrap;color:var(--text-muted)">${item.date ? fmtDate(item.date) : 'Unscheduled'}</td>
-    <td style="padding:.55rem .6rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;font-weight:700;color:${color}">${fmt(item.amount || 0)}</td>
+    <td style="padding:.55rem .6rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;font-weight:700;color:${color}">${fmt(displayAmount)}</td>
     <td style="padding:.55rem .4rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
       <button class="btn btn-ghost btn-sm" style="padding:.16rem .35rem;font-size:.75rem" onclick="cfEdit('${type}', '${escAttr(item.id)}')">Edit</button>
       <button class="btn btn-ghost btn-sm" style="padding:.16rem .35rem;font-size:.75rem;color:var(--danger)" onclick="cfDelete('${type}', '${escAttr(item.id)}')">Delete</button>
@@ -9150,7 +9750,8 @@ function cfEditRow(type, item) {
       <input id="cf-edit-date" class="form-input" type="date" value="${escAttr(item.date || '')}" style="width:100%;font-size:.84rem">
     </td>
     <td style="padding:.45rem .6rem;border-bottom:1px solid var(--border);min-width:125px">
-      <input id="cf-edit-amount" class="form-input" type="text" inputmode="decimal" placeholder="0.00" value="${escAttr(moneyInputValue(item.amount))}" onblur="formatMoneyInput(this)" style="width:100%;font-size:.84rem;text-align:right">
+      <input id="cf-edit-amount" class="form-input" type="text" inputmode="decimal" placeholder="0.00" value="${escAttr(moneyInputValue(cfIsMoveInStuffLine(item.name) ? cfMoveInPurchasesTotal() : item.amount))}" ${cfIsMoveInStuffLine(item.name) ? 'disabled title="Derived from the 4781MC Move-In Purchases total"' : 'onblur="formatMoneyInput(this)"'} style="width:100%;font-size:.84rem;text-align:right${cfIsMoveInStuffLine(item.name) ? ';background:var(--bg);cursor:not-allowed' : ''}">
+      ${cfIsMoveInStuffLine(item.name) ? `<div style="font-size:.68rem;color:var(--text-muted);margin-top:.2rem">Auto from Move-In Purchases</div>` : ''}
     </td>
     <td style="padding:.45rem .4rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
       <button class="btn btn-primary btn-sm" style="padding:.3rem .55rem" onclick="cfSave('${type}', '${escAttr(item.id || 'new')}')">Save</button>
@@ -12565,6 +13166,21 @@ window.closeMoveInCategoriesModal = closeMoveInCategoriesModal;
 window.addMoveInCategory       = addMoveInCategory;
 window.renameMoveInCategory    = renameMoveInCategory;
 window.deleteMoveInCategory    = deleteMoveInCategory;
+window.openAddLaterListItem    = openAddLaterListItem;
+window.closeLaterListForm      = closeLaterListForm;
+window.editLaterListItem       = editLaterListItem;
+window.saveLaterListItem       = saveLaterListItem;
+window.toggleLaterListItem     = toggleLaterListItem;
+window.deleteLaterListItem     = deleteLaterListItem;
+window.setLaterListSort        = setLaterListSort;
+window.toggleLaterListEditMode = toggleLaterListEditMode;
+window.llSetSearch             = llSetSearch;
+window.changeLaterListCategory = changeLaterListCategory;
+window.openLaterListCategoriesModal = openLaterListCategoriesModal;
+window.closeLaterListCategoriesModal = closeLaterListCategoriesModal;
+window.addLaterListCategory    = addLaterListCategory;
+window.renameLaterListCategory = renameLaterListCategory;
+window.deleteLaterListCategory = deleteLaterListCategory;
 window.saveInvestmentConfig    = saveInvestmentConfig;
 window.closeOutInvestmentSale  = closeOutInvestmentSale;
 window.syncSaleClosingCosts    = syncSaleClosingCosts;
@@ -12630,6 +13246,7 @@ document.addEventListener('keydown', e => {
     closeDedDeleteModal();
     closeFsAgreementModal();
     closeMoveInCategoriesModal();
+    closeLaterListCategoriesModal();
   }
 });
 

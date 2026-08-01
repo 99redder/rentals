@@ -300,7 +300,9 @@ async function handleDataApi(request, env) {
     'save_defaults', 'save_depreciation',
     'save_maintenance', 'seed_maintenance', 'add_maintenance_entry', 'update_maintenance_entry', 'delete_maintenance_entry',
     'save_move_in_purchases', 'add_move_in_purchase', 'update_move_in_purchase', 'delete_move_in_purchase',
-    'save_move_in_categories'
+    'save_move_in_categories',
+    'save_later_list', 'add_later_item', 'update_later_item', 'delete_later_item',
+    'save_later_categories'
   ]);
   if (readOnlyWhenSold.has(action) && await isPropertySold(env, property)) {
     return jsonResponse({ error: 'Property is sold/closed. Records are historical and read-only.' }, 409);
@@ -378,6 +380,27 @@ async function handleDataApi(request, env) {
 
     case 'save_move_in_categories':
       return handleSaveMoveInCategories(env, property, body.categories);
+
+    case 'get_later_list':
+      return handleGetLaterList(env, property);
+
+    case 'save_later_list':
+      return handleSaveLaterList(env, property, body.entries);
+
+    case 'add_later_item':
+      return handleAddLaterItem(env, property, body.entry);
+
+    case 'update_later_item':
+      return handleUpdateLaterItem(env, property, body.id, body.entry);
+
+    case 'delete_later_item':
+      return handleDeleteLaterItem(env, property, body.id);
+
+    case 'get_later_categories':
+      return handleGetLaterCategories(env, property);
+
+    case 'save_later_categories':
+      return handleSaveLaterCategories(env, property, body.categories);
 
     case 'get_investment':
       return handleGetInvestment(env, property);
@@ -1008,6 +1031,94 @@ async function handleSaveMoveInCategories(env, property, categories) {
   if (propertyError) return propertyError;
   const saved = normalizeMoveInCategories(categories);
   await env.RENTALS.put(`move_in_categories:${property}`, JSON.stringify(saved));
+  return jsonResponse({ categories: saved });
+}
+
+// ── Later List ─────────────────────────────────────────────────────────────────
+// Same setup as Move-In Purchases; separate KV records for post-move-in purchases.
+
+const LATER_LIST_PROPERTY = '4781MC';
+
+function requireLaterListProperty(property) {
+  return property === LATER_LIST_PROPERTY
+    ? null
+    : jsonResponse({ error: 'The later list is only available for 4781MC' }, 400);
+}
+
+async function handleGetLaterList(env, property) {
+  const propertyError = requireLaterListProperty(property);
+  if (propertyError) return propertyError;
+  const entries = await env.RENTALS.get(`later_list:${property}`, 'json') || [];
+  return jsonResponse({ entries });
+}
+
+async function handleSaveLaterList(env, property, entries) {
+  const propertyError = requireLaterListProperty(property);
+  if (propertyError) return propertyError;
+  if (!Array.isArray(entries)) {
+    return jsonResponse({ error: 'entries must be an array' }, 400);
+  }
+  const saved = entries.map(e => normalizeMoveInPurchase({ ...e, id: e.id || crypto.randomUUID() }));
+  await env.RENTALS.put(`later_list:${property}`, JSON.stringify(saved));
+  return jsonResponse({ entries: saved });
+}
+
+async function handleAddLaterItem(env, property, entry) {
+  const propertyError = requireLaterListProperty(property);
+  if (propertyError) return propertyError;
+  if (!entry || typeof entry !== 'object') {
+    return jsonResponse({ error: 'Missing entry object' }, 400);
+  }
+  const newEntry = normalizeMoveInPurchase({ ...entry, id: crypto.randomUUID() });
+  if (!newEntry.item) return jsonResponse({ error: 'Item is required' }, 400);
+  const entries = await env.RENTALS.get(`later_list:${property}`, 'json') || [];
+  entries.push(newEntry);
+  await env.RENTALS.put(`later_list:${property}`, JSON.stringify(entries));
+  return jsonResponse({ entry: newEntry });
+}
+
+async function handleUpdateLaterItem(env, property, id, entry) {
+  const propertyError = requireLaterListProperty(property);
+  if (propertyError) return propertyError;
+  if (!id) return jsonResponse({ error: 'Missing id' }, 400);
+  if (!entry || typeof entry !== 'object') return jsonResponse({ error: 'Missing entry' }, 400);
+  const entries = await env.RENTALS.get(`later_list:${property}`, 'json') || [];
+  const idx = entries.findIndex(e => e.id === id);
+  if (idx === -1) return jsonResponse({ error: 'Entry not found' }, 404);
+  entries[idx] = normalizeMoveInPurchase({
+    ...entries[idx],
+    ...entry,
+    id,
+  });
+  if (!entries[idx].item) return jsonResponse({ error: 'Item is required' }, 400);
+  await env.RENTALS.put(`later_list:${property}`, JSON.stringify(entries));
+  return jsonResponse({ entry: entries[idx] });
+}
+
+async function handleDeleteLaterItem(env, property, id) {
+  const propertyError = requireLaterListProperty(property);
+  if (propertyError) return propertyError;
+  if (!id) return jsonResponse({ error: 'Missing id' }, 400);
+  const entries = await env.RENTALS.get(`later_list:${property}`, 'json') || [];
+  const filtered = entries.filter(e => e.id !== id);
+  if (filtered.length === entries.length) return jsonResponse({ error: 'Entry not found' }, 404);
+  await env.RENTALS.put(`later_list:${property}`, JSON.stringify(filtered));
+  return jsonResponse({ success: true });
+}
+
+async function handleGetLaterCategories(env, property) {
+  const propertyError = requireLaterListProperty(property);
+  if (propertyError) return propertyError;
+  const stored = await env.RENTALS.get(`later_categories:${property}`, 'json');
+  const categories = Array.isArray(stored) && stored.length ? stored : MOVE_IN_CATEGORIES_DEFAULT.slice();
+  return jsonResponse({ categories });
+}
+
+async function handleSaveLaterCategories(env, property, categories) {
+  const propertyError = requireLaterListProperty(property);
+  if (propertyError) return propertyError;
+  const saved = normalizeMoveInCategories(categories);
+  await env.RENTALS.put(`later_categories:${property}`, JSON.stringify(saved));
   return jsonResponse({ categories: saved });
 }
 

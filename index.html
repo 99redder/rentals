@@ -1860,6 +1860,11 @@ const PRIMARY_VIEWS = new Set(['investment-return', 'maintenance']);
 const GLOBAL_HEADER_VIEWS = new Set(['tax-planning', 'net-worth', 'budget', 'cash-flow', 'mom-budget', 'solar', 'deductions', 'savings']);
 const CASH_FLOW_YEAR = 2026;
 const CASH_FLOW_AUTO_PROCEEDS_PROPS = ['6AL', '95EB', '731WO'];
+// Sale-tax reserves for these properties are rolled into a single combined
+// Federal line + State line on one quarterly estimated-tax date, because both
+// sales are expected to land in the same quarter. 95EB uses its actual closeout
+// numbers; 6AL is recomputed live from its Investment Return draft (projected).
+const CF_COMBINED_SALE_TAX_PROPS = ['6AL', '95EB'];
 const PROPERTY_MORTGAGE_PAYOFF_FALLBACKS = { '731WO': 135000 };
 // New-build properties still under construction: not delivered/settled yet, so the
 // only capital actually in the deal today is the deposit already paid. The balance
@@ -9378,10 +9383,99 @@ function cfAutoIncomeItems() {
 // cash that's earmarked to be paid at filing.
 function cfAutoExpenseItems() {
   const dismissed = new Set(state.cashFlow?.dismissedAuto || []);
-  const items = CASH_FLOW_AUTO_PROCEEDS_PROPS.flatMap(prop => cfPropertySaleTaxItems(prop));
+  const items = [...cfSaleTaxExpenseItems()];
   const critical = cfCriticalSavingsItem();
   if (critical) items.push(critical);
   return items.filter(item => !dismissed.has(item.id));
+}
+
+// Sale-tax reserve lines. Properties in CF_COMBINED_SALE_TAX_PROPS are rolled
+// into one combined Federal + State line once at least one of them is a *projected*
+// (not-yet-closed) sale — otherwise each finalized sale keeps its own independent
+// lines (original behavior). Any auto-proceeds property outside the combined set
+// keeps its own per-property lines.
+function cfSaleTaxExpenseItems() {
+  const combineProps = CASH_FLOW_AUTO_PROCEEDS_PROPS.filter(p => CF_COMBINED_SALE_TAX_PROPS.includes(p));
+  const otherProps = CASH_FLOW_AUTO_PROCEEDS_PROPS.filter(p => !CF_COMBINED_SALE_TAX_PROPS.includes(p));
+  const parts = combineProps.map(cfPropertySaleTaxComponents).filter(Boolean);
+  if (!parts.some(p => p.projected)) {
+    // No projected sale to fold in yet — original independent per-property lines.
+    return CASH_FLOW_AUTO_PROCEEDS_PROPS.flatMap(prop => cfPropertySaleTaxItems(prop));
+  }
+  return [
+    ...cfCombinedSaleTaxItems(parts),
+    ...otherProps.flatMap(prop => cfPropertySaleTaxItems(prop)),
+  ];
+}
+
+// Federal/state sale-tax components for one property — actual amounts for a
+// finalized sale, or projected amounts recomputed live from the Investment Return
+// sale-closeout draft for a not-yet-closed property (a capital loss yields $0
+// gains tax but still recaptures depreciation). Returns null when there is no
+// sale to reserve for (no closeout and no draft sale price).
+function cfPropertySaleTaxComponents(prop) {
+  const inv = state.data[prop]?.investment || {};
+  const sc = inv.saleCloseout || null;
+  if (sc?.closedAt) {
+    const ltcgTax = Number(sc.federalCapGainsTax) || 0;
+    const recaptureTax = Number(sc.depreciationRecaptureTax) || 0;
+    return {
+      prop, projected: false,
+      federal: ltcgTax + recaptureTax,
+      state: Number(sc.stateCapGainsTax) || 0,
+      statePct: sc.stateCapGainsPct || 8.95,
+      saleDate: sc.saleDate || '',
+    };
+  }
+  const details = calcPropertySaleTaxDetails(prop);  // reads the live draft
+  if (!details) return null;
+  const statePct = (typeof inv.stateCapGainsPct === 'number' && inv.stateCapGainsPct > 0) ? inv.stateCapGainsPct : 8.95;
+  const ltcgTax = Math.max(0, details.taxableGain) * 0.15;
+  const recaptureTax = Math.max(0, details.depreciationRecapture) * 0.25;
+  return {
+    prop, projected: true,
+    federal: ltcgTax + recaptureTax,
+    state: Math.max(0, details.taxableGain) * (statePct / 100),
+    statePct,
+    saleDate: loadSaleCloseoutDraft(prop)?.date || '',
+    capitalGain: details.capitalGain,
+    taxableGain: details.taxableGain,
+    depreciationRecapture: details.depreciationRecapture,
+  };
+}
+
+// One combined Federal line + one combined State line for the CF_COMBINED_SALE_TAX_PROPS
+// sales, reserved together on the (variable) projected sale's quarterly estimated-tax
+// due date. NIIT / MD surcharge are return-level, so they are folded in once.
+function cfCombinedSaleTaxItems(parts) {
+  if (!parts.length) return [];
+  const label = parts.map(p => p.prop).join(' + ');
+  const agi = Number(state.cfAgi);
+  const niit = (Number.isFinite(agi) && agi > TP_NIIT_THRESHOLD) ? (Number(state.cfNiit) || 0) : 0;
+  const mdSurcharge = (Number.isFinite(agi) && agi > MD_CG_SURCHARGE_AGI) ? (Number(state.cfMdSurcharge) || 0) : 0;
+  const federalTotal = parts.reduce((s, p) => s + p.federal, 0) + niit;
+  const stateTotal = parts.reduce((s, p) => s + p.state, 0) + mdSurcharge;
+  // Due date follows the projected sale (defaults to Sep 15, 2026 when unscheduled).
+  const projected = parts.find(p => p.projected);
+  const dueDate = estimatedTaxDueDate(projected?.saleDate) || '2026-09-15';
+  const dueLabel = fmtDate(dueDate);
+  const partNote = key => parts.map(p => `${p.prop} ${p.projected ? 'projected' : 'actual'} ${fmt(p[key])}`).join(' + ');
+  const items = [];
+  if (federalTotal > 0) items.push({
+    id: 'auto-sale-tax-fed-combined',
+    auto: true, dismissible: true, date: dueDate,
+    name: `${label} Federal Sale Taxes`,
+    amount: federalTotal,
+    note: `Combined federal estimated tax due ${dueLabel} for the ${label} sales: ${partNote('federal')}${niit > 0 ? ` + NIIT ${fmt(niit)}` : ''}. 6AL is recomputed live from its Investment Return sale worksheet — a projected capital loss owes no gains tax, but its depreciation recapture (25%) is still due.`
+  });
+  if (stateTotal > 0) items.push({
+    id: 'auto-sale-tax-state-combined',
+    auto: true, dismissible: true, date: dueDate,
+    name: `${label} State Sale Taxes`,
+    amount: stateTotal,
+    note: `Combined Maryland state + local estimated tax due ${dueLabel} for the ${label} sales: ${partNote('state')}${mdSurcharge > 0 ? ` + 2% surcharge ${fmt(mdSurcharge)}` : ''}. 6AL projected live from its Investment Return sale worksheet.`
+  });
+  return items;
 }
 
 // One rolled-up expense line for every Savings obligation flagged "critical".

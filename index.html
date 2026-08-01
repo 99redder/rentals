@@ -9335,6 +9335,7 @@ async function loadCashFlowDetails() {
   state.cfAgi = taxCtx.agi;
   state.cfNiit = taxCtx.niit;
   state.cfMdSurcharge = taxCtx.mdSurcharge;
+  state.cfSaleTax = taxCtx.saleTax;
 }
 
 // Projected AGI from the Tax Planning tab, so the sale-tax lines can flag NIIT /
@@ -9355,8 +9356,10 @@ async function cfComputeAgi() {
     });
     if (tp.rental_depr === undefined) tp.rental_depr = rentalRows.reduce((s, p) => s + p.deprAmt, 0);
     const r = tpCalc(tp, rentalRows);
-    return { agi: r.agi, niit: r.niit || 0, mdSurcharge: (r.md && r.md.cgSurcharge) || 0 };
-  } catch { return { agi: null, niit: 0, mdSurcharge: 0 }; }
+    // Incremental tax on the combined 6AL+95EB sales, using the same tp + engine.
+    const saleTax = cfComputeCombinedSaleTax(tp, rentalRows);
+    return { agi: r.agi, niit: r.niit || 0, mdSurcharge: (r.md && r.md.cgSurcharge) || 0, saleTax };
+  } catch { return { agi: null, niit: 0, mdSurcharge: 0, saleTax: null }; }
 }
 
 function cfRobinhoodChecking() {
@@ -9389,94 +9392,98 @@ function cfAutoExpenseItems() {
   return items.filter(item => !dismissed.has(item.id));
 }
 
-// Sale-tax reserve lines. Properties in CF_COMBINED_SALE_TAX_PROPS are rolled
-// into one combined Federal + State line once at least one of them is a *projected*
-// (not-yet-closed) sale — otherwise each finalized sale keeps its own independent
-// lines (original behavior). Any auto-proceeds property outside the combined set
-// keeps its own per-property lines.
+// Sale-tax reserve lines. The CF_COMBINED_SALE_TAX_PROPS sales (6AL projected +
+// 95EB actual) are rolled into one combined Federal + State line once at least one
+// is a *projected* sale; the amounts are the INCREMENTAL federal / MD tax those
+// sales add to the return, computed via cfComputeCombinedSaleTax (stored in
+// state.cfSaleTax during loadCashFlowDetails). Otherwise each finalized sale keeps
+// its own independent per-property line.
 function cfSaleTaxExpenseItems() {
-  const combineProps = CASH_FLOW_AUTO_PROCEEDS_PROPS.filter(p => CF_COMBINED_SALE_TAX_PROPS.includes(p));
   const otherProps = CASH_FLOW_AUTO_PROCEEDS_PROPS.filter(p => !CF_COMBINED_SALE_TAX_PROPS.includes(p));
-  const parts = combineProps.map(cfPropertySaleTaxComponents).filter(Boolean);
-  if (!parts.some(p => p.projected)) {
-    // No projected sale to fold in yet — original independent per-property lines.
+  const st = state.cfSaleTax;
+  if (!st || !st.parts?.some(p => p.projected)) {
+    // No projected combined sale yet — original independent per-property lines.
     return CASH_FLOW_AUTO_PROCEEDS_PROPS.flatMap(prop => cfPropertySaleTaxItems(prop));
   }
-  return [
-    ...cfCombinedSaleTaxItems(parts),
-    ...otherProps.flatMap(prop => cfPropertySaleTaxItems(prop)),
-  ];
+  return [...cfCombinedSaleTaxItems(), ...otherProps.flatMap(prop => cfPropertySaleTaxItems(prop))];
 }
 
-// Sale-gain components for one property, from the same math the Investment Return
-// tab uses (`calcPropertySaleTaxDetails` — actual closeout numbers for a finalized
-// sale, live draft numbers for a projected one). `taxableGain` is the signed
-// long-term capital gain (negative for a projected loss); `recapture` is the
-// (non-negative) unrecaptured §1250 depreciation gain. Returns null when there is
-// no sale to reserve for (no closeout and no draft sale price).
-function cfPropertySaleTaxComponents(prop) {
-  const details = calcPropertySaleTaxDetails(prop);  // reads the live draft when unsold
-  if (!details) return null;
-  const inv = state.data[prop]?.investment || {};
-  const sc = inv.saleCloseout || null;
-  const statePct = (typeof sc?.stateCapGainsPct === 'number' && sc.stateCapGainsPct > 0) ? sc.stateCapGainsPct
-    : ((typeof inv.stateCapGainsPct === 'number' && inv.stateCapGainsPct > 0) ? inv.stateCapGainsPct : 8.95);
+// The TRUE tax on the combined sales = the incremental federal / MD liability the
+// sales add to the full return, using the same tpCalc engine (and the same tp
+// inputs) as the Tax Planning tab. Computed as (full return WITH both sales) minus
+// (the same return WITH neither sale), so LTCG stacking (15%/20%), §1250 recapture
+// (25%), NIIT (3.8% over $250k AGI), CTC phase-out, MD ordinary-rate tax on the
+// full gain + recapture (MD resident: NH-sited but MD-taxable), the MD 2% surcharge,
+// and MD exemption phase-outs are ALL captured — anything unrelated to the sales
+// cancels in the difference. Sale gains come from calcPropertySaleTaxDetails (the
+// same numbers as the Investment Return tab: actual for 95EB, live draft for 6AL).
+function cfComputeCombinedSaleTax(tp, rentalRows) {
+  const parts = CF_COMBINED_SALE_TAX_PROPS.map(prop => {
+    const d = calcPropertySaleTaxDetails(prop);
+    if (!d) return null;
+    const closed = !!state.data[prop]?.investment?.saleCloseout?.closedAt;
+    return { prop, projected: !closed, taxableGain: Number(d.taxableGain) || 0, recapture: Math.max(0, Number(d.depreciationRecapture) || 0) };
+  }).filter(Boolean);
+  if (!parts.length) return null;
+
+  const clearSales = t => {
+    ['property_sale', 'property_sale_2'].forEach(pfx => {
+      t[`${pfx}_imported`] = false; t[`${pfx}_property`] = '';
+      t[`${pfx}_taxable_gain`] = 0; t[`${pfx}_depr_recapture`] = 0;
+    });
+    return t;
+  };
+  const base = clearSales({ ...tp });                 // return WITHOUT these sales
+  const withSales = clearSales({ ...tp });            // return WITH both sales
+  parts.slice(0, 2).forEach((p, i) => {
+    const pfx = i === 0 ? 'property_sale' : 'property_sale_2';
+    withSales[`${pfx}_imported`] = true;
+    withSales[`${pfx}_property`] = p.prop;
+    withSales[`${pfx}_taxable_gain`] = p.taxableGain;
+    withSales[`${pfx}_depr_recapture`] = p.recapture;
+  });
+
+  const rBase = tpCalc(base, rentalRows);
+  const rWith = tpCalc(withSales, rentalRows);
+  const federal = Math.max(0, rWith.netFedTax - rBase.netFedTax);
+  const stateTax = Math.max(0, rWith.md.totalTax - rBase.md.totalTax);
+  const projectedPart = parts.find(p => p.projected);
+  const dueDate = estimatedTaxDueDate(projectedPart ? (loadSaleCloseoutDraft(projectedPart.prop)?.date || '') : '') || '2026-09-15';
+
+  const fedLtcg = rWith.ltcgTax - rBase.ltcgTax;
+  const fedRecapture = rWith.depRecaptureTax - rBase.depRecaptureTax;
+  const fedNiit = rWith.niit - rBase.niit;
   return {
-    prop,
-    projected: !sc?.closedAt,
-    taxableGain: Number(details.taxableGain) || 0,               // signed
-    recapture: Math.max(0, Number(details.depreciationRecapture) || 0),
-    statePct,
+    parts, federal, state: stateTax, dueDate,
+    agiBase: rBase.agi, agiWith: rWith.agi,
+    fedLtcg, fedRecapture, fedNiit,
+    fedOther: federal - fedLtcg - fedRecapture - fedNiit,   // ordinary-bracket / CTC-phaseout effects
+    stateIncome: (rWith.md.stateTax + rWith.md.countyTax) - (rBase.md.stateTax + rBase.md.countyTax),
+    stateSurcharge: rWith.md.cgSurcharge - rBase.md.cgSurcharge,
   };
 }
 
-// One combined Federal line + one combined State line for the CF_COMBINED_SALE_TAX_PROPS
-// sales, reserved together on the (variable) projected sale's quarterly estimated-tax
-// due date. The two sales are NETTED on Schedule D: a projected capital loss on one
-// first offsets the other's long-term gain, then reduces the §1250 recapture gain —
-// so a 6AL loss genuinely lowers the combined reserve. NIIT / MD surcharge are
-// return-level, so they are folded in once.
-function cfCombinedSaleTaxItems(parts) {
-  if (!parts.length) return [];
-  const label = parts.map(p => p.prop).join(' + ');
-  const agi = Number(state.cfAgi);
-  const niit = (Number.isFinite(agi) && agi > TP_NIIT_THRESHOLD) ? (Number(state.cfNiit) || 0) : 0;
-  const mdSurcharge = (Number.isFinite(agi) && agi > MD_CG_SURCHARGE_AGI) ? (Number(state.cfMdSurcharge) || 0) : 0;
-
-  // Federal: a net regular LT loss offsets the §1250 recapture gain (recapture is
-  // taxed last on the Schedule D worksheet).
-  const netRegular = parts.reduce((s, p) => s + p.taxableGain, 0);   // signed
-  const recap = parts.reduce((s, p) => s + p.recapture, 0);          // ≥ 0
-  const regularTaxed = Math.max(0, netRegular);
-  const recapTaxed = Math.max(0, recap + Math.min(0, netRegular));
-  const federalCapGains = regularTaxed * 0.15 + recapTaxed * 0.25;
-  const federalTotal = federalCapGains + niit;
-
-  // MD (state + local) taxes the net LT capital gain (this app's model excludes
-  // recapture from the state figure); a loss nets it down, floored at 0.
-  const stateSigned = parts.reduce((s, p) => s + p.taxableGain * (p.statePct / 100), 0);
-  const stateTotal = Math.max(0, stateSigned) + mdSurcharge;
-
-  // Due date follows the projected sale (defaults to Sep 15, 2026 when unscheduled).
-  const projected = parts.find(p => p.projected);
-  const dueDate = estimatedTaxDueDate(projected ? (loadSaleCloseoutDraft(projected.prop)?.date || '') : '') || '2026-09-15';
-  const dueLabel = fmtDate(dueDate);
-  const gainNote = parts.map(p => `${p.prop} ${p.projected ? 'projected' : 'actual'} LT gain ${fmt(p.taxableGain)}${p.recapture ? ` + recapture ${fmt(p.recapture)}` : ''}`).join('; ');
-
+// The two combined lines, from the incremental amounts stored in state.cfSaleTax.
+function cfCombinedSaleTaxItems() {
+  const st = state.cfSaleTax;
+  if (!st || !st.parts?.length) return [];
+  const label = st.parts.map(p => p.prop).join(' + ');
+  const dueLabel = fmtDate(st.dueDate);
+  const gainNote = st.parts.map(p => `${p.prop} ${p.projected ? 'projected' : 'actual'} LT gain ${fmt(p.taxableGain)}${p.recapture ? ` + recapture ${fmt(p.recapture)}` : ''}`).join('; ');
   const items = [];
-  if (federalTotal > 0) items.push({
+  if (st.federal > 0) items.push({
     id: 'auto-sale-tax-fed-combined',
-    auto: true, dismissible: true, date: dueDate,
+    auto: true, dismissible: true, date: st.dueDate,
     name: `${label} Federal Sale Taxes`,
-    amount: federalTotal,
-    note: `Combined federal estimated tax due ${dueLabel}, netting the ${label} sales (${gainNote}): LT gains 15% ${fmt(regularTaxed * 0.15)} + depreciation recapture 25% ${fmt(recapTaxed * 0.25)}${niit > 0 ? ` + NIIT ${fmt(niit)}` : ''}. 6AL is recomputed live from its Investment Return sale worksheet — a projected capital loss nets against 95EB's gain (and its recapture).`
+    amount: st.federal,
+    note: `Incremental federal tax the ${label} sales add to the return (Tax Planning engine; AGI ${fmt(st.agiBase)} → ${fmt(st.agiWith)}): LTCG ${fmt(st.fedLtcg)} + §1250 recapture 25% ${fmt(st.fedRecapture)}${st.fedNiit ? ` + NIIT ${fmt(st.fedNiit)}` : ''}${Math.abs(st.fedOther) >= 1 ? ` ${st.fedOther >= 0 ? '+' : '−'} bracket/CTC ${fmt(Math.abs(st.fedOther))}` : ''}. Sales: ${gainNote}. Due ${dueLabel}.`
   });
-  if (stateTotal > 0) items.push({
+  if (st.state > 0) items.push({
     id: 'auto-sale-tax-state-combined',
-    auto: true, dismissible: true, date: dueDate,
+    auto: true, dismissible: true, date: st.dueDate,
     name: `${label} State Sale Taxes`,
-    amount: stateTotal,
-    note: `Combined Maryland state + local estimated tax due ${dueLabel} on the netted ${label} long-term gain${mdSurcharge > 0 ? ` + 2% surcharge ${fmt(mdSurcharge)}` : ''}. 6AL projected live from its Investment Return sale worksheet.`
+    amount: st.state,
+    note: `Incremental Maryland tax the ${label} sales add to the return — MD resident taxes the full gain + §1250 recapture at ordinary MD/local rates (NH-sited, $0 to NH): state + county ${fmt(st.stateIncome)}${st.stateSurcharge ? ` + 2% surcharge ${fmt(st.stateSurcharge)}` : ''}. Due ${dueLabel}.`
   });
   return items;
 }

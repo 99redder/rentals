@@ -265,29 +265,31 @@
     return items;
   }
   // Signed LT gain + §1250 recapture for one property — actual (finalized closeout)
-  // or projected (from the desktop-materialized propertyAssets). Mirror of desktop
-  // cfPropertySaleTaxComponents. Returns null when there is no sale to reserve for.
+  // or projected (from the desktop-materialized propertyAssets). Returns null when
+  // there is no sale to reserve for.
   function cfSaleGainComponents(prop){
     const sc=state.data.investments?.[prop]?.saleCloseout;
     if(sc?.closedAt){
-      return {prop,projected:false,taxableGain:n(sc.taxableCapitalGain),recapture:n(sc.depreciationRecaptureTax)/0.25,statePct:n(sc.stateCapGainsPct)||8.95};
+      return {prop,projected:false,taxableGain:n(sc.taxableCapitalGain),recapture:n(sc.depreciationRecaptureTax)/0.25};
     }
     const asset=(state.data.netWorth?.propertyAssets||[]).find(a=>a.id===`property-${prop}`);
     if(!asset||n(asset.salePrice)<=0)return null;
-    return {prop,projected:true,taxableGain:n(asset.taxableGain),recapture:n(asset.depreciationRecapture),statePct:n(asset.stateCapGainsPct)||n(state.data.investments?.[prop]?.stateCapGainsPct)||8.95};
+    return {prop,projected:true,taxableGain:n(asset.taxableGain),recapture:n(asset.depreciationRecapture)};
   }
-  // Mirror desktop cfCombinedSaleTaxItems — Schedule-D netting of the two sales.
-  function cfCombinedSaleTax(parts,tax){
+  // Incremental federal + MD tax the combined sales add to the return, via
+  // mobileTaxCalc (mirror of desktop cfComputeCombinedSaleTax): base = return
+  // without these sales, with = both injected into the two property-sale slots.
+  function cfCombinedSaleTax(parts){
     if(!parts.length)return [];
-    const label=parts.map(p=>p.prop).join(' + ');
-    const agi=n(tax?.agi),niit=agi>250000?n(tax?.niit):0,surcharge=agi>350000?n(tax?.surcharge):0;
-    const netRegular=parts.reduce((s,p)=>s+p.taxableGain,0),recap=parts.reduce((s,p)=>s+p.recapture,0);
-    const regularTaxed=Math.max(0,netRegular),recapTaxed=Math.max(0,recap+Math.min(0,netRegular));
-    const federalTotal=regularTaxed*0.15+recapTaxed*0.25+niit;
-    const stateSigned=parts.reduce((s,p)=>s+p.taxableGain*(p.statePct/100),0),stateTotal=Math.max(0,stateSigned)+surcharge;
-    const date='2026-09-15',items=[];
-    if(federalTotal>0)items.push({id:'auto-sale-tax-fed-combined',name:`${label} Federal Sale Taxes`,amount:federalTotal,date,note:`Combined federal estimated tax netting the ${label} sales — LT gains 15% + depreciation recapture 25%${niit>0?' + NIIT':''}`});
-    if(stateTotal>0)items.push({id:'auto-sale-tax-state-combined',name:`${label} State Sale Taxes`,amount:stateTotal,date,note:`Combined Maryland state + local estimated tax on the netted ${label} long-term gain${surcharge>0?' + 2% surcharge':''}`});
+    const tp=state.data.tax||{},rental=[...RENTALS].map(prop=>({prop,...txnTotals(yearTxns(prop))}));
+    const clear=t=>{['property_sale','property_sale_2'].forEach(pfx=>{t[`${pfx}_imported`]=false;t[`${pfx}_property`]='';t[`${pfx}_taxable_gain`]=0;t[`${pfx}_depr_recapture`]=0;});return t;};
+    const base=clear({...tp}),withSales=clear({...tp});
+    parts.slice(0,2).forEach((p,i)=>{const pfx=i===0?'property_sale':'property_sale_2';withSales[`${pfx}_imported`]=true;withSales[`${pfx}_property`]=p.prop;withSales[`${pfx}_taxable_gain`]=p.taxableGain;withSales[`${pfx}_depr_recapture`]=p.recapture;});
+    const rBase=mobileTaxCalc(base,rental),rWith=mobileTaxCalc(withSales,rental);
+    const federal=Math.max(0,rWith.federalTax-rBase.federalTax),stateTax=Math.max(0,rWith.mdTax-rBase.mdTax);
+    const label=parts.map(p=>p.prop).join(' + '),date='2026-09-15',items=[];
+    if(federal>0)items.push({id:'auto-sale-tax-fed-combined',name:`${label} Federal Sale Taxes`,amount:federal,date,note:`Incremental federal tax the ${label} sales add to the return (AGI ${money(rBase.agi)} → ${money(rWith.agi)}) — LTCG + §1250 recapture + NIIT`});
+    if(stateTax>0)items.push({id:'auto-sale-tax-state-combined',name:`${label} State Sale Taxes`,amount:stateTax,date,note:`Incremental Maryland tax the ${label} sales add — MD resident taxes the full gain + recapture (NH-sited, $0 to NH)`});
     return items;
   }
   // Combined lines once a projected sale exists; otherwise original per-property lines.
@@ -295,7 +297,7 @@
     const parts=CASH_FLOW_AUTO_PROPS.filter(p=>CF_COMBINED_SALE_TAX_PROPS.includes(p)).map(cfSaleGainComponents).filter(Boolean);
     if(!parts.some(p=>p.projected))return CASH_FLOW_AUTO_PROPS.flatMap(prop=>cfSaleTaxItems(prop,tax));
     const otherProps=CASH_FLOW_AUTO_PROPS.filter(p=>!CF_COMBINED_SALE_TAX_PROPS.includes(p));
-    return [...cfCombinedSaleTax(parts,tax),...otherProps.flatMap(prop=>cfSaleTaxItems(prop,tax))];
+    return [...cfCombinedSaleTax(parts),...otherProps.flatMap(prop=>cfSaleTaxItems(prop,tax))];
   }
   // Mirror desktop cfCriticalSavingsItem: one rolled-up line for critical obligations.
   function cfCriticalSavingsItem(){

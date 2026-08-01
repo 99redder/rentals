@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rental-snapshot-v15';
+const CACHE_NAME = 'rental-snapshot-v16';
 const STATIC_ASSETS = [
   './index.html',
   './manifest.webmanifest',

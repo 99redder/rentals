@@ -9803,7 +9803,7 @@ function cfAutoRow(item, color) {
     </td>
     <td style="padding:.32rem .6rem;border-bottom:${bb};white-space:nowrap;color:var(--text-muted);font-size:.8rem;vertical-align:top">${item.date ? fmtDate(item.date) : '—'}</td>
     <td style="padding:.32rem .6rem;border-bottom:${bb};text-align:right;white-space:nowrap;font-weight:700;color:${amountColor};vertical-align:top">${fmt(item.amount || 0)}</td>
-    <td style="padding:.32rem .4rem;border-bottom:${bb};text-align:right;color:var(--text-muted);font-size:.72rem;white-space:nowrap;vertical-align:top">${item.dismissible ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.05rem .3rem;font-size:1rem;line-height:1" title="Remove (e.g. after paying)" onclick="cfDismissAuto('${escAttr(item.id)}')">×</button>` : 'Auto'}</td>
+    <td style="padding:.32rem .4rem;border-bottom:${bb};text-align:right;white-space:nowrap;vertical-align:top">${item.dismissible ? `<button class="btn btn-ghost btn-sm" style="padding:.16rem .35rem;font-size:.75rem;color:var(--danger)" title="Remove (e.g. after paying)" onclick="cfDismissAuto('${escAttr(item.id)}')">Delete</button>` : `<span style="color:var(--text-muted);font-size:.72rem">Auto</span>`}</td>
   </tr>
   ${expanded ? `<tr style="background:var(--surface)"><td colspan="4" style="padding:0 .6rem .6rem 1.9rem;border-bottom:1px solid var(--border);font-size:.72rem;color:var(--text-muted)">${item.note ? escHtml(item.note) : ''}</td></tr>` : ''}`;
 }

@@ -9793,22 +9793,19 @@ function cfPinnedCheckingRow(color) {
 function cfAutoRow(item, color) {
   const expanded = cfIncomeExpanded(item.id);
   const amountColor = item.amount > 0 ? color : 'var(--text-muted)';
+  const bb = expanded ? 'none' : '1px solid var(--border)';
   return `<tr style="background:var(--surface)">
-    <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'}">
-      <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" style="padding:.05rem .25rem;font-size:.75rem;line-height:1" onclick="cfToggleIncomeDetails('${escAttr(item.id)}')" title="${expanded ? 'Hide details' : 'Show details'}">${expanded ? '▾' : '▸'}</button>
-        <span style="font-weight:650">${escHtml(item.name || 'Untitled')}</span>
-        <span style="display:inline-block;padding:.08rem .38rem;border-radius:999px;background:rgba(37,99,235,.10);color:var(--primary);font-size:.66rem;font-weight:750;text-transform:uppercase">Auto</span>
+    <td style="padding:.32rem .6rem;border-bottom:${bb}">
+      <div style="display:flex;align-items:flex-start;gap:.3rem">
+        <button class="btn btn-ghost btn-sm" style="padding:0 .1rem;font-size:.7rem;line-height:1.35;color:var(--text-muted);flex-shrink:0" onclick="cfToggleIncomeDetails('${escAttr(item.id)}')" title="${expanded ? 'Hide details' : 'Show details'}">${expanded ? '▾' : '▸'}</button>
+        <div style="min-width:0;font-weight:650;line-height:1.35">${escHtml(item.name || 'Untitled')} <span style="display:inline-block;padding:.01rem .3rem;border-radius:999px;background:rgba(37,99,235,.10);color:var(--primary);font-size:.58rem;font-weight:750;text-transform:uppercase;vertical-align:.08em;white-space:nowrap">Auto</span></div>
       </div>
     </td>
-    <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};white-space:nowrap;color:var(--text-muted);font-size:.8rem">${item.date ? fmtDate(item.date) : '—'}</td>
-    <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;white-space:nowrap;font-weight:700;color:${amountColor}">${fmt(item.amount || 0)}</td>
-    <td style="padding:.55rem .4rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;color:var(--text-muted);font-size:.72rem;white-space:nowrap">${item.dismissible ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.1rem .35rem;font-size:1rem;line-height:1" title="Remove (e.g. after paying)" onclick="cfDismissAuto('${escAttr(item.id)}')">×</button>` : 'Auto'}</td>
+    <td style="padding:.32rem .6rem;border-bottom:${bb};white-space:nowrap;color:var(--text-muted);font-size:.8rem;vertical-align:top">${item.date ? fmtDate(item.date) : '—'}</td>
+    <td style="padding:.32rem .6rem;border-bottom:${bb};text-align:right;white-space:nowrap;font-weight:700;color:${amountColor};vertical-align:top">${fmt(item.amount || 0)}</td>
+    <td style="padding:.32rem .4rem;border-bottom:${bb};text-align:right;color:var(--text-muted);font-size:.72rem;white-space:nowrap;vertical-align:top">${item.dismissible ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.05rem .3rem;font-size:1rem;line-height:1" title="Remove (e.g. after paying)" onclick="cfDismissAuto('${escAttr(item.id)}')">×</button>` : 'Auto'}</td>
   </tr>
-  ${expanded ? `<tr style="background:var(--surface)"><td colspan="4" style="padding:0 .6rem .65rem 2.25rem;border-bottom:1px solid var(--border);font-size:.72rem;color:var(--text-muted)">
-    ${item.note ? `<div>${escHtml(item.note)}</div>` : ''}
-    <div>Source: property page sale worksheet</div>
-  </td></tr>` : ''}`;
+  ${expanded ? `<tr style="background:var(--surface)"><td colspan="4" style="padding:0 .6rem .6rem 1.9rem;border-bottom:1px solid var(--border);font-size:.72rem;color:var(--text-muted)">${item.note ? escHtml(item.note) : ''}</td></tr>` : ''}`;
 }
 
 // Which in-progress build (if any) reads this expense line as its cash to close.

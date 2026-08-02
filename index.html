@@ -8867,6 +8867,7 @@ async function renderTaxPlanning() {
   <!-- ── Right Column: Results ── -->
   <div class="tp-sticky">
     <div class="card" id="tp-warnings" style="margin-bottom:1rem"></div>
+    <div class="card" id="tp-safe-harbor" style="margin-bottom:1rem"></div>
     <div class="card" id="tp-results"></div>
   </div>
 
@@ -9408,15 +9409,13 @@ function cfSaleTaxExpenseItems() {
   return [...cfCombinedSaleTaxItems(), ...otherProps.flatMap(prop => cfPropertySaleTaxItems(prop))];
 }
 
-// The TRUE tax on the combined sales = the incremental federal / MD liability the
-// sales add to the full return, using the same tpCalc engine (and the same tp
-// inputs) as the Tax Planning tab. Computed as (full return WITH both sales) minus
-// (the same return WITH neither sale), so LTCG stacking (15%/20%), §1250 recapture
-// (25%), NIIT (3.8% over $250k AGI), CTC phase-out, MD ordinary-rate tax on the
-// full gain + recapture (MD resident: NH-sited but MD-taxable), the MD 2% surcharge,
-// and MD exemption phase-outs are ALL captured — anything unrelated to the sales
-// cancels in the difference. Sale gains come from calcPropertySaleTaxDetails (the
-// same numbers as the Investment Return tab: actual for 95EB, live draft for 6AL).
+// Turn the combined 6AL+95EB sales into the actual cash you'll send the IRS/MD: a
+// Sept-15 estimated payment sized to the SAFE HARBOR (the minimum to avoid an
+// underpayment penalty), plus the remaining balance due with the return on Apr 15
+// next year. Both come from the full 2026 return WITH both sales imported into the
+// same tpCalc engine the Tax Planning tab uses, so every other income source,
+// withholding, credit, and the prior-year safe-harbor factor is accounted for.
+// Sale gains come from calcPropertySaleTaxDetails (actual for 95EB, live draft for 6AL).
 function cfComputeCombinedSaleTax(tp, rentalRows) {
   const parts = CF_COMBINED_SALE_TAX_PROPS.map(prop => {
     const d = calcPropertySaleTaxDetails(prop);
@@ -9426,64 +9425,85 @@ function cfComputeCombinedSaleTax(tp, rentalRows) {
   }).filter(Boolean);
   if (!parts.length) return null;
 
-  const clearSales = t => {
-    ['property_sale', 'property_sale_2'].forEach(pfx => {
-      t[`${pfx}_imported`] = false; t[`${pfx}_property`] = '';
-      t[`${pfx}_taxable_gain`] = 0; t[`${pfx}_depr_recapture`] = 0;
-    });
-    return t;
-  };
-  const base = clearSales({ ...tp });                 // return WITHOUT these sales
-  const withSales = clearSales({ ...tp });            // return WITH both sales
+  // Full 2026 return WITH both sales folded in (baseline income/withholding from tp).
+  const withSales = { ...tp };
+  ['property_sale', 'property_sale_2'].forEach(pfx => {
+    withSales[`${pfx}_imported`] = false; withSales[`${pfx}_property`] = '';
+    withSales[`${pfx}_taxable_gain`] = 0; withSales[`${pfx}_depr_recapture`] = 0;
+  });
   parts.slice(0, 2).forEach((p, i) => {
     const pfx = i === 0 ? 'property_sale' : 'property_sale_2';
-    withSales[`${pfx}_imported`] = true;
-    withSales[`${pfx}_property`] = p.prop;
-    withSales[`${pfx}_taxable_gain`] = p.taxableGain;
-    withSales[`${pfx}_depr_recapture`] = p.recapture;
+    withSales[`${pfx}_imported`] = true; withSales[`${pfx}_property`] = p.prop;
+    withSales[`${pfx}_taxable_gain`] = p.taxableGain; withSales[`${pfx}_depr_recapture`] = p.recapture;
   });
+  const r = tpCalc(withSales, rentalRows);
 
-  const rBase = tpCalc(base, rentalRows);
-  const rWith = tpCalc(withSales, rentalRows);
-  const federal = Math.max(0, rWith.netFedTax - rBase.netFedTax);
-  const stateTax = Math.max(0, rWith.md.totalTax - rBase.md.totalTax);
+  // Prior-year safe-harbor factor (110% over $150k AGI, else 100%).
+  const has = v => v !== undefined && v !== null && v !== '';
+  const priorAgi = has(tp.prior_year_agi) ? tpN(tp.prior_year_agi) : TP_PRIOR_YEAR_DEFAULTS.agi;
+  const priorFed = has(tp.prior_year_fed) ? tpN(tp.prior_year_fed) : TP_PRIOR_YEAR_DEFAULTS.fed;
+  const priorMd  = has(tp.prior_year_md)  ? tpN(tp.prior_year_md)  : TP_PRIOR_YEAR_DEFAULTS.md;
+  const factor = priorAgi > 150000 ? 1.10 : 1.00;
+
+  // Federal: Sept-15 estimate = safe harbor shortfall; the rest is due at filing.
+  const fedTax = r.netFedTax, fedPaid = r.totFedPaid;
+  const fedSafe = priorFed > 0 ? Math.min(fedTax * 0.90, priorFed * factor) : fedTax * 0.90;
+  const fedOwed = Math.max(0, fedTax - fedPaid);
+  const fedSep15 = Math.min(fedOwed, Math.max(0, fedSafe - fedPaid));
+  const fedApril = Math.max(0, fedOwed - fedSep15);
+
+  // Maryland: same split (MD waives the penalty entirely if the balance is < $500).
+  const mdTax = r.md.totalTax, mdPaid = r.md.withheld;
+  const mdSafe = priorMd > 0 ? Math.min(mdTax * 0.90, priorMd * factor) : mdTax * 0.90;
+  const mdOwed = Math.max(0, mdTax - mdPaid);
+  const mdSep15 = mdOwed < 500 ? 0 : Math.min(mdOwed, Math.max(0, mdSafe - mdPaid));
+  const mdApril = Math.max(0, mdOwed - mdSep15);
+
   const projectedPart = parts.find(p => p.projected);
-  const dueDate = estimatedTaxDueDate(projectedPart ? (loadSaleCloseoutDraft(projectedPart.prop)?.date || '') : '') || '2026-09-15';
-
-  const fedLtcg = rWith.ltcgTax - rBase.ltcgTax;
-  const fedRecapture = rWith.depRecaptureTax - rBase.depRecaptureTax;
-  const fedNiit = rWith.niit - rBase.niit;
+  const sep15Date = estimatedTaxDueDate(projectedPart ? (loadSaleCloseoutDraft(projectedPart.prop)?.date || '') : '') || '2026-09-15';
   return {
-    parts, federal, state: stateTax, dueDate,
-    agiBase: rBase.agi, agiWith: rWith.agi,
-    fedLtcg, fedRecapture, fedNiit,
-    fedOther: federal - fedLtcg - fedRecapture - fedNiit,   // ordinary-bracket / CTC-phaseout effects
-    stateIncome: (rWith.md.stateTax + rWith.md.countyTax) - (rBase.md.stateTax + rBase.md.countyTax),
-    stateSurcharge: rWith.md.cgSurcharge - rBase.md.cgSurcharge,
+    parts, sep15Date, filingDate: `${CURRENT_YEAR + 1}-04-15`, agiWith: r.agi, factorPct: priorAgi > 150000 ? '110%' : '100%',
+    fedSep15, fedApril, fedTax, fedPaid, fedSafe, fedOwed,
+    mdSep15, mdApril, mdTax, mdPaid, mdSafe, mdOwed, priorMdSet: priorMd > 0,
   };
 }
 
-// The two combined lines, from the incremental amounts stored in state.cfSaleTax.
+// Four cash-flow lines from the split in state.cfSaleTax: Sept-15 safe-harbor
+// estimates (rendered even at $0, so the required payment is explicit) + Apr-15
+// balance-due lines (rendered when a balance remains).
 function cfCombinedSaleTaxItems() {
   const st = state.cfSaleTax;
   if (!st || !st.parts?.length) return [];
   const label = st.parts.map(p => p.prop).join(' + ');
-  const dueLabel = fmtDate(st.dueDate);
-  const gainNote = st.parts.map(p => `${p.prop} ${p.projected ? 'projected' : 'actual'} LT gain ${fmt(p.taxableGain)}${p.recapture ? ` + recapture ${fmt(p.recapture)}` : ''}`).join('; ');
+  const sepLabel = fmtDate(st.sep15Date), aprLabel = fmtDate(st.filingDate);
   const items = [];
-  if (st.federal > 0) items.push({
-    id: 'auto-sale-tax-fed-combined',
-    auto: true, dismissible: true, date: st.dueDate,
-    name: `${label} Federal Sale Taxes`,
-    amount: st.federal,
-    note: `Incremental federal tax the ${label} sales add to the return (Tax Planning engine; AGI ${fmt(st.agiBase)} → ${fmt(st.agiWith)}): LTCG ${fmt(st.fedLtcg)} + §1250 recapture 25% ${fmt(st.fedRecapture)}${st.fedNiit ? ` + NIIT ${fmt(st.fedNiit)}` : ''}${Math.abs(st.fedOther) >= 1 ? ` ${st.fedOther >= 0 ? '+' : '−'} bracket/CTC ${fmt(Math.abs(st.fedOther))}` : ''}. Sales: ${gainNote}. Due ${dueLabel}.`
+  items.push({
+    id: 'auto-tax-fed-sep15', auto: true, dismissible: true, date: st.sep15Date,
+    name: 'Federal Estimated Tax — Safe Harbor',
+    amount: st.fedSep15,
+    note: st.fedSep15 > 0.005
+      ? `Minimum federal estimate due ${sepLabel} to avoid an underpayment penalty: safe harbor ${fmt(st.fedSafe)} − ${fmt(st.fedPaid)} withholding. Driven by the ${label} sales (AGI → ${fmt(st.agiWith)}); the remaining ${fmt(st.fedApril)} is due at filing.`
+      : `$0 due ${sepLabel} — withholding (${fmt(st.fedPaid)}) already clears the federal safe harbor (${fmt(st.fedSafe)}, ${st.factorPct} of prior year). The ${label} sale balance is deferred to the ${aprLabel} return, penalty-free.`
   });
-  if (st.state > 0) items.push({
-    id: 'auto-sale-tax-state-combined',
-    auto: true, dismissible: true, date: st.dueDate,
-    name: `${label} State Sale Taxes`,
-    amount: st.state,
-    note: `Incremental Maryland tax the ${label} sales add to the return — MD resident taxes the full gain + §1250 recapture at ordinary MD/local rates (NH-sited, $0 to NH): state + county ${fmt(st.stateIncome)}${st.stateSurcharge ? ` + 2% surcharge ${fmt(st.stateSurcharge)}` : ''}. Due ${dueLabel}.`
+  items.push({
+    id: 'auto-tax-state-sep15', auto: true, dismissible: true, date: st.sep15Date,
+    name: 'Maryland Estimated Tax — Safe Harbor',
+    amount: st.mdSep15,
+    note: st.mdSep15 > 0.005
+      ? `Minimum MD estimate due ${sepLabel} to avoid a penalty: safe harbor ${fmt(st.mdSafe)} − ${fmt(st.mdPaid)} withholding${st.priorMdSet ? '' : ' (enter your prior-year MD tax on the Tax Planning Safe Harbor card to use the lower prior-year figure)'}. Remaining ${fmt(st.mdApril)} due at filing.`
+      : `$0 due ${sepLabel} — MD safe harbor already met by withholding${st.mdOwed < 500 ? ' (balance under $500)' : ''}. Remainder deferred to the ${aprLabel} return.`
+  });
+  if (st.fedApril > 0.005) items.push({
+    id: 'auto-tax-fed-april', auto: true, dismissible: true, date: st.filingDate,
+    name: 'Federal Tax Balance Due (2026 return)',
+    amount: st.fedApril,
+    note: `Remaining federal balance with the ${aprLabel} return: ${fmt(st.fedTax)} total ${CURRENT_YEAR} tax − ${fmt(st.fedPaid)} withholding − ${fmt(st.fedSep15)} Sept-15 estimate. Reflects all Tax Planning income plus the ${label} sales.`
+  });
+  if (st.mdApril > 0.005) items.push({
+    id: 'auto-tax-state-april', auto: true, dismissible: true, date: st.filingDate,
+    name: 'Maryland Tax Balance Due (2026 return)',
+    amount: st.mdApril,
+    note: `Remaining MD balance with the ${aprLabel} return: ${fmt(st.mdTax)} total ${CURRENT_YEAR} MD tax − ${fmt(st.mdPaid)} withholding − ${fmt(st.mdSep15)} Sept-15 estimate.`
   });
   return items;
 }
@@ -12881,12 +12901,87 @@ function tpAgiWarningsHtml(r, tp) {
     </div>`;
 }
 
+// Prior-year figures for the safe-harbor calc, seeded from the 2025 return and
+// editable in the card. Stored on the tax-planning record (prior_year_*).
+const TP_PRIOR_YEAR_DEFAULTS = { agi: 145918, fed: 11743, md: 0 };
+
+function tpUpdatePriorYear(key, val) {
+  const tp = tpReadForm();
+  tp[`prior_year_${key}`] = parseMoney(val);
+  tpSave(tp);
+  tpUpdateResults(tp);
+}
+
+// 2026 estimated-tax safe harbor. No underpayment penalty if withholding +
+// estimates ≥ the SMALLER of 90% of this year's tax or (100%/110% — 110% when
+// prior-year AGI > $150k) of last year's tax. Withholding counts as paid evenly,
+// so if it already clears the safe harbor no estimated payment is required and the
+// rest of the balance can wait for the return.
+function tpSafeHarborHtml(r, tp) {
+  const md = r.md;
+  const has = v => v !== undefined && v !== null && v !== '';
+  const priorAgi = has(tp.prior_year_agi) ? tpN(tp.prior_year_agi) : TP_PRIOR_YEAR_DEFAULTS.agi;
+  const priorFed = has(tp.prior_year_fed) ? tpN(tp.prior_year_fed) : TP_PRIOR_YEAR_DEFAULTS.fed;
+  const priorMd  = has(tp.prior_year_md)  ? tpN(tp.prior_year_md)  : TP_PRIOR_YEAR_DEFAULTS.md;
+  const factor = priorAgi > 150000 ? 1.10 : 1.00;   // IRS prior-year multiplier (MD mirrors)
+  const factorPct = priorAgi > 150000 ? '110%' : '100%';
+  const py = CURRENT_YEAR - 1;
+
+  const fedCur = r.netFedTax * 0.90;
+  const fedPrior = priorFed * factor;
+  const fedSafe = priorFed > 0 ? Math.min(fedCur, fedPrior) : fedCur;
+  const fedVia = (priorFed > 0 && fedPrior <= fedCur) ? `${factorPct} of ${py} tax` : `90% of ${CURRENT_YEAR} tax`;
+  const fedPaid = r.totFedPaid;
+  const fedNeed = Math.max(0, fedSafe - fedPaid);
+  const fedDefer = Math.max(0, Math.max(0, r.netFedTax - fedPaid) - fedNeed);
+
+  const mdCur = md.totalTax * 0.90;
+  const mdPrior = priorMd * factor;
+  const mdSafe = priorMd > 0 ? Math.min(mdCur, mdPrior) : mdCur;
+  const mdVia = (priorMd > 0 && mdPrior <= mdCur) ? `${factorPct} of ${py} tax` : `90% of ${CURRENT_YEAR} tax`;
+  const mdPaid = md.withheld;
+  const mdBalance = Math.max(0, md.totalTax - mdPaid);
+  const mdDeMinimis = mdBalance < 500;
+  const mdNeed = mdDeMinimis ? 0 : Math.max(0, mdSafe - mdPaid);
+  const mdDefer = Math.max(0, mdBalance - mdNeed);
+
+  const block = (title, safe, via, paidLabel, paid, need, defer, extra = '') => `
+    <div style="margin-bottom:.55rem">
+      <div style="font-weight:700;margin-bottom:.25rem">${title}</div>
+      <div class="tp-row"><span>Safe harbor (${via})</span><span>${fmt(safe)}</span></div>
+      <div class="tp-row"><span>${paidLabel}</span><span>${fmt(paid)}</span></div>
+      <div class="tp-row ${need > 0.005 ? 'owed' : 'refund'}"><span><strong>Must pay via estimates</strong></span><span><strong>${fmt(need)}</strong></span></div>
+      <div class="tp-row"><span>Deferrable to April return</span><span>${fmt(defer)}</span></div>
+      ${extra}
+    </div>`;
+
+  const priorInputs = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin:.35rem 0 .7rem">
+      ${[['agi', `${py} AGI`, priorAgi], ['fed', `${py} Fed tax`, priorFed], ['md', `${py} MD tax`, priorMd]].map(([k, lbl, v]) => `
+        <label style="font-size:.68rem;color:var(--text-muted)">${lbl}
+          <input type="text" inputmode="decimal" value="${escAttr(moneyInputValue(v))}" onblur="tpUpdatePriorYear('${k}', this.value)" style="width:100%;font-size:.8rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text);box-sizing:border-box"></label>`).join('')}
+    </div>`;
+
+  return `
+    <div class="card-header"><div class="card-title">🛡️ ${CURRENT_YEAR} Safe Harbor — Estimated Payments</div></div>
+    <div class="card-body" style="padding:.4rem 1.25rem 1rem">
+      <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.2rem">Minimum to pay in (withholding + estimates) to avoid an underpayment penalty — the rest waits for the return. Prior-year factor <strong>${factorPct}</strong> (${py} AGI ${priorAgi > 150000 ? 'over' : 'under'} $150k).</div>
+      ${priorInputs}
+      ${block('Federal', fedSafe, fedVia, r.estPmts > 0 ? 'Withholding + estimates' : 'Projected withholding', fedPaid, fedNeed, fedDefer)}
+      ${block('Maryland', mdSafe, mdVia, 'Projected withholding', mdPaid, mdNeed, mdDefer, mdDeMinimis ? `<div style="font-size:.7rem;color:var(--success)">Balance after withholding under $500 — no MD penalty.</div>` : (priorMd <= 0 ? `<div style="font-size:.7rem;color:var(--warning)">Enter your ${py} MD tax above to use the lower prior-year safe harbor.</div>` : ''))}
+      <div style="font-size:.7rem;color:var(--text-muted);margin-top:.45rem">Withholding is treated as paid evenly all year, so if it already clears the safe harbor the required estimate is $0. Any required amount is due with the quarter the sale income lands (Sept 15 for a Q3 close) via the annualized-installment method.</div>
+    </div>`;
+}
+
 function tpUpdateResults(tp) {
   if (!tp) tp = tpReadForm();
   const r = tpCalc(tp, window._tpRentalRows || []);
 
   const warnEl = document.getElementById('tp-warnings');
   if (warnEl) warnEl.innerHTML = tpAgiWarningsHtml(r, tp);
+
+  const shEl = document.getElementById('tp-safe-harbor');
+  if (shEl) shEl.innerHTML = tpSafeHarborHtml(r, tp);
 
   const hse = document.getElementById('tp-half-se');
   if (hse) hse.value = moneyInputValue(r.halfSeTax);
@@ -13270,6 +13365,7 @@ window.tpPayAmt                = tpPayAmt;
 window.tpToggleSection         = tpToggleSection;
 window.tpApplyPropertySale     = tpApplyPropertySale;
 window.tpClearPropertySale     = tpClearPropertySale;
+window.tpUpdatePriorYear       = tpUpdatePriorYear;
 window.toggleMaintImprovement  = toggleMaintImprovement;
 window.openAddMoveInPurchase   = openAddMoveInPurchase;
 window.closeMoveInPurchaseForm = closeMoveInPurchaseForm;

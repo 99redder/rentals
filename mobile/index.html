@@ -276,20 +276,32 @@
     if(!asset||n(asset.salePrice)<=0)return null;
     return {prop,projected:true,taxableGain:n(asset.taxableGain),recapture:n(asset.depreciationRecapture)};
   }
-  // Incremental federal + MD tax the combined sales add to the return, via
-  // mobileTaxCalc (mirror of desktop cfComputeCombinedSaleTax): base = return
-  // without these sales, with = both injected into the two property-sale slots.
+  const TP_PRIOR_YEAR_DEFAULTS={agi:145918,fed:11743,md:0};
+  // Sept-15 safe-harbor estimate + Apr-15 balance due, via mobileTaxCalc (mirror of
+  // desktop cfComputeCombinedSaleTax) run on the full return with both sales folded in.
   function cfCombinedSaleTax(parts){
     if(!parts.length)return [];
     const tp=state.data.tax||{},rental=[...RENTALS].map(prop=>({prop,...txnTotals(yearTxns(prop))}));
-    const clear=t=>{['property_sale','property_sale_2'].forEach(pfx=>{t[`${pfx}_imported`]=false;t[`${pfx}_property`]='';t[`${pfx}_taxable_gain`]=0;t[`${pfx}_depr_recapture`]=0;});return t;};
-    const base=clear({...tp}),withSales=clear({...tp});
+    const withSales={...tp};
+    ['property_sale','property_sale_2'].forEach(pfx=>{withSales[`${pfx}_imported`]=false;withSales[`${pfx}_property`]='';withSales[`${pfx}_taxable_gain`]=0;withSales[`${pfx}_depr_recapture`]=0;});
     parts.slice(0,2).forEach((p,i)=>{const pfx=i===0?'property_sale':'property_sale_2';withSales[`${pfx}_imported`]=true;withSales[`${pfx}_property`]=p.prop;withSales[`${pfx}_taxable_gain`]=p.taxableGain;withSales[`${pfx}_depr_recapture`]=p.recapture;});
-    const rBase=mobileTaxCalc(base,rental),rWith=mobileTaxCalc(withSales,rental);
-    const federal=Math.max(0,rWith.federalTax-rBase.federalTax),stateTax=Math.max(0,rWith.mdTax-rBase.mdTax);
-    const label=parts.map(p=>p.prop).join(' + '),date='2026-09-15',items=[];
-    if(federal>0)items.push({id:'auto-sale-tax-fed-combined',name:`${label} Federal Sale Taxes`,amount:federal,date,note:`Incremental federal tax the ${label} sales add to the return (AGI ${money(rBase.agi)} → ${money(rWith.agi)}) — LTCG + §1250 recapture + NIIT`});
-    if(stateTax>0)items.push({id:'auto-sale-tax-state-combined',name:`${label} State Sale Taxes`,amount:stateTax,date,note:`Incremental Maryland tax the ${label} sales add — MD resident taxes the full gain + recapture (NH-sited, $0 to NH)`});
+    const r=mobileTaxCalc(withSales,rental);
+    const has=v=>v!==undefined&&v!==null&&v!=='';
+    const priorAgi=has(tp.prior_year_agi)?n(tp.prior_year_agi):TP_PRIOR_YEAR_DEFAULTS.agi;
+    const priorFed=has(tp.prior_year_fed)?n(tp.prior_year_fed):TP_PRIOR_YEAR_DEFAULTS.fed;
+    const priorMd=has(tp.prior_year_md)?n(tp.prior_year_md):TP_PRIOR_YEAR_DEFAULTS.md;
+    const factor=priorAgi>150000?1.10:1.00;
+    const fedTax=r.federalTax,fedPaid=r.federalPaid;
+    const fedSafe=priorFed>0?Math.min(fedTax*0.90,priorFed*factor):fedTax*0.90;
+    const fedOwed=Math.max(0,fedTax-fedPaid),fedSep15=Math.min(fedOwed,Math.max(0,fedSafe-fedPaid)),fedApril=Math.max(0,fedOwed-fedSep15);
+    const mdTax=r.mdTax,mdPaid=r.mdWithheld;
+    const mdSafe=priorMd>0?Math.min(mdTax*0.90,priorMd*factor):mdTax*0.90;
+    const mdOwed=Math.max(0,mdTax-mdPaid),mdSep15=mdOwed<500?0:Math.min(mdOwed,Math.max(0,mdSafe-mdPaid)),mdApril=Math.max(0,mdOwed-mdSep15);
+    const label=parts.map(p=>p.prop).join(' + '),sep='2026-09-15',apr='2027-04-15',items=[];
+    items.push({id:'auto-tax-fed-sep15',name:'Federal Estimated Tax — Safe Harbor',amount:fedSep15,date:sep,note:fedSep15>0.005?`Minimum federal estimate (safe harbor ${money(fedSafe)} − ${money(fedPaid)} withholding); ${money(fedApril)} due at filing`:`$0 — withholding already clears the federal safe harbor (${money(fedSafe)}); balance deferred to Apr return`});
+    items.push({id:'auto-tax-state-sep15',name:'Maryland Estimated Tax — Safe Harbor',amount:mdSep15,date:sep,note:mdSep15>0.005?`Minimum MD estimate (safe harbor ${money(mdSafe)} − ${money(mdPaid)} withholding); ${money(mdApril)} due at filing`:`$0 — MD safe harbor met by withholding; balance deferred to Apr return`});
+    if(fedApril>0.005)items.push({id:'auto-tax-fed-april',name:'Federal Tax Balance Due (2026 return)',amount:fedApril,date:apr,note:`Remaining federal: ${money(fedTax)} tax − ${money(fedPaid)} withholding − ${money(fedSep15)} Sept-15 estimate`});
+    if(mdApril>0.005)items.push({id:'auto-tax-state-april',name:'Maryland Tax Balance Due (2026 return)',amount:mdApril,date:apr,note:`Remaining MD: ${money(mdTax)} tax − ${money(mdPaid)} withholding − ${money(mdSep15)} Sept-15 estimate`});
     return items;
   }
   // Combined lines once a projected sale exists; otherwise original per-property lines.

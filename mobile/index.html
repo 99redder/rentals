@@ -276,7 +276,7 @@
     if(!asset||n(asset.salePrice)<=0)return null;
     return {prop,projected:true,taxableGain:n(asset.taxableGain),recapture:n(asset.depreciationRecapture)};
   }
-  const TP_PRIOR_YEAR_DEFAULTS={agi:145918,fed:11743,md:0};
+  const TP_PRIOR_YEAR_DEFAULTS={agi:145918,fed:11743,md:6891};
   // Sept-15 safe-harbor estimate + Apr-15 balance due, via mobileTaxCalc (mirror of
   // desktop cfComputeCombinedSaleTax) run on the full return with both sales folded in.
   function cfCombinedSaleTax(parts){

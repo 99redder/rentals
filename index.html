@@ -2078,9 +2078,10 @@ function mdNetCapitalGain(tp) {
 function calcMarylandTax(tp, agi) {
   const county = tp.md_county || 'Wicomico';
   const countyRate = MD_COUNTY_RATES[county] || 0;
-  // MD military retirement exemption: $12,500 (under 55) or $20,000 (age 55+)
-  // per MD Form 502SU code "u" — NOT 100% exempt
-  const exemptCap = tp.navy_age_55 ? 20000 : 12500;
+  // MD military retirement subtraction (Form 502SU code "u"): $12,500 under age 55
+  // (the taxpayer is under 55). The $20,000 age-55+ tier isn't relevant yet; revisit
+  // when he turns 55, or if pending bills (HB857 $20k / HB60 $40k) are enacted.
+  const exemptCap = 12500;
   const navyExempt = Math.min(tpN(tp.navy_gross), exemptCap);
   // MD 529 (College Investment Plan) contributions are deductible on MD return
   const md529 = tpN(tp.md_529);
@@ -6112,7 +6113,14 @@ function tpCalc(tp, rentalRows) {
   // Deductions
   const stdDed  = tpN(tp.std_ded) || TP_STD_DEDUCTION;
   const qbiBase = Math.max(0, businessInc - halfSeTax);
-  const qbiDed  = tp.use_qbi !== false ? qbiBase * 0.20 : 0;
+  // QBI is the LESSER of 20% of qualified business income and 20% of (taxable
+  // income before QBI − net capital gain). Net capital gain here = net LT gains +
+  // §1250 recapture; large sale gains can make this income cap bind and shrink the
+  // deduction. (Below the $403,500 taxable-income threshold the W-2/UBIA and SSTB
+  // limits don't apply, so those aren't modeled.)
+  const qbiNetCapGain = Math.max(0, ltGains) + propertySaleDepRecapture;
+  const qbiIncomeCap  = 0.20 * Math.max(0, (agi - stdDed) - qbiNetCapGain);
+  const qbiDed  = tp.use_qbi !== false ? Math.min(qbiBase * 0.20, qbiIncomeCap) : 0;
   const totDed  = stdDed + qbiDed;
   const taxInc  = Math.max(0, agi - totDed);
 
@@ -6131,7 +6139,13 @@ function tpCalc(tp, rentalRows) {
   const nii  = interest + dividends + ltGains + stGains + cryptoInc + propertySaleDepRecapture + Math.max(0, rentalTaxInc);
   const niit = agi > TP_NIIT_THRESHOLD ? Math.min(nii, agi - TP_NIIT_THRESHOLD) * 0.038 : 0;
 
-  const grossFedTax = ordTax + ltcgTax + depRecaptureTax + seTax + niit;
+  // 0.9% Additional Medicare Tax on Medicare wages + SE earnings over $250k (MFJ).
+  // Military retired pay is a pension (no Medicare tax), so only W-2 wages count —
+  // here the spouse's job; the Navy pension is excluded from the base.
+  const medicareWages = tpN(tp.wife_gross);
+  const addlMedicare  = Math.max(0, medicareWages + Math.max(0, netSe) - TP_ADDL_MEDICARE) * 0.009;
+
+  const grossFedTax = ordTax + ltcgTax + depRecaptureTax + seTax + niit + addlMedicare;
 
   // Child Tax Credit (2 children)
   const ctcRaw     = 2 * TP_CTC_PER_CHILD;
@@ -6153,7 +6167,7 @@ function tpCalc(tp, rentalRows) {
     propertySaleDepRecapture, depRecaptureTaxable, depRecaptureTax,
     seTax, halfSeTax, grossIncome, iraAdj, adjustments, agi, magi,
     stdDed, qbiDed, totDed, taxInc, ordinaryTaxable, ltcgTaxable,
-    ordTax, ltcgTax, nii, niit, grossFedTax, ctcRaw, ctcPhaseout, ctc, netFedTax,
+    ordTax, ltcgTax, nii, niit, addlMedicare, grossFedTax, ctcRaw, ctcPhaseout, ctc, netFedTax,
     fedWithheld, estPmts, totFedPaid, fedOwed, md
   };
 }
@@ -8833,13 +8847,6 @@ async function renderTaxPlanning() {
               }).join('')}
             </select>
           </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="tp-lbl">Retiree Age Bracket</label>
-            <label style="display:flex;align-items:center;gap:.4rem;font-size:.875rem;cursor:pointer;margin-top:.4rem">
-              <input type="checkbox" id="tp-navy-age-55" ${tp.navy_age_55 ? 'checked' : ''} onchange="tpChanged()">
-              Age 55 or older (exemption cap $20,000 vs $12,500)
-            </label>
-          </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:.75rem">
           <div class="tp-group" style="flex:1;margin-bottom:0">MD 529 Plan Contributions (deductible)</div>
@@ -8851,7 +8858,7 @@ async function renderTaxPlanning() {
           ${tpFld('tp-md-529','Contribution Amount ($)',tp.md_529 ?? 4800,tp.md_529_locked)}
         </div>
         <div class="tp-note">
-          ✓ Navy retirement exemption: <strong>$12,500</strong> (under 55) or <strong>$20,000</strong> (age 55+) per MD Form 502SU code "u".<br>
+          ✓ Navy retirement exemption: <strong>$12,500</strong> (under 55) per MD Form 502SU code "u".<br>
           ✓ 529 contributions deducted from MD AGI (MD College Investment Plan).<br>
           ✓ Standard deduction: flat <strong>${fmt(MD_STD_DEDUCTION)}</strong> MFJ (2025 law — the old 15%-of-AGI formula is gone).<br>
           ✓ Personal exemptions: 4 × $3,200 (MFJ + 2 dependents), stepped down above $150k federal AGI, $0 above $200k.<br>
@@ -12496,8 +12503,6 @@ function tpReadForm() {
   const g = id => { const el = document.getElementById(id); return el && el.value !== '' ? tpN(el.value) : 0; };
   const gc = id => { const el = document.getElementById(id); return el ? el.checked : true; };
   if (!tp.navy_locked) { tp.navy_gross = g('tp-navy-gross'); tp.navy_fed = g('tp-navy-fed'); tp.navy_state = g('tp-navy-state'); }
-  const ageEl = document.getElementById('tp-navy-age-55');
-  if (ageEl) tp.navy_age_55 = ageEl.checked;
   if (!tp.wife_locked) { tp.wife_gross = g('tp-wife-gross'); tp.wife_fed = g('tp-wife-fed'); tp.wife_state = g('tp-wife-state'); }
   if (!tp.fmg_sp_locked) tp.fmg_sp = g('tp-fmg-sp');
   tp.fmg = g('tp-fmg'); tp.esai = g('tp-esai');
@@ -12794,7 +12799,7 @@ function tpAgiWarningsHtml(r, tp) {
   // QBI W-2/UBIA limits — estimate applies the full 20% without them
   if (r.qbiDed > 0 && r.taxInc > TP_QBI_THRESHOLD) {
     add('hit', 'QBI deduction limits (§199A)',
-      `Taxable income exceeds ${fmt(TP_QBI_THRESHOLD)}, so the W-2-wage/property limits phase in through ${fmt(TP_QBI_PHASEIN_END)}. This estimate applies the full 20% QBI deduction (${fmt(r.qbiDed)}) without those limits — the real deduction may be smaller.`,
+      `Taxable income exceeds ${fmt(TP_QBI_THRESHOLD)}, so the W-2-wage/property (UBIA) limits phase in through ${fmt(TP_QBI_PHASEIN_END)}. This estimate applies the 20%-of-taxable-income-minus-capital-gains cap (QBI deduction ${fmt(r.qbiDed)}) but NOT the W-2/UBIA wage limits — if your businesses pay little in W-2 wages, the real deduction may be smaller.`,
       [['IRS: QBI deduction', 'https://www.irs.gov/newsroom/qualified-business-income-deduction'], ['Rev. Proc. 2025-32 analysis', 'https://www.currentfederaltaxdevelopments.com/blog/2025/10/9/2026-inflation-adjustments-for-tax-professionals-revenue-procedure-2025-32-analysis']]);
   } else if (r.qbiDed > 0 && near(TP_QBI_THRESHOLD, r.taxInc)) {
     add('near', 'QBI deduction limits (§199A)',
@@ -12814,11 +12819,12 @@ function tpAgiWarningsHtml(r, tp) {
       [['IRS: capital gains rates', 'https://www.irs.gov/taxtopics/tc409']]);
   }
 
-  // Additional Medicare Tax — wages/SE comp only (pension & gains don't count) — not modeled
-  const medicareComp = tpN(tp.wife_gross) + Math.max(0, r.businessInc);
+  // Additional Medicare Tax — Medicare wages + SE earnings only (pension & gains
+  // don't count). Now modeled in the estimate; military pension excluded from the base.
+  const medicareComp = tpN(tp.wife_gross) + Math.max(0, r.businessInc) * 0.9235;
   if (medicareComp > TP_ADDL_MEDICARE) {
     add('hit', 'Additional Medicare Tax (0.9%)',
-      `Wages + self-employment compensation of ${fmt(medicareComp)} exceed the ${fmt(TP_ADDL_MEDICARE)} MFJ threshold — 0.9% applies to the excess (not modeled in this estimate). Pension income and capital gains don't count toward this one.`,
+      `W-2 wages + net SE earnings of ${fmt(medicareComp)} exceed the ${fmt(TP_ADDL_MEDICARE)} MFJ threshold — 0.9% on the excess (${fmt(r.addlMedicare)}) is included in this estimate. Your Navy pension and capital gains don't count toward this one.`,
       [['IRS: Additional Medicare Tax', 'https://www.irs.gov/taxtopics/tc560']]);
   } else if (near(TP_ADDL_MEDICARE, medicareComp)) {
     add('near', 'Additional Medicare Tax (0.9%)',
@@ -13047,6 +13053,7 @@ function tpUpdateResults(tp) {
       ${r.depRecaptureTaxable > 0 ? row('Tax on Depreciation Recapture (25%)', r.depRecaptureTax, 'in') : ''}
       ${r.seTax > 0 ? row('Self-Employment Tax', r.seTax, 'in') : ''}
       ${r.niit > 0 ? row('Net Investment Income Tax (3.8%)', r.niit, 'in') : ''}
+      ${r.addlMedicare > 0 ? row('Additional Medicare Tax (0.9%)', r.addlMedicare, 'in') : ''}
       ${row('Gross Federal Tax', r.grossFedTax, 'sub')}
       ${r.ctc > 0 ? row('Child Tax Credit (2 children)', r.ctc, 'in', true) : ''}
       ${row('Net Federal Tax', r.netFedTax, 'sub')}

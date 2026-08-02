@@ -378,13 +378,13 @@
     const shortGains=n(tp.crypto_st)+n(tp.rh_st)+n(tp.ibkr_st),longGains=n(tp.crypto_lt)+n(tp.rh_lt)+n(tp.ibkr_lt)+propertyGain;
     const netSe=Math.max(0,business)*.9235,seTax=Math.min(netSe,184500)*.124+netSe*.029,halfSe=seTax/2;
     const gross=wages+business+rentalTaxInc+interest+dividends+cryptoIncome+shortGains+longGains+recapture,ira=Math.min(n(tp.ira),15000),agi=Math.max(0,gross-ira-halfSe);
-    const std=n(tp.std_ded)||32200,qbi=tp.use_qbi===false?0:Math.max(0,business-halfSe)*.2,taxable=Math.max(0,agi-std-qbi);
+    const std=n(tp.std_ded)||32200,qbiCap=.2*Math.max(0,(agi-std)-(Math.max(0,longGains)+recapture)),qbi=tp.use_qbi===false?0:Math.min(Math.max(0,business-halfSe)*.2,qbiCap),taxable=Math.max(0,agi-std-qbi);
     const ltcgTaxable=Math.min(Math.max(0,longGains),taxable),recaptureTaxable=Math.min(Math.max(0,recapture),Math.max(0,taxable-ltcgTaxable)),ordinaryTaxable=Math.max(0,taxable-ltcgTaxable-recaptureTaxable);
     const ordinaryTax=bracketTax(ordinaryTaxable,FED_BRACKETS),ltcgTax=capitalTax(ordinaryTaxable+recaptureTaxable,ltcgTaxable),recaptureTax=recaptureTaxable*.25;
     const investmentIncome=interest+dividends+longGains+shortGains+cryptoIncome+recapture+Math.max(0,rentalTaxInc),niit=agi>250000?Math.min(investmentIncome,agi-250000)*.038:0;
-    const grossFederal=ordinaryTax+ltcgTax+recaptureTax+seTax+niit,ctc=Math.max(0,4400-Math.max(0,Math.ceil((agi-400000)/1000))*50),federalTax=Math.max(0,grossFederal-ctc);
+    const addlMedicare=Math.max(0,n(tp.wife_gross)+Math.max(0,netSe)-250000)*.009,grossFederal=ordinaryTax+ltcgTax+recaptureTax+seTax+niit+addlMedicare,ctc=Math.max(0,4400-Math.max(0,Math.ceil((agi-400000)/1000))*50),federalTax=Math.max(0,grossFederal-ctc);
     const federalWithheld=n(tp.navy_fed)+n(tp.wife_fed),estimated=sum(tp.estimated_payments||[]),federalPaid=federalWithheld+estimated,federalOwed=federalTax-federalPaid;
-    const navyExempt=Math.min(n(tp.navy_gross),tp.navy_age_55?20000:12500),md529=n(tp.md_529),mdAgi=Math.max(0,agi-navyExempt-md529),mdPerExempt=agi<=150000?3200:agi<=175000?1600:agi<=200000?800:0,mdExempt=mdPerExempt*4,mdTaxable=Math.max(0,mdAgi-6700-mdExempt);
+    const navyExempt=Math.min(n(tp.navy_gross),12500),md529=n(tp.md_529),mdAgi=Math.max(0,agi-navyExempt-md529),mdPerExempt=agi<=150000?3200:agi<=175000?1600:agi<=200000?800:0,mdExempt=mdPerExempt*4,mdTaxable=Math.max(0,mdAgi-6700-mdExempt);
     const mdState=bracketTax(mdTaxable,MD_BRACKETS),county=tp.md_county||'Wicomico',countyTax=mdTaxable*(MD_COUNTY[county]||0);
     const st=n(tp.crypto_st)+n(tp.rh_st)+n(tp.ibkr_st);let mdLt=n(tp.crypto_lt)+n(tp.rh_lt)+n(tp.ibkr_lt);
     for(const prefix of ['property_sale','property_sale_2'])if(tp[`${prefix}_imported`]){const primary=['731WO','4781MC'].includes(tp[`${prefix}_property`])&&n(tp[`${prefix}_price`])<1500000;if(!primary)mdLt+=n(tp[`${prefix}_taxable_gain`])+n(tp[`${prefix}_depr_recapture`])}

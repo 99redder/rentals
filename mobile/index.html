@@ -350,12 +350,15 @@
     const incomeRows=row('Robinhood Joint Checking Current Balance',money(checking),'Pinned · Plaid','good')
       +autoIncome.map(item=>row(item.name,money(item.amount),`${item.note} · Auto`,item.amount?'good':'')).join('')
       +manualIncome.slice().sort((a,b)=>String(a.date||'9999').localeCompare(String(b.date||'9999'))).map(item=>row(item.name||'Untitled',money(item.amount),`${dateNote(item)} · Manual`,'good')).join('');
-    const expenseRows=autoExpenses.map(item=>row(item.name,money(item.amount),`${dateNote(item)} · Auto`,'bad')).join('')
-      +expenses.slice().sort((a,b)=>cfExpenseAmount(b)-cfExpenseAmount(a)).map(item=>{
-        const linked=isMoveInStuffLine(item.name);
-        const note=linked?[item.date||'Unscheduled','Linked · Move-In Purchases total'].filter(Boolean).join(' · '):dateNote(item);
-        return row(item.name||'Untitled',money(cfExpenseAmount(item)),note,'bad');
-      }).join('');
+    // Auto + manual expense lines sort together, soonest date first.
+    const allExpenses=[...autoExpenses.map(i=>({item:i,auto:true})),...expenses.map(i=>({item:i,auto:false}))]
+      .sort((a,b)=>{const ad=a.item.date||'9999-99-99',bd=b.item.date||'9999-99-99';return ad.localeCompare(bd)||String(a.item.name||'').localeCompare(String(b.item.name||''));});
+    const expenseRows=allExpenses.map(({item,auto})=>{
+      if(auto)return row(item.name,money(item.amount),`${dateNote(item)} · Auto`,'bad');
+      const linked=isMoveInStuffLine(item.name);
+      const note=linked?[item.date||'Unscheduled','Linked · Move-In Purchases total'].filter(Boolean).join(' · '):dateNote(item);
+      return row(item.name||'Untitled',money(cfExpenseAmount(item)),note,'bad');
+    }).join('');
     return `<div class="hero"><div class="hero-label">${excess>=0?'Excess left over':'Shortfall'}</div><div class="hero-value">${excess<0?'−':''}${money(Math.abs(excess))}</div><div class="hero-note">${money(totalIncome)} income minus ${money(totalExpenses)} expenses</div></div>
       <div class="grid">${stat('Income events',money(totalIncome),`1 pinned · ${autoIncome.length} auto · ${manualIncome.length} manual`,'good')}${stat('Expense events',money(totalExpenses),`${autoExpenses.length} auto · ${expenses.length} manual`,'bad')}${stat(excess>=0?'Excess':'Shortfall',money(Math.abs(excess)),'expected amount',tone(excess))}</div>
       ${card('Income',incomeRows,'2026')}

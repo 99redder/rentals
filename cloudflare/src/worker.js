@@ -81,6 +81,14 @@ export default {
       return handleStockStickiesApi(request, env, url, origin);
     }
 
+    // Read-only Net Worth export for the Just In Case emergency app. Authorized
+    // by the shared JIC_READ_TOKEN secret, not a session — reached worker-to-
+    // worker via a service binding (no Origin header), so it sits ahead of the
+    // browser Origin guard below.
+    if (url.pathname === '/api/networth/accounts' && request.method === 'GET') {
+      return handleNetWorthAccountsExport(request, env);
+    }
+
     if (origin && origin !== ALLOWED_ORIGIN) {
       return jsonResponse({ error: 'Origin not allowed' }, 403);
     }
@@ -2278,6 +2286,63 @@ function applyKnownPlaidAccountLabels(data, env) {
 
 async function handleGetNetWorth(env) {
   return jsonResponse({ data: applyKnownPlaidAccountLabels(normalizeNetWorth(await env.RENTALS.get(NET_WORTH_KEY, 'json')),env) });
+}
+
+// Read-only export of Net Worth accounts for the Just In Case emergency app.
+// Authorized by the shared JIC_READ_TOKEN secret (constant-time compared).
+// This never mutates state and returns assets only — see buildNetWorthAccountExport.
+async function handleNetWorthAccountsExport(request, env) {
+  const expected = String(env.JIC_READ_TOKEN || '').trim();
+  const provided = String(request.headers.get('X-Read-Token') || '').trim();
+  if (!expected || !provided || !timingSafeEqualStrings(provided, expected)) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+  const data = applyKnownPlaidAccountLabels(
+    normalizeNetWorth(await env.RENTALS.get(NET_WORTH_KEY, 'json')),
+    env,
+  );
+  return jsonResponse({ accounts: buildNetWorthAccountExport(data), refreshedAt: data.plaidRefreshedAt || '' });
+}
+
+// Flattens the Net Worth record into asset "accounts" the Just In Case money
+// list can display. Assets only — liabilities (mortgages, manual debts) are
+// excluded because that view is "where the money IS". Each entry carries a
+// stable `key` so the consumer can namespace ids and de-dupe deterministically.
+function buildNetWorthAccountExport(data) {
+  const accounts = [];
+  const plaidType = (subtype) => {
+    const s = String(subtype || '').toLowerCase();
+    if (['checking', 'savings', 'cash management', 'money market', 'cd'].includes(s)) return 'Bank';
+    if (['ira', 'roth', '401k', '403b', 'retirement', 'pension'].includes(s)) return 'Retirement';
+    if (s === 'crypto') return 'Crypto';
+    return 'Investment';
+  };
+  for (const a of data.plaidAccounts || []) {
+    if (a.side === 'liability') continue;
+    accounts.push({
+      key: `plaid:${a.id}`,
+      name: a.name || a.institution || 'Linked account',
+      type: plaidType(a.subtype),
+      balance: Math.max(0, Number(a.value) || 0),
+      institution: a.institution || '',
+      mask: a.mask || '',
+    });
+  }
+  const t = data.treasuryPortfolio;
+  if (t && Number(t.value) > 0) {
+    accounts.push({ key: 'treasury', name: t.name || 'U.S. Treasury Bonds', type: 'Investment', balance: Number(t.value) || 0, institution: 'U.S. Treasury', mask: '' });
+  }
+  for (const m of data.manualItems || []) {
+    if (m.side === 'liability') continue;
+    accounts.push({ key: `manual:${m.id}`, name: m.name, type: m.category || 'Other', balance: Number(m.value) || 0, institution: '', mask: '' });
+  }
+  for (const v of data.vehicles || []) {
+    accounts.push({ key: `vehicle:${v.id}`, name: v.name || `${v.year || ''} ${v.make || ''} ${v.model || ''}`.trim() || 'Vehicle', type: 'Vehicle', balance: Number(v.value) || 0, institution: '', mask: '' });
+  }
+  for (const p of data.propertyAssets || []) {
+    accounts.push({ key: `property:${p.id}`, name: p.name, type: 'Property', balance: Number(p.value) || 0, institution: '', mask: '' });
+  }
+  return accounts.filter(a => a.name);
 }
 
 async function handleSaveNetWorth(env, incoming) {

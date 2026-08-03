@@ -3753,6 +3753,11 @@ async function refreshNetWorthPlaid(env) {
       if (institution === 'Navy Federal' && account.subtype === 'mortgage' && !/\(731WO\)/i.test(displayName)) {
         displayName += ' (731WO)';
       }
+      // Gordon's Robinhood custodial (UTMA) account — explicit friendly name so it
+      // doesn't render as "Chris's Robinhood UTMA". Set last so nothing re-prefixes it.
+      if (institution === 'Robinhood' && /\butma\b|custodial/i.test(rawName)) {
+        displayName = "Gordie's Custodial Brokerage Account";
+      }
       return {
         id: String(account.account_id || ''),
         name: displayName.slice(0, 160),

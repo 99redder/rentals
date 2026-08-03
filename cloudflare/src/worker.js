@@ -290,7 +290,7 @@ async function handleDataApi(request, env) {
   if (action === 'get_net_worth') return handleGetNetWorth(env);
   if (action === 'save_net_worth') return handleSaveNetWorth(env, body.data);
   if (action === 'refresh_net_worth_plaid') return handleRefreshNetWorthPlaid(env);
-  if (action === 'create_plaid_link_token') return handleCreatePlaidLinkToken(env, body.itemId);
+  if (action === 'create_plaid_link_token') return handleCreatePlaidLinkToken(env, body.itemId, body.institution, body.accountSelection);
   if (action === 'get_vehicle_trims') return handleGetVehicleTrims(body);
   if (action === 'value_net_worth_vehicle') return handleValueNetWorthVehicle(env, body.vehicle);
   // Note: Fair Share settings live inside the `budget` KV record
@@ -3618,11 +3618,19 @@ async function findPlaidAccessTokenForItem(env, itemId) {
   return '';
 }
 
-async function handleCreatePlaidLinkToken(env, itemId) {
+async function handleCreatePlaidLinkToken(env, itemId, institution, accountSelection) {
   if (!env.PLAID_CLIENT_ID || !env.PLAID_SECRET) {
     return jsonResponse({ error: 'Account syncing is not set up yet.' }, 400);
   }
-  const accessToken = await findPlaidAccessTokenForItem(env, String(itemId || '').slice(0, 100));
+  // `institution: 'robinhood'` targets the linked Robinhood Item directly (used to
+  // re-authorize and pick up a newly opened account, e.g. a custodial account);
+  // otherwise find the token that owns the given itemId (the reconnect flow).
+  let accessToken = '';
+  if (String(institution || '').toLowerCase() === 'robinhood') {
+    try { accessToken = (await findRobinhoodPlaidItem(env)).accessToken; } catch { accessToken = ''; }
+  } else {
+    accessToken = await findPlaidAccessTokenForItem(env, String(itemId || '').slice(0, 100));
+  }
   if (!accessToken) return jsonResponse({ error: 'That account connection was not found.' }, 404);
   const body = {
     client_name: "Red's STUFF",
@@ -3631,6 +3639,9 @@ async function handleCreatePlaidLinkToken(env, itemId) {
     user: { client_user_id: 'rentals-owner' },
     access_token: accessToken, // presence of access_token = update mode
   };
+  // Account-selection update mode lets the user add/remove which accounts are
+  // shared — needed to grant access to a newly opened account.
+  if (accountSelection) body.update = { account_selection_enabled: true };
   // Required by OAuth institutions; must also be registered in the Plaid dashboard.
   if (env.PLAID_REDIRECT_URI) body.redirect_uri = env.PLAID_REDIRECT_URI;
   const { ok, status, payload } = await plaidPost(env, '/link/token/create', body);

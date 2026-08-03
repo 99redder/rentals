@@ -10384,7 +10384,7 @@ function _renderNetWorthHtml() {
   ].join('');
   const us = nwUsPercentile(totals.netWorth), global = nwGlobalPercentile(totals.netWorth);
   document.getElementById('app').innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap"><div><h2 style="margin:0">Net Worth</h2><div class="tp-note">Assets minus liabilities · linked balances are cached and refreshed on demand</div></div><div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn btn-secondary" aria-pressed="${_nwPrivacy}" onclick="nwTogglePrivacy()">${_nwPrivacy?'◉ Show values':'◌ Hide values'}</button><button class="btn btn-secondary" onclick="nwRefreshPlaid(this)">↻ Refresh Accounts</button></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap"><div><h2 style="margin:0">Net Worth</h2><div class="tp-note">Assets minus liabilities · linked balances are cached and refreshed on demand</div></div><div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn btn-secondary" aria-pressed="${_nwPrivacy}" onclick="nwTogglePrivacy()">${_nwPrivacy?'◉ Show values':'◌ Hide values'}</button><button class="btn btn-secondary" onclick="nwRefreshPlaid(this)">↻ Refresh Accounts</button><button class="btn btn-secondary" onclick="nwUpdateRobinhood(this)" title="Re-authorize Robinhood to pick up a newly opened account (e.g. a custodial account). Check the new account's box in the sign-in.">＋ Add Robinhood account</button></div></div>
     ${nwSyncWarningHtml()}
     <div class="nw-hero"><div class="card"><div class="label">Net Worth</div><div class="nw-big" style="color:${totals.netWorth>=0?'var(--success)':'var(--danger)'}">${!_nwPrivacy&&totals.netWorth<0?'−':''}${nwFmt(Math.abs(totals.netWorth))}</div></div><div class="card"><div class="label">Compared with U.S.</div><div class="nw-big">${_nwPrivacy?'••••••':`Higher than ~${us.toFixed(0)}%`}</div><div class="nw-source">Estimated from Federal Reserve 2022 SCF family net-worth thresholds.</div></div><div class="card"><div class="label">Compared globally</div><div class="nw-big">${_nwPrivacy?'••••••':`Higher than ~${global.toFixed(0)}%`}</div><div class="nw-source">Estimated from UBS Global Wealth Report 2026 (2025 wealth bands).</div></div></div>
     ${nwEditorHtml()}
@@ -10558,6 +10558,42 @@ async function nwReconnectBank(itemId,btn){
     btn.textContent=original;
   }catch(e){
     showBrandedNotice({title:"Couldn't start reconnect",message:e.message,confirmLabel:'OK'});
+  }finally{
+    btn.disabled=false;
+    if(btn.textContent==='Opening…') btn.textContent=original;
+  }
+}
+
+// Re-authorize the linked Robinhood login in Plaid account-selection update mode,
+// so a newly opened account (e.g. Gordon's custodial account) can be granted access
+// and then pulled in by a normal refresh.
+async function nwUpdateRobinhood(btn){
+  const original=btn.textContent;
+  btn.disabled=true; btn.textContent='Opening…';
+  try{
+    const Plaid=await loadPlaidLink();
+    const {linkToken}=await callApi({action:'create_plaid_link_token',institution:'robinhood',accountSelection:true});
+    if(!linkToken) throw new Error('Could not start the Robinhood update. Please try again.');
+    const handler=Plaid.create({
+      token:linkToken,
+      onSuccess:async()=>{
+        try{
+          state.netWorth=(await callApi({action:'refresh_net_worth_plaid'})).data;
+          _renderNetWorthHtml();
+          showBrandedNotice({title:'Robinhood updated',message:'Any newly shared Robinhood accounts should now appear in Net Worth. If the new custodial account is still missing, run this again and make sure you check its box in the Robinhood sign-in.',confirmLabel:'OK'});
+        }catch(e){
+          showBrandedNotice({title:"Couldn't refresh accounts",message:e.message,confirmLabel:'OK'});
+        }
+      },
+      onExit:(err)=>{
+        btn.disabled=false; btn.textContent=original;
+        if(err) showBrandedNotice({title:'Update not completed',message:err.display_message||err.error_message||'The Robinhood sign-in was closed before it finished.',confirmLabel:'OK'});
+      },
+    });
+    handler.open();
+    btn.textContent=original;
+  }catch(e){
+    showBrandedNotice({title:"Couldn't start the update",message:e.message,confirmLabel:'OK'});
   }finally{
     btn.disabled=false;
     if(btn.textContent==='Opening…') btn.textContent=original;

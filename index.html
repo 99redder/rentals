@@ -6216,12 +6216,17 @@ function tpToggleLock(who) {
 function tpBuildPayments(payments) {
   if (!payments || payments.length === 0)
     return '<div style="font-size:.875rem;color:var(--text-muted)">No estimated payments recorded.</div>';
-  return payments.map((p, i) => `
+  return payments.map((p, i) => {
+    const locked = !!p.locked;
+    const lockedInput = locked ? 'disabled style="background:var(--bg);cursor:not-allowed"' : '';
+    return `
     <div class="tp-pay-row">
-      <input type="date" value="${escAttr(p.date || '')}" onchange="tpPayDate(${i},this.value)">
-      <input type="text" inputmode="decimal" placeholder="0.00" value="${escAttr(moneyInputValue(p.amount))}" onchange="tpPayAmt(${i},this.value)" onblur="formatMoneyInput(this)">
-      <button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.2rem .5rem" onclick="tpRemovePayment(${i})">×</button>
-    </div>`).join('');
+      <input type="date" value="${escAttr(p.date || '')}" onchange="tpPayDate(${i},this.value)" ${locked ? `disabled style="width:155px;flex-shrink:0;background:var(--bg);cursor:not-allowed"` : ''}>
+      <input type="text" inputmode="decimal" placeholder="0.00" value="${escAttr(moneyInputValue(p.amount))}" onchange="tpPayAmt(${i},this.value)" onblur="formatMoneyInput(this)" ${lockedInput}>
+      <button class="btn btn-ghost btn-sm" style="padding:.2rem .5rem" onclick="tpTogglePayLock(${i})" title="${locked ? 'Unlock to edit this payment' : 'Lock in this payment'}">${locked ? '🔒' : '🔓'}</button>
+      <button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:.2rem .5rem${locked ? ';opacity:.3' : ''}" onclick="tpRemovePayment(${i})" ${locked ? 'disabled title="Unlock to remove"' : ''}>×</button>
+    </div>`;
+  }).join('');
 }
 
 const TP_COLLAPSE_KEY = `rentals_tp_collapsed_${CURRENT_YEAR}`;
@@ -13211,6 +13216,16 @@ function tpPayDate(i, val) {
 function tpPayAmt(i, val) {
   const tp = tpReadForm();
   if (tp.estimated_payments?.[i]) { tp.estimated_payments[i].amount = parseMoney(val); tpSave(tp); tpUpdateResults(tp); }
+}
+
+function tpTogglePayLock(i) {
+  const tp = tpReadForm();
+  if (tp.estimated_payments?.[i]) {
+    tp.estimated_payments[i].locked = !tp.estimated_payments[i].locked;
+    tpSave(tp);
+    document.getElementById('tp-payments').innerHTML = tpBuildPayments(tp.estimated_payments);
+    tpUpdateResults(tp);
+  }
 }
 
 // ── Security Helpers ──────────────────────────────────────────────────────────

@@ -1463,6 +1463,8 @@
   </div>
 </header>
 
+<div id="sold-banner" style="display:none"></div>
+
 <main class="page" id="app">
   <div class="loading"><span class="spinner"></span> Loading…</div>
 </main>
@@ -2559,6 +2561,29 @@ async function renderView() {
     }
   } catch (e) {
     app.innerHTML = `<div class="error-msg">Failed to load: ${escHtml(e.message)}</div>`;
+  } finally {
+    updateSoldBanner();
+  }
+}
+
+// Big red persistent banner shown on every property-specific view once a
+// property has been sold/closed out, so the sold status is impossible to miss.
+function updateSoldBanner() {
+  const el = document.getElementById('sold-banner');
+  if (!el) return;
+  const prop = state.currentProperty;
+  const isPropertyView = !PROPERTY_TAB_RETURN_VIEWS.has(state.currentView);
+  const closeout = state.data[prop]?.investment?.saleCloseout;
+  if (isPropertyView && closeout?.closedAt) {
+    el.style.display = 'block';
+    el.innerHTML = `
+      <div style="background:linear-gradient(180deg,#dc2626,#b91c1c);color:#fff;border-bottom:3px solid #7f1d1d;box-shadow:0 3px 10px rgba(185,28,28,.45);padding:.7rem 1rem;display:flex;align-items:center;justify-content:center;gap:.9rem;flex-wrap:wrap;text-align:center">
+        <span style="display:inline-flex;align-items:center;gap:.5rem;font-size:1.5rem;font-weight:900;letter-spacing:.22em;text-transform:uppercase;border:3px solid #fff;border-radius:6px;padding:.1rem .7rem;transform:rotate(-3deg);text-shadow:0 1px 2px rgba(0,0,0,.3)">⛔ Sold</span>
+        <span style="font-size:.92rem;font-weight:700;letter-spacing:.02em">${escHtml(prop)} · closed ${fmtDate(closeout.saleDate)} · all records are historical / read-only</span>
+      </div>`;
+  } else {
+    el.style.display = 'none';
+    el.innerHTML = '';
   }
 }
 

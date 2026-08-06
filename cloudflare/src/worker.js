@@ -2760,6 +2760,14 @@ async function getStockStickiesInvestmentTransactions(env, year, force = false) 
   try {
     return { data: await refreshStockStickiesInvestmentTransactions(env, year), warning: '' };
   } catch (error) {
+    console.error(JSON.stringify({
+      event: 'stock_stickies_investment_transactions_refresh_error',
+      year,
+      status: Number(error?.status) || 0,
+      code: String(error?.code || 'UNKNOWN_ERROR').slice(0, 80),
+      message: error instanceof Error ? error.message : String(error),
+      usingCachedTransactions: Boolean(cached),
+    }));
     if (cached) {
       return {
         data: cached,

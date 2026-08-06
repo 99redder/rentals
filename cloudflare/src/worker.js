@@ -2754,7 +2754,7 @@ async function getStockStickiesInvestmentTransactions(env, year, force = false) 
   const fetchedDate = cached?.fetchedAt ? easternDateKey(new Date(cached.fetchedAt)) : '';
   if (
     !force &&
-    Number(cached?.schemaVersion) >= 2 &&
+    Number(cached?.schemaVersion) >= 3 &&
     fetchedDate === easternDateKey()
   ) return { data: cached, warning: '' };
   try {

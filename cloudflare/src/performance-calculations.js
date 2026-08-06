@@ -368,6 +368,13 @@ export function buildStockStickiesCspLedger(
       ? options.excludedTransactionIds.map(String)
       : []
   );
+  const reviewedResolvedContracts = Array.isArray(options?.reviewedResolvedContracts)
+    ? options.reviewedResolvedContracts
+    : [];
+  const accountReconciliations = options?.accountReconciliations &&
+    typeof options.accountReconciliations === 'object'
+    ? options.accountReconciliations
+    : {};
   let excludedTransactionCount = 0;
   const inputTransactions = (Array.isArray(transactions) ? transactions : [])
     .filter(transaction =>
@@ -528,7 +535,14 @@ export function buildStockStickiesCspLedger(
       0
     );
     const position = currentPositions.get(ledger.key);
-    const pendingResolutionContracts = remainingContracts > 0 && !position
+    const reviewedResolution = reviewedResolvedContracts.find(contract =>
+      String(contract?.account || '') === ledger.account &&
+      String(contract?.underlyingTicker || '').toUpperCase() ===
+        String(ledger.underlyingTicker || ledger.ticker || '').toUpperCase() &&
+      Math.abs(finiteNumber(contract?.strikePrice, NaN) - finiteNumber(ledger.strikePrice, NaN)) < 0.005 &&
+      (!contract?.expirationDate || String(contract.expirationDate) === String(ledger.expirationDate || ''))
+    );
+    const pendingResolutionContracts = remainingContracts > 0 && !position && !reviewedResolution
       ? remainingContracts
       : 0;
     const openContracts = position ? remainingContracts : 0;
@@ -548,8 +562,10 @@ export function buildStockStickiesCspLedger(
       underlyingTicker: ledger.underlyingTicker,
       expirationDate: ledger.expirationDate,
       strikePrice: ledger.strikePrice,
-      status: pendingResolutionContracts > 0 ? 'pending-resolution' :
-        (openContracts > 0 ? 'open' : 'resolved'),
+      status: reviewedResolution ? 'resolved-by-reconciliation' :
+        (pendingResolutionContracts > 0 ? 'pending-resolution' :
+          (openContracts > 0 ? 'open' : 'resolved')),
+      reconciliationSource: reviewedResolution?.source || null,
       openContracts: roundMoney(openContracts),
       pendingResolutionContracts: roundMoney(pendingResolutionContracts),
       collateralRequired: roundMoney(collateralRequired),
@@ -576,6 +592,22 @@ export function buildStockStickiesCspLedger(
   for (const summary of Object.values(accountSummaries)) {
     for (const field of Object.keys(summary)) summary[field] = roundMoney(summary[field]);
   }
+  const appliedReconciliations = [];
+  for (const account of STOCK_STICKIES_ACCOUNT_IDS) {
+    const reconciliation = accountReconciliations[account];
+    if (!reconciliation || typeof reconciliation !== 'object') continue;
+    const summary = accountSummaries[account];
+    for (const field of ['realizedPnl', 'premiumCredits', 'closingDebits', 'fees']) {
+      const adjustment = Number(reconciliation[`${field}Adjustment`]);
+      if (Number.isFinite(adjustment)) summary[field] = roundMoney(summary[field] + adjustment);
+    }
+    summary.totalPnl = roundMoney(summary.realizedPnl + summary.unrealizedPnl);
+    appliedReconciliations.push({
+      account,
+      asOf: String(reconciliation.asOf || '').slice(0, 10) || null,
+      source: String(reconciliation.source || 'reviewed-ledger-reconciliation').slice(0, 160),
+    });
+  }
 
   return {
     year,
@@ -591,6 +623,7 @@ export function buildStockStickiesCspLedger(
       (sum, row) => sum + row.pendingResolutionContracts,
       0
     )),
+    appliedReconciliations,
     accounts: accountSummaries,
     contracts: contractRows
       .filter(row =>

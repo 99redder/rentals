@@ -2901,6 +2901,10 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
     {
       excludedTransactionIds:
         config?.excludedCspTransactionIds?.[String(year)] || [],
+      reviewedResolvedContracts:
+        config?.cspLedgerReconciliations?.[String(year)]?.reviewedResolvedContracts || [],
+      accountReconciliations:
+        config?.cspLedgerReconciliations?.[String(year)]?.accounts || {},
     }
   );
   const openingValues = config?.openingValues?.[String(year)] || {};
@@ -3057,6 +3061,13 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       `${cspLedger.pendingResolutionCount} short-put lifecycle${cspLedger.pendingResolutionCount === 1 ? '' : 's'} ` +
       `(${pendingContracts}) disappeared from current holdings before Plaid supplied a closing, expiration, or assignment transaction. ` +
       'They are excluded from open-contract, collateral, and unrealized CSP P&L totals until resolved.'
+    );
+  }
+  if (cspLedger.appliedReconciliations.length) {
+    warnings.push(
+      `Historical CSP totals include ${cspLedger.appliedReconciliations.length} reviewed ledger ` +
+      `reconciliation${cspLedger.appliedReconciliations.length === 1 ? '' : 's'} for option events ` +
+      'that are no longer available from Plaid.'
     );
   }
   if (refreshConsistency.status === 'provisional') {

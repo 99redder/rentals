@@ -349,6 +349,48 @@ test('CSP missing from current holdings is pending instead of a zero-liability p
   assert.equal(ledger.contracts[0].status, 'pending-resolution');
 });
 
+test('reviewed CSP ledger reconciliation preserves audited history without reopening contracts', () => {
+  const transaction = {
+    id: 'old-open',
+    stockStickiesAccount: 'roth',
+    securityId: 'old-put',
+    date: '2026-05-01',
+    name: 'sell 1.000 AVAV put with strike of $110.00 for $4.00 each to open - SOLD',
+    amount: -400,
+    fees: 0.04,
+    type: 'sell',
+    subtype: 'sell',
+    optionContract: {
+      contractType: 'put', expirationDate: '2026-09-18', strikePrice: 110,
+      underlyingSecurityTicker: 'AVAV',
+    },
+  };
+  const ledger = buildStockStickiesCspLedger([transaction], [], 2026, '2026-08-06', {
+    reviewedResolvedContracts: [{
+      account: 'roth', underlyingTicker: 'AVAV', strikePrice: 110,
+      source: 'verified pre-migration ledger',
+    }],
+    accountReconciliations: {
+      roth: {
+        asOf: '2026-08-06', source: 'verified pre-migration ledger',
+        realizedPnlAdjustment: 54.68,
+        premiumCreditsAdjustment: 4300,
+        closingDebitsAdjustment: 7495,
+        feesAdjustment: 0.24,
+      },
+    },
+  });
+
+  assert.equal(ledger.pendingResolutionCount, 0);
+  assert.equal(ledger.contracts[0].status, 'resolved-by-reconciliation');
+  assert.equal(ledger.accounts.roth.realizedPnl, 54.68);
+  assert.equal(ledger.accounts.roth.totalPnl, 54.68);
+  assert.equal(ledger.accounts.roth.premiumCredits, 4700);
+  assert.equal(ledger.accounts.roth.closingDebits, 7495);
+  assert.equal(ledger.accounts.roth.fees, 0.28);
+  assert.equal(ledger.appliedReconciliations.length, 1);
+});
+
 test('refresh consistency hides an unexplained cash withdrawal until its transaction arrives', () => {
   const previous = {
     fetchedAt: '2026-08-05T16:00:00Z',

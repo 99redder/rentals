@@ -46,6 +46,12 @@ export function stockStickiesExternalFlow(transaction) {
   return Number.isFinite(amount) ? -amount : null;
 }
 
+export function stockStickiesExternalFlowDate(transaction) {
+  const transactionDate = String(transaction?.transactionDatetime || '').slice(0, 10);
+  if (Number.isFinite(Date.parse(`${transactionDate}T12:00:00Z`))) return transactionDate;
+  return String(transaction?.date || '').slice(0, 10);
+}
+
 function externalFlowSubtype(transaction) {
   const subtype = String(transaction?.subtype || '').toLowerCase();
   if (EXTERNAL_FLOW_SUBTYPES.has(subtype)) return subtype;
@@ -82,14 +88,14 @@ export function mergeStockStickiesTransactions(
       transaction,
       index,
       flow: stockStickiesExternalFlow(transaction),
-      dateMs: Date.parse(`${transaction?.date || ''}T12:00:00Z`),
+      dateMs: Date.parse(`${stockStickiesExternalFlowDate(transaction)}T12:00:00Z`),
     }))
     .filter(candidate =>
       candidate.flow !== null && Number.isFinite(candidate.dateMs)
     );
   for (const manualTransaction of manual) {
     const manualFlow = stockStickiesExternalFlow(manualTransaction);
-    const manualDateMs = Date.parse(`${manualTransaction?.date || ''}T12:00:00Z`);
+    const manualDateMs = Date.parse(`${stockStickiesExternalFlowDate(manualTransaction)}T12:00:00Z`);
     if (manualFlow === null || !Number.isFinite(manualDateMs)) continue;
     const match = availablePlaidFlows
       .filter(candidate =>
@@ -148,7 +154,7 @@ export function anchoredInstitutionPerformance(
   let externalFlowCountAfterAnchor = 0;
   for (const transaction of Array.isArray(transactions) ? transactions : []) {
     const flow = stockStickiesExternalFlow(transaction);
-    const flowMs = Date.parse(`${transaction?.date}T12:00:00Z`);
+    const flowMs = Date.parse(`${stockStickiesExternalFlowDate(transaction)}T12:00:00Z`);
     if (flow === null || !Number.isFinite(flowMs) || flowMs <= anchorMs || flowMs > endMs) continue;
     netExternalFlowAfterAnchor += flow;
     externalFlowCountAfterAnchor += 1;
@@ -162,7 +168,7 @@ export function anchoredInstitutionPerformance(
   };
 }
 
-export function aggregateTimeWeightedReturn(accounts) {
+export function aggregateModifiedDietzReturn(accounts) {
   if (!Array.isArray(accounts) || !accounts.length) return null;
   if (!accounts.every(account =>
     Number.isFinite(account?.gain) &&
@@ -174,6 +180,10 @@ export function aggregateTimeWeightedReturn(accounts) {
   return weightedCapital > 0 ? (gain / weightedCapital) * 100 : null;
 }
 
+// Backward-compatible export for callers that have not migrated to the more
+// accurate methodology name yet.
+export const aggregateTimeWeightedReturn = aggregateModifiedDietzReturn;
+
 export function modifiedDietzPerformance(openingValue, endingValue, transactions, year, endDate) {
   if (!Number.isFinite(openingValue) || !Number.isFinite(endingValue)) return null;
   const startMs = Date.parse(`${year}-01-01T12:00:00Z`);
@@ -184,7 +194,7 @@ export function modifiedDietzPerformance(openingValue, endingValue, transactions
   let externalFlowCount = 0;
   for (const transaction of transactions) {
     const flow = stockStickiesExternalFlow(transaction);
-    const flowMs = Date.parse(`${transaction.date}T12:00:00Z`);
+    const flowMs = Date.parse(`${stockStickiesExternalFlowDate(transaction)}T12:00:00Z`);
     if (flow === null || !Number.isFinite(flowMs) || flowMs < startMs || flowMs > endMs) continue;
     const weight = Math.max(0, Math.min(1, (endMs - flowMs) / periodMs));
     netExternalFlow += flow;
@@ -199,6 +209,84 @@ export function modifiedDietzPerformance(openingValue, endingValue, transactions
     weightedCapital: denominator > 0 ? denominator : null,
     netExternalFlow,
     externalFlowCount,
+  };
+}
+
+function brokerageCashValues(snapshot) {
+  const values = Object.fromEntries(STOCK_STICKIES_ACCOUNT_IDS.map(id => [id, 0]));
+  for (const position of Array.isArray(snapshot?.positions) ? snapshot.positions : []) {
+    const account = String(position?.stockStickiesAccount || '');
+    const ticker = String(position?.ticker || '').trim().toUpperCase();
+    const unofficialCurrency = String(position?.unofficialCurrencyCode || '').trim().toUpperCase();
+    const isBrokerageCash = ticker === 'USD' || ticker === 'CUR:USD' ||
+      (!ticker && unofficialCurrency === 'USD');
+    const value = Number(position?.institutionValue);
+    if (!STOCK_STICKIES_ACCOUNT_IDS.includes(account) || !isBrokerageCash || !Number.isFinite(value)) {
+      continue;
+    }
+    values[account] += value;
+  }
+  return values;
+}
+
+/**
+ * Detects the Plaid race where cash/NAV moves before the matching investment
+ * transaction is published. It deliberately requires cash and NAV to move by
+ * nearly the same material amount so ordinary market movement and trades do
+ * not make performance provisional.
+ */
+export function assessStockStickiesRefreshConsistency(
+  previousSnapshot,
+  currentSnapshot,
+  transactions
+) {
+  const previousFetchedMs = Date.parse(String(previousSnapshot?.fetchedAt || ''));
+  const currentFetchedMs = Date.parse(String(currentSnapshot?.fetchedAt || ''));
+  if (!Number.isFinite(previousFetchedMs) || !Number.isFinite(currentFetchedMs) ||
+      currentFetchedMs <= previousFetchedMs) {
+    return { status: 'not-comparable', provisionalAccounts: [], discrepancies: [] };
+  }
+
+  const previousAccounts = stockStickiesAccountValues(previousSnapshot);
+  const currentAccounts = stockStickiesAccountValues(currentSnapshot);
+  const previousCash = brokerageCashValues(previousSnapshot);
+  const currentCash = brokerageCashValues(currentSnapshot);
+  const previousDate = new Date(previousFetchedMs).toISOString().slice(0, 10);
+  const currentDate = new Date(currentFetchedMs).toISOString().slice(0, 10);
+  const discrepancies = [];
+
+  for (const account of STOCK_STICKIES_ACCOUNT_IDS) {
+    const navChange = currentAccounts[account] - previousAccounts[account];
+    const cashChange = currentCash[account] - previousCash[account];
+    const materialThreshold = Math.max(250, Math.abs(previousAccounts[account]) * 0.005);
+    const alignmentTolerance = Math.max(250, Math.abs(cashChange) * 0.2);
+    if (Math.abs(navChange) < materialThreshold || Math.abs(cashChange) < materialThreshold ||
+        Math.sign(navChange) !== Math.sign(cashChange) ||
+        Math.abs(navChange - cashChange) > alignmentTolerance) continue;
+
+    const matchingFlows = (Array.isArray(transactions) ? transactions : [])
+      .filter(transaction => {
+        const flowDate = stockStickiesExternalFlowDate(transaction);
+        return transaction?.stockStickiesAccount === account &&
+          flowDate >= previousDate && flowDate <= currentDate;
+      })
+      .map(stockStickiesExternalFlow)
+      .filter(flow => flow !== null && Math.sign(flow) === Math.sign(navChange));
+    const matchingFlowTotal = matchingFlows.reduce((sum, flow) => sum + flow, 0);
+    if (Math.abs(navChange - matchingFlowTotal) <= alignmentTolerance) continue;
+
+    discrepancies.push({
+      account,
+      navChange: roundMoney(navChange),
+      brokerageCashChange: roundMoney(cashChange),
+      recognizedExternalFlow: roundMoney(matchingFlowTotal),
+    });
+  }
+
+  return {
+    status: discrepancies.length ? 'provisional' : 'coherent',
+    provisionalAccounts: discrepancies.map(discrepancy => discrepancy.account),
+    discrepancies,
   };
 }
 
@@ -426,6 +514,7 @@ export function buildStockStickiesCspLedger(
       expiredContracts: 0,
       assignedContracts: 0,
       unmatchedTransactionCount: 0,
+      pendingResolutionContracts: 0,
     }])
   );
   const contractRows = [];
@@ -439,14 +528,18 @@ export function buildStockStickiesCspLedger(
       0
     );
     const position = currentPositions.get(ledger.key);
+    const pendingResolutionContracts = remainingContracts > 0 && !position
+      ? remainingContracts
+      : 0;
+    const openContracts = position ? remainingContracts : 0;
     const currentLiability = position
       ? Math.min(0, finiteNumber(position.institutionValue))
       : 0;
-    const unrealizedPnl = remainingContracts > 0
+    const unrealizedPnl = openContracts > 0
       ? remainingNetCredit + currentLiability
       : 0;
-    const collateralRequired = remainingContracts > 0 && Number.isFinite(ledger.strikePrice)
-      ? remainingContracts * ledger.strikePrice * 100
+    const collateralRequired = openContracts > 0 && Number.isFinite(ledger.strikePrice)
+      ? openContracts * ledger.strikePrice * 100
       : 0;
     const row = {
       account: ledger.account,
@@ -455,7 +548,10 @@ export function buildStockStickiesCspLedger(
       underlyingTicker: ledger.underlyingTicker,
       expirationDate: ledger.expirationDate,
       strikePrice: ledger.strikePrice,
-      openContracts: roundMoney(remainingContracts),
+      status: pendingResolutionContracts > 0 ? 'pending-resolution' :
+        (openContracts > 0 ? 'open' : 'resolved'),
+      openContracts: roundMoney(openContracts),
+      pendingResolutionContracts: roundMoney(pendingResolutionContracts),
       collateralRequired: roundMoney(collateralRequired),
       premiumCredits: roundMoney(ledger.premiumCredits),
       closingDebits: roundMoney(ledger.closingDebits),
@@ -474,7 +570,7 @@ export function buildStockStickiesCspLedger(
     for (const field of [
       'realizedPnl', 'unrealizedPnl', 'totalPnl', 'premiumCredits', 'closingDebits',
       'fees', 'collateralRequired', 'openContracts', 'expiredContracts', 'assignedContracts',
-      'unmatchedTransactionCount',
+      'unmatchedTransactionCount', 'pendingResolutionContracts',
     ]) summary[field] += finiteNumber(row[field]);
   }
   for (const summary of Object.values(accountSummaries)) {
@@ -490,11 +586,17 @@ export function buildStockStickiesCspLedger(
     transactionCount: ledgerTransactionCount,
     unmatchedTransactionCount,
     excludedTransactionCount,
+    pendingResolutionCount: contractRows.filter(row => row.status === 'pending-resolution').length,
+    pendingResolutionContracts: roundMoney(contractRows.reduce(
+      (sum, row) => sum + row.pendingResolutionContracts,
+      0
+    )),
     accounts: accountSummaries,
     contracts: contractRows
       .filter(row =>
         row.lastActivityDate >= yearStart ||
         row.openContracts > 0 ||
+        row.pendingResolutionContracts > 0 ||
         row.realizedPnl !== 0
       )
       .sort((left, right) =>

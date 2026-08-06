@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   aggregateTimeWeightedReturn,
+  assessStockStickiesRefreshConsistency,
   anchoredInstitutionPerformance,
   buildStockStickiesCspLedger,
   mergeStockStickiesTransactions,
   modifiedDietzPerformance,
   stockStickiesAccountValues,
   stockStickiesExternalFlow,
+  stockStickiesExternalFlowDate,
 } from './performance-calculations.js';
 
 test('contributions and withdrawals are separated from investment gain', () => {
@@ -46,6 +48,23 @@ test('Plaid cash-direction signs convert to investor cash-flow signs', () => {
     name: 'Internal account transfer',
     amount: -500,
   }), null);
+});
+
+test('external flows use initiation datetime before settlement date', () => {
+  const transaction = {
+    date: '2026-08-03',
+    transactionDatetime: '2026-07-28T15:45:00Z',
+    subtype: 'deposit',
+    amount: -500,
+  };
+  assert.equal(stockStickiesExternalFlowDate(transaction), '2026-07-28');
+  const result = modifiedDietzPerformance(10_000, 10_500, [transaction], 2026, '2026-08-06');
+  const settlementWeighted = modifiedDietzPerformance(10_000, 10_500, [{
+    ...transaction,
+    transactionDatetime: null,
+  }], 2026, '2026-08-06');
+  assert.equal(result.gain, 0);
+  assert.notEqual(result.weightedCapital, settlementWeighted.weightedCapital);
 });
 
 test('manual reconciliation replaces Plaid external flows without removing trades', () => {
@@ -301,6 +320,83 @@ test('open CSP uses current option liability for unrealized P&L and collateral a
   assert.equal(ledger.accounts.individual.openContracts, 1);
   assert.equal(ledger.accounts.individual.collateralRequired, 6000);
   assert.equal(ledger.collateralTreatment, 'excluded-from-performance-cash-flows');
+});
+
+test('CSP missing from current holdings is pending instead of a zero-liability profit', () => {
+  const ledger = buildStockStickiesCspLedger([{
+    id: 'open-missing',
+    stockStickiesAccount: 'roth',
+    securityId: 'missing-put',
+    date: '2026-03-01',
+    name: 'sell 1.000 INTC put with strike of $70.00 for $7.30 each to open - SOLD',
+    amount: -730,
+    fees: 0.04,
+    type: 'sell',
+    subtype: 'sell',
+    optionContract: {
+      contractType: 'put',
+      expirationDate: '2026-12-18',
+      strikePrice: 70,
+      underlyingSecurityTicker: 'INTC',
+    },
+  }], [], 2026, '2026-08-06');
+
+  assert.equal(ledger.accounts.roth.unrealizedPnl, 0);
+  assert.equal(ledger.accounts.roth.openContracts, 0);
+  assert.equal(ledger.accounts.roth.collateralRequired, 0);
+  assert.equal(ledger.accounts.roth.pendingResolutionContracts, 1);
+  assert.equal(ledger.pendingResolutionCount, 1);
+  assert.equal(ledger.contracts[0].status, 'pending-resolution');
+});
+
+test('refresh consistency hides an unexplained cash withdrawal until its transaction arrives', () => {
+  const previous = {
+    fetchedAt: '2026-08-05T16:00:00Z',
+    accounts: [{ accountId: 'individual', stockStickiesAccount: 'individual', currentBalance: 20_000 }],
+    positions: [{
+      accountId: 'individual', stockStickiesAccount: 'individual', ticker: 'CUR:USD',
+      institutionValue: 12_000,
+    }],
+  };
+  const current = {
+    fetchedAt: '2026-08-06T16:00:00Z',
+    accounts: [{ accountId: 'individual', stockStickiesAccount: 'individual', currentBalance: 10_000 }],
+    positions: [{
+      accountId: 'individual', stockStickiesAccount: 'individual', ticker: 'CUR:USD',
+      institutionValue: 2_000,
+    }],
+  };
+
+  const pending = assessStockStickiesRefreshConsistency(previous, current, []);
+  assert.equal(pending.status, 'provisional');
+  assert.deepEqual(pending.provisionalAccounts, ['individual']);
+
+  const reconciled = assessStockStickiesRefreshConsistency(previous, current, [{
+    stockStickiesAccount: 'individual',
+    date: '2026-08-06',
+    subtype: 'withdrawal',
+    amount: 10_000,
+  }]);
+  assert.equal(reconciled.status, 'coherent');
+  assert.deepEqual(reconciled.provisionalAccounts, []);
+});
+
+test('refresh consistency does not confuse market movement with an external flow', () => {
+  const previous = {
+    fetchedAt: '2026-08-05T16:00:00Z',
+    accounts: [{ accountId: 'roth', stockStickiesAccount: 'roth', currentBalance: 100_000 }],
+    positions: [{
+      accountId: 'roth', stockStickiesAccount: 'roth', ticker: 'CUR:USD', institutionValue: 5_000,
+    }],
+  };
+  const current = {
+    fetchedAt: '2026-08-06T16:00:00Z',
+    accounts: [{ accountId: 'roth', stockStickiesAccount: 'roth', currentBalance: 104_000 }],
+    positions: [{
+      accountId: 'roth', stockStickiesAccount: 'roth', ticker: 'CUR:USD', institutionValue: 5_000,
+    }],
+  };
+  assert.equal(assessStockStickiesRefreshConsistency(previous, current, []).status, 'coherent');
 });
 
 test('expiration and assignment realize remaining opening premium without counting collateral', () => {

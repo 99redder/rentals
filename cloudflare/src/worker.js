@@ -4,7 +4,8 @@
 
 import {
   STOCK_STICKIES_ACCOUNT_IDS,
-  aggregateTimeWeightedReturn,
+  aggregateModifiedDietzReturn,
+  assessStockStickiesRefreshConsistency,
   anchoredInstitutionPerformance,
   buildStockStickiesCspLedger,
   isRecognizedExternalFlow,
@@ -46,6 +47,7 @@ const MAX_API_STRING_LENGTH = 100_000;
 const MAX_UPSTREAM_JSON_BYTES = 1_000_000;
 const MAX_USDA_PDF_BYTES = 5_000_000;
 const STOCK_STICKIES_HOLDINGS_CACHE_KEY = 'stock_stickies:plaid:robinhood:holdings';
+const STOCK_STICKIES_HOLDINGS_PREVIOUS_CACHE_KEY = 'stock_stickies:plaid:robinhood:holdings:previous';
 const STOCK_STICKIES_HOLDINGS_FALLBACK_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 const STOCK_STICKIES_INVESTMENTS_REFRESH_KEY = 'stock_stickies:plaid:robinhood:investments-refresh';
 const STOCK_STICKIES_INVESTMENTS_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
@@ -2671,6 +2673,24 @@ async function refreshStockStickiesInvestmentTransactions(env, year) {
   const startDate = `${year - 1}-01-01`;
   const endDate = easternDateKey();
   const transactionsById = new Map();
+  const currentKey = `${STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX}${year}`;
+  const [currentArchive, priorYearArchive] = await Promise.all([
+    env.RENTALS.get(currentKey, 'json'),
+    env.RENTALS.get(`${STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX}${year - 1}`, 'json'),
+  ]);
+  // Plaid transaction history is bounded. Preserve only older put lifecycle
+  // records; current-year external flows and trades always come from the fresh
+  // extraction so stale records cannot alter account performance.
+  for (const archive of [priorYearArchive, currentArchive]) {
+    for (const transaction of Array.isArray(archive?.transactions) ? archive.transactions : []) {
+      const contractType = String(transaction?.optionContract?.contractType || '').toLowerCase();
+      const isPutLifecycle = contractType === 'put' || /\bput\b/i.test(String(transaction?.name || ''));
+      if (!isPutLifecycle || String(transaction?.date || '') >= startDate) continue;
+      const key = transaction.id ||
+        `${transaction.accountId}:${transaction.date}:${transaction.type}:${transaction.amount}:archive`;
+      transactionsById.set(key, transaction);
+    }
+  }
   let offset = 0;
   let total = 0;
   do {
@@ -2703,10 +2723,14 @@ async function refreshStockStickiesInvestmentTransactions(env, year) {
       .filter(transaction => transaction.type === 'cancel' && transaction.cancelTransactionId)
       .map(transaction => transaction.cancelTransactionId)
   );
+  const retainedHistoryDates = allTransactions
+    .map(transaction => String(transaction?.date || ''))
+    .filter(Boolean)
+    .sort();
   const data = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     year,
-    historyStartDate: startDate,
+    historyStartDate: retainedHistoryDates[0] || startDate,
     fetchedAt: new Date().toISOString(),
     transactions: allTransactions
       .filter(transaction =>
@@ -2715,10 +2739,10 @@ async function refreshStockStickiesInvestmentTransactions(env, year) {
       )
       .sort((left, right) => right.date.localeCompare(left.date))
       .slice(0, 10_000),
-    truncated: total > 10_000,
+    truncated: total > 10_000 || allTransactions.length > 10_000,
   };
   await env.RENTALS.put(
-    `${STOCK_STICKIES_PERFORMANCE_TRANSACTION_PREFIX}${year}`,
+    currentKey,
     JSON.stringify(data)
   );
   return data;
@@ -2730,7 +2754,7 @@ async function getStockStickiesInvestmentTransactions(env, year, force = false) 
   const fetchedDate = cached?.fetchedAt ? easternDateKey(new Date(cached.fetchedAt)) : '';
   if (
     !force &&
-    cached?.schemaVersion === 2 &&
+    Number(cached?.schemaVersion) >= 2 &&
     fetchedDate === easternDateKey()
   ) return { data: cached, warning: '' };
   try {
@@ -2843,6 +2867,11 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
     manualExternalFlows,
     cashFlowCoverageThrough
   );
+  const previousSnapshot = options.previousSnapshot ||
+    await env.RENTALS.get(STOCK_STICKIES_HOLDINGS_PREVIOUS_CACHE_KEY, 'json');
+  const refreshConsistency = snapshot
+    ? assessStockStickiesRefreshConsistency(previousSnapshot, snapshot, performanceTransactions)
+    : { status: 'not-comparable', provisionalAccounts: [], discrepancies: [] };
   const cspLedger = buildStockStickiesCspLedger(
     allTransactions,
     snapshot?.positions,
@@ -2899,7 +2928,12 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       reconciliationAsOf: anchoredCalculation ? performanceAnchor.asOf : null,
       reconciliationSource: anchoredCalculation ? performanceAnchor.source : null,
       reportedRealizedGain: anchoredCalculation ? performanceAnchor.reportedRealizedGain : null,
+      reportedRealizedGainAsOf: anchoredCalculation &&
+        Number.isFinite(performanceAnchor.reportedRealizedGain)
+        ? performanceAnchor.asOf
+        : null,
       impliedUnrealizedAndOtherGain: anchoredCalculation &&
+        endDate === performanceAnchor.asOf &&
         Number.isFinite(performanceAnchor.reportedRealizedGain)
         ? gain - performanceAnchor.reportedRealizedGain
         : null,
@@ -2910,7 +2944,11 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
         ? 'needs-opening-value'
         : (!transactionResult.data
             ? 'transactions-unavailable'
-            : (!hasCompleteCashFlowHistory ? 'cash-flow-history-incomplete' : 'ready')),
+            : (!hasCompleteCashFlowHistory
+                ? 'cash-flow-history-incomplete'
+                : (refreshConsistency.provisionalAccounts.includes(id)
+                    ? 'provisional-external-flow'
+                    : 'ready'))),
     };
   }
   const totalOpening = STOCK_STICKIES_ACCOUNT_IDS.reduce(
@@ -2947,7 +2985,7 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
         0
       )
     : null;
-  const reconciledTotalReturnPercent = aggregateTimeWeightedReturn(
+  const reconciledTotalReturnPercent = aggregateModifiedDietzReturn(
     STOCK_STICKIES_ACCOUNT_IDS.map(id => accounts[id])
   );
   const warnings = [transactionResult.warning].filter(Boolean);
@@ -2989,6 +3027,24 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       'short-put lifecycle and were excluded from CSP P&L.'
     );
   }
+  if (cspLedger.pendingResolutionCount) {
+    const pendingContracts = cspLedger.contracts
+      .filter(contract => contract.status === 'pending-resolution')
+      .map(contract => `${contract.underlyingTicker || contract.ticker || 'unknown'} ${contract.strikePrice || ''}`.trim())
+      .join(', ');
+    warnings.push(
+      `${cspLedger.pendingResolutionCount} short-put lifecycle${cspLedger.pendingResolutionCount === 1 ? '' : 's'} ` +
+      `(${pendingContracts}) disappeared from current holdings before Plaid supplied a closing, expiration, or assignment transaction. ` +
+      'They are excluded from open-contract, collateral, and unrealized CSP P&L totals until resolved.'
+    );
+  }
+  if (refreshConsistency.status === 'provisional') {
+    warnings.push(
+      `YTD performance is temporarily hidden for ${refreshConsistency.provisionalAccounts.join(', ')} because ` +
+      'brokerage cash and account value changed without a matching deposit or withdrawal transaction. ' +
+      'Plaid may still be publishing the investment activity.'
+    );
+  }
   return {
     year,
     asOf: endDate,
@@ -3010,13 +3066,19 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
         ? 'needs-opening-value'
         : (!transactionResult.data
             ? 'transactions-unavailable'
-            : (incompleteCashFlowAccounts.length ? 'cash-flow-history-incomplete' : 'ready')),
+            : (incompleteCashFlowAccounts.length
+                ? 'cash-flow-history-incomplete'
+                : (refreshConsistency.provisionalAccounts.length
+                    ? 'provisional-external-flow'
+                    : 'ready'))),
     },
     snapshotCount: dates.length,
     firstSnapshotDate: dates[0] || null,
     lastSnapshotDate: dates.length ? dates[dates.length - 1] : null,
     transactionsAsOf: transactionResult.data?.fetchedAt || null,
     transactionHistoryStartDate: transactionResult.data?.historyStartDate || `${year}-01-01`,
+    returnMethodology: 'modified-dietz',
+    refreshConsistency,
     cspLedger,
     warnings,
   };
@@ -3227,6 +3289,13 @@ async function refreshStockStickiesHoldingsSnapshot(env) {
     throw error;
   }
   const snapshot = normalizeStockStickiesHoldings(payload);
+  const previousSnapshot = await env.RENTALS.get(STOCK_STICKIES_HOLDINGS_CACHE_KEY, 'json');
+  if (previousSnapshot?.fetchedAt && previousSnapshot.fetchedAt !== snapshot.fetchedAt) {
+    await env.RENTALS.put(
+      STOCK_STICKIES_HOLDINGS_PREVIOUS_CACHE_KEY,
+      JSON.stringify(previousSnapshot)
+    );
+  }
   await env.RENTALS.put(STOCK_STICKIES_HOLDINGS_CACHE_KEY, JSON.stringify(snapshot));
   await recordStockStickiesPerformanceSnapshot(env, snapshot);
   return snapshot;

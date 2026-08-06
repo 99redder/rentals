@@ -2685,37 +2685,50 @@ async function refreshStockStickiesInvestmentTransactions(env, year) {
     for (const transaction of Array.isArray(archive?.transactions) ? archive.transactions : []) {
       const contractType = String(transaction?.optionContract?.contractType || '').toLowerCase();
       const isPutLifecycle = contractType === 'put' || /\bput\b/i.test(String(transaction?.name || ''));
-      if (!isPutLifecycle || String(transaction?.date || '') >= startDate) continue;
+      if (!isPutLifecycle) continue;
       const key = transaction.id ||
         `${transaction.accountId}:${transaction.date}:${transaction.type}:${transaction.amount}:archive`;
       transactionsById.set(key, transaction);
     }
   }
-  let offset = 0;
-  let total = 0;
-  do {
-    const { ok, status, payload } = await plaidPost(env, '/investments/transactions/get', {
-      access_token: accessToken,
-      start_date: startDate,
-      end_date: endDate,
-      options: { count: 250, offset },
-    });
-    if (!ok) {
-      const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
-      const error = new Error('Robinhood investment activity could not be loaded.');
-      error.code = code;
-      error.status = status;
-      throw error;
-    }
-    const page = normalizeStockStickiesInvestmentTransactions(payload);
-    for (const transaction of page) {
-      const key = transaction.id ||
-        `${transaction.accountId}:${transaction.date}:${transaction.type}:${transaction.amount}:${offset}`;
-      transactionsById.set(key, transaction);
-    }
-    total = Number(payload.total_investment_transactions) || 0;
-    offset += 250;
-  } while (offset < total && offset < 10_000);
+  let plaidHistoryTruncated = false;
+  // Robinhood can generate thousands of cash-sweep investment transactions.
+  // Query bounded windows so Plaid's result set does not crowd older option
+  // lifecycle events out of an otherwise valid multi-year request.
+  let windowStartMs = Date.parse(`${startDate}T12:00:00Z`);
+  const endMs = Date.parse(`${endDate}T12:00:00Z`);
+  while (windowStartMs <= endMs) {
+    const windowEndMs = Math.min(endMs, windowStartMs + (179 * 86_400_000));
+    const windowStart = new Date(windowStartMs).toISOString().slice(0, 10);
+    const windowEnd = new Date(windowEndMs).toISOString().slice(0, 10);
+    let offset = 0;
+    let windowTotal = 0;
+    do {
+      const { ok, status, payload } = await plaidPost(env, '/investments/transactions/get', {
+        access_token: accessToken,
+        start_date: windowStart,
+        end_date: windowEnd,
+        options: { count: 250, offset },
+      });
+      if (!ok) {
+        const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
+        const error = new Error('Robinhood investment activity could not be loaded.');
+        error.code = code;
+        error.status = status;
+        throw error;
+      }
+      const page = normalizeStockStickiesInvestmentTransactions(payload);
+      for (const transaction of page) {
+        const key = transaction.id ||
+          `${transaction.accountId}:${transaction.date}:${transaction.type}:${transaction.amount}:${offset}`;
+        transactionsById.set(key, transaction);
+      }
+      windowTotal = Number(payload.total_investment_transactions) || 0;
+      offset += 250;
+    } while (offset < windowTotal && offset < 10_000);
+    plaidHistoryTruncated ||= windowTotal > 10_000;
+    windowStartMs = windowEndMs + 86_400_000;
+  }
 
   const allTransactions = [...transactionsById.values()];
   const canceledTransactionIds = new Set(
@@ -2739,7 +2752,7 @@ async function refreshStockStickiesInvestmentTransactions(env, year) {
       )
       .sort((left, right) => right.date.localeCompare(left.date))
       .slice(0, 10_000),
-    truncated: total > 10_000 || allTransactions.length > 10_000,
+    truncated: plaidHistoryTruncated || allTransactions.length > 10_000,
   };
   await env.RENTALS.put(
     currentKey,

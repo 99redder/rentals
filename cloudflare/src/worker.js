@@ -2836,20 +2836,25 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
   const ytdTransactions = allTransactions.filter(transaction =>
     String(transaction?.date || '').startsWith(`${year}-`)
   );
+  const cashFlowCoverageThrough = config?.cashFlowCoverageThrough?.[String(year)] || {};
   const manualExternalFlows = normalizeConfiguredStockStickiesExternalFlows(config, year);
   const performanceTransactions = mergeStockStickiesTransactions(
     ytdTransactions,
-    manualExternalFlows
+    manualExternalFlows,
+    cashFlowCoverageThrough
   );
   const cspLedger = buildStockStickiesCspLedger(
     allTransactions,
     snapshot?.positions,
     year,
-    endDate
+    endDate,
+    {
+      excludedTransactionIds:
+        config?.excludedCspTransactionIds?.[String(year)] || [],
+    }
   );
   const openingValues = config?.openingValues?.[String(year)] || {};
   const cashFlowCoverage = config?.cashFlowCoverage?.[String(year)] || {};
-  const cashFlowCoverageThrough = config?.cashFlowCoverageThrough?.[String(year)] || {};
   const accounts = {};
   for (const id of STOCK_STICKIES_ACCOUNT_IDS) {
     const rawOpening = openingValues[id];

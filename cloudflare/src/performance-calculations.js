@@ -36,7 +36,7 @@ export function stockStickiesAccountValues(snapshot) {
 }
 
 export function isRecognizedExternalFlow(transaction) {
-  return EXTERNAL_FLOW_SUBTYPES.has(transaction?.subtype);
+  return externalFlowSubtype(transaction) !== '';
 }
 
 export function stockStickiesExternalFlow(transaction) {
@@ -45,7 +45,25 @@ export function stockStickiesExternalFlow(transaction) {
   return Number.isFinite(amount) ? -amount : null;
 }
 
-export function mergeStockStickiesTransactions(plaidTransactions, manualTransactions) {
+function externalFlowSubtype(transaction) {
+  const subtype = String(transaction?.subtype || '').toLowerCase();
+  if (EXTERNAL_FLOW_SUBTYPES.has(subtype)) return subtype;
+
+  // Robinhood currently sends ACH activity through Plaid as the generic
+  // transfer/transfer pair. Only promote descriptions that explicitly name an
+  // ACH deposit or withdrawal; generic/internal transfers must remain ignored.
+  if (String(transaction?.type || '').toLowerCase() !== 'transfer') return '';
+  const description = String(transaction?.name || '').toLowerCase();
+  if (/\bach\s+deposit\b/.test(description)) return 'deposit';
+  if (/\bach\s+withdrawal\b/.test(description)) return 'withdrawal';
+  return '';
+}
+
+export function mergeStockStickiesTransactions(
+  plaidTransactions,
+  manualTransactions,
+  manualCoverageThrough = null
+) {
   const plaid = Array.isArray(plaidTransactions) ? plaidTransactions : [];
   const manual = Array.isArray(manualTransactions) ? manualTransactions : [];
   const manuallyReconciledAccounts = new Set(
@@ -56,7 +74,13 @@ export function mergeStockStickiesTransactions(plaidTransactions, manualTransact
   const merged = plaid.filter(transaction =>
     !(
       manuallyReconciledAccounts.has(transaction?.stockStickiesAccount) &&
-      isRecognizedExternalFlow(transaction)
+      isRecognizedExternalFlow(transaction) &&
+      (
+        !manualCoverageThrough ||
+        !manualCoverageThrough[transaction.stockStickiesAccount] ||
+        String(transaction?.date || '') <=
+          String(manualCoverageThrough[transaction.stockStickiesAccount])
+      )
     )
   );
   const seen = new Set(merged.map(transaction => String(transaction?.id || '')).filter(Boolean));
@@ -208,8 +232,20 @@ function roundMoney(value) {
  * expiration/assignment, and the current option liability affect CSP P&L.
  * Total account performance remains NAV minus true external cash flows.
  */
-export function buildStockStickiesCspLedger(transactions, positions, year, endDate) {
+export function buildStockStickiesCspLedger(
+  transactions,
+  positions,
+  year,
+  endDate,
+  options = {}
+) {
   const yearStart = `${year}-01-01`;
+  const excludedTransactionIds = new Set(
+    Array.isArray(options?.excludedTransactionIds)
+      ? options.excludedTransactionIds.map(String)
+      : []
+  );
+  let excludedTransactionCount = 0;
   const inputTransactions = (Array.isArray(transactions) ? transactions : [])
     .filter(transaction =>
       isPutOption(transaction) &&
@@ -231,6 +267,10 @@ export function buildStockStickiesCspLedger(transactions, positions, year, endDa
   let ledgerTransactionCount = 0;
 
   for (const transaction of inputTransactions) {
+    if (excludedTransactionIds.has(String(transaction?.id || ''))) {
+      excludedTransactionCount += 1;
+      continue;
+    }
     const action = optionLifecycleAction(transaction);
     // Long puts are directional trades, not cash-secured puts.
     if (action === 'open-long' || action === 'close-long') continue;
@@ -264,11 +304,13 @@ export function buildStockStickiesCspLedger(transactions, positions, year, endDa
     const grossCash = -finiteNumber(transaction.amount);
     const netCash = grossCash - fees;
     const isYtdEvent = String(transaction?.date || '') >= yearStart;
-    if (isYtdEvent) ledger.fees += fees;
     ledger.lastActivityDate = transaction.date;
 
     if (action === 'open-short' && contractsCount > 0) {
-      if (isYtdEvent) ledger.premiumCredits += Math.max(0, grossCash);
+      if (isYtdEvent) {
+        ledger.premiumCredits += Math.max(0, grossCash);
+        ledger.fees += fees;
+      }
       ledger.openLots.push({
         openedAt: transaction.date,
         contracts: contractsCount,
@@ -280,7 +322,6 @@ export function buildStockStickiesCspLedger(transactions, positions, year, endDa
     }
 
     if (action === 'close-short' && contractsCount > 0) {
-      if (isYtdEvent) ledger.closingDebits += Math.max(0, -grossCash);
       let remainingToClose = contractsCount;
       let matchedOpeningCredit = 0;
       for (const lot of ledger.openLots) {
@@ -295,11 +336,10 @@ export function buildStockStickiesCspLedger(transactions, positions, year, endDa
       const matchedRatio = (contractsCount - remainingToClose) / contractsCount;
       if (isYtdEvent) {
         ledger.realizedPnl += matchedOpeningCredit + (netCash * matchedRatio);
+        ledger.closingDebits += Math.max(0, -grossCash) * matchedRatio;
+        ledger.fees += fees * matchedRatio;
       }
       if (remainingToClose > 0) {
-        if (isYtdEvent) {
-          ledger.realizedPnl += netCash * (remainingToClose / contractsCount);
-        }
         ledger.unmatchedTransactions += 1;
         unmatchedTransactionCount += 1;
       }
@@ -318,8 +358,10 @@ export function buildStockStickiesCspLedger(transactions, positions, year, endDa
         releasedOpeningCredit += allocatedCredit;
         remainingToResolve -= matched;
       }
+      const matchedRatio = (contractsCount - remainingToResolve) / contractsCount;
       if (isYtdEvent) {
-        ledger.realizedPnl += releasedOpeningCredit;
+        ledger.realizedPnl += releasedOpeningCredit - (fees * matchedRatio);
+        ledger.fees += fees * matchedRatio;
         if (action === 'expired') ledger.expiredContracts += contractsCount - remainingToResolve;
         if (action === 'assigned') ledger.assignedContracts += contractsCount - remainingToResolve;
       }
@@ -412,6 +454,7 @@ export function buildStockStickiesCspLedger(transactions, positions, year, endDa
     collateralTreatment: 'excluded-from-performance-cash-flows',
     transactionCount: ledgerTransactionCount,
     unmatchedTransactionCount,
+    excludedTransactionCount,
     accounts: accountSummaries,
     contracts: contractRows
       .filter(row =>

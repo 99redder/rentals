@@ -28,6 +28,24 @@ test('Plaid cash-direction signs convert to investor cash-flow signs', () => {
   assert.equal(stockStickiesExternalFlow({ subtype: 'contribution', amount: -250 }), 250);
   assert.equal(stockStickiesExternalFlow({ subtype: 'distribution', amount: 100 }), -100);
   assert.equal(stockStickiesExternalFlow({ subtype: 'dividend', amount: -12 }), null);
+  assert.equal(stockStickiesExternalFlow({
+    type: 'transfer',
+    subtype: 'transfer',
+    name: 'ACH deposit of $500 into Robinhood Brokerage account ending in 9903 - TRANSFER',
+    amount: -500,
+  }), 500);
+  assert.equal(stockStickiesExternalFlow({
+    type: 'transfer',
+    subtype: 'transfer',
+    name: 'ACH withdrawal of $200 from Robinhood Brokerage - TRANSFER',
+    amount: 200,
+  }), -200);
+  assert.equal(stockStickiesExternalFlow({
+    type: 'transfer',
+    subtype: 'transfer',
+    name: 'Internal account transfer',
+    amount: -500,
+  }), null);
 });
 
 test('manual reconciliation replaces Plaid external flows without removing trades', () => {
@@ -44,6 +62,42 @@ test('manual reconciliation replaces Plaid external flows without removing trade
   assert.deepEqual(
     mergeStockStickiesTransactions(plaid, manual).map(transaction => transaction.id),
     ['buy-1', 'roth-deposit', 'manual-deposit', 'manual-withdrawal']
+  );
+});
+
+test('manual reconciliation only replaces Plaid flows through its coverage date', () => {
+  const plaid = [
+    {
+      id: 'covered-deposit',
+      stockStickiesAccount: 'individual',
+      date: '2026-06-29',
+      type: 'transfer',
+      subtype: 'transfer',
+      name: 'ACH deposit of $10000 into Robinhood Brokerage - TRANSFER',
+      amount: -10_000,
+    },
+    {
+      id: 'new-deposit',
+      stockStickiesAccount: 'individual',
+      date: '2026-08-03',
+      type: 'transfer',
+      subtype: 'transfer',
+      name: 'ACH deposit of $500 into Robinhood Brokerage - TRANSFER',
+      amount: -500,
+    },
+  ];
+  const manual = [{
+    id: 'manual-covered-deposit',
+    stockStickiesAccount: 'individual',
+    date: '2026-06-23',
+    subtype: 'deposit',
+    amount: -10_000,
+  }];
+
+  assert.deepEqual(
+    mergeStockStickiesTransactions(plaid, manual, { individual: '2026-07-24' })
+      .map(transaction => transaction.id),
+    ['new-deposit', 'manual-covered-deposit']
   );
 });
 
@@ -253,6 +307,65 @@ test('option trading and CSP collateral never become Modified Dietz external flo
   assert.equal(result.netExternalFlow, 0);
   assert.equal(result.externalFlowCount, 0);
   assert.equal(result.gain, 1000);
+});
+
+test('unmatched closing puts are reported but excluded from CSP P&L', () => {
+  const ledger = buildStockStickiesCspLedger([{
+    id: 'missing-opening-leg',
+    stockStickiesAccount: 'individual',
+    securityId: 'missing-open-put',
+    date: '2026-06-17',
+    name: 'buy 1.000 LPTH put with strike of $12.50 for $2.30 each to close - PURCHASED',
+    amount: 230,
+    fees: 0.04,
+    quantity: 1,
+    type: 'buy',
+    subtype: 'buy',
+    optionContract: {
+      contractType: 'put',
+      expirationDate: '2026-09-18',
+      strikePrice: 12.5,
+      underlyingSecurityTicker: 'LPTH',
+    },
+  }], [], 2026, '2026-08-06');
+
+  assert.equal(ledger.unmatchedTransactionCount, 1);
+  assert.equal(ledger.accounts.individual.realizedPnl, 0);
+  assert.equal(ledger.accounts.individual.closingDebits, 0);
+  assert.equal(ledger.accounts.individual.fees, 0);
+});
+
+test('reviewed orphan option transactions stay excluded without recurring warnings', () => {
+  const transaction = {
+    id: 'reviewed-missing-opening-leg',
+    stockStickiesAccount: 'individual',
+    securityId: 'missing-open-put',
+    date: '2026-06-17',
+    name: 'buy 1.000 LPTH put with strike of $12.50 for $2.30 each to close - PURCHASED',
+    amount: 230,
+    fees: 0.04,
+    quantity: 1,
+    type: 'buy',
+    subtype: 'buy',
+    optionContract: {
+      contractType: 'put',
+      expirationDate: '2026-09-18',
+      strikePrice: 12.5,
+      underlyingSecurityTicker: 'LPTH',
+    },
+  };
+  const ledger = buildStockStickiesCspLedger(
+    [transaction],
+    [],
+    2026,
+    '2026-08-06',
+    { excludedTransactionIds: [transaction.id] }
+  );
+
+  assert.equal(ledger.unmatchedTransactionCount, 0);
+  assert.equal(ledger.excludedTransactionCount, 1);
+  assert.equal(ledger.accounts.individual.realizedPnl, 0);
+  assert.equal(ledger.contracts.length, 0);
 });
 
 test('lookback transactions establish lots without counting prior-year realized P&L', () => {

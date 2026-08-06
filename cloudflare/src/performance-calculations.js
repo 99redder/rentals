@@ -371,6 +371,9 @@ export function buildStockStickiesCspLedger(
   const reviewedResolvedContracts = Array.isArray(options?.reviewedResolvedContracts)
     ? options.reviewedResolvedContracts
     : [];
+  const closedWithoutPnlContracts = Array.isArray(options?.closedWithoutPnlContracts)
+    ? options.closedWithoutPnlContracts
+    : [];
   const accountReconciliations = options?.accountReconciliations &&
     typeof options.accountReconciliations === 'object'
     ? options.accountReconciliations
@@ -522,6 +525,7 @@ export function buildStockStickiesCspLedger(
       assignedContracts: 0,
       unmatchedTransactionCount: 0,
       pendingResolutionContracts: 0,
+      closedPnlUnavailableContracts: 0,
     }])
   );
   const contractRows = [];
@@ -542,7 +546,15 @@ export function buildStockStickiesCspLedger(
       Math.abs(finiteNumber(contract?.strikePrice, NaN) - finiteNumber(ledger.strikePrice, NaN)) < 0.005 &&
       (!contract?.expirationDate || String(contract.expirationDate) === String(ledger.expirationDate || ''))
     );
-    const pendingResolutionContracts = remainingContracts > 0 && !position && !reviewedResolution
+    const confirmedUnpricedClose = closedWithoutPnlContracts.find(contract =>
+      String(contract?.account || '') === ledger.account &&
+      String(contract?.underlyingTicker || '').toUpperCase() ===
+        String(ledger.underlyingTicker || ledger.ticker || '').toUpperCase() &&
+      Math.abs(finiteNumber(contract?.strikePrice, NaN) - finiteNumber(ledger.strikePrice, NaN)) < 0.005 &&
+      (!contract?.expirationDate || String(contract.expirationDate) === String(ledger.expirationDate || ''))
+    );
+    const pendingResolutionContracts = remainingContracts > 0 && !position &&
+      !reviewedResolution && !confirmedUnpricedClose
       ? remainingContracts
       : 0;
     const openContracts = position ? remainingContracts : 0;
@@ -562,12 +574,14 @@ export function buildStockStickiesCspLedger(
       underlyingTicker: ledger.underlyingTicker,
       expirationDate: ledger.expirationDate,
       strikePrice: ledger.strikePrice,
-      status: reviewedResolution ? 'resolved-by-reconciliation' :
+      status: confirmedUnpricedClose ? 'closed-pnl-unavailable' :
+        (reviewedResolution ? 'resolved-by-reconciliation' :
         (pendingResolutionContracts > 0 ? 'pending-resolution' :
-          (openContracts > 0 ? 'open' : 'resolved')),
-      reconciliationSource: reviewedResolution?.source || null,
+          (openContracts > 0 ? 'open' : 'resolved'))),
+      reconciliationSource: confirmedUnpricedClose?.source || reviewedResolution?.source || null,
       openContracts: roundMoney(openContracts),
       pendingResolutionContracts: roundMoney(pendingResolutionContracts),
+      closedPnlUnavailableContracts: confirmedUnpricedClose ? roundMoney(remainingContracts) : 0,
       collateralRequired: roundMoney(collateralRequired),
       premiumCredits: roundMoney(ledger.premiumCredits),
       closingDebits: roundMoney(ledger.closingDebits),
@@ -587,6 +601,7 @@ export function buildStockStickiesCspLedger(
       'realizedPnl', 'unrealizedPnl', 'totalPnl', 'premiumCredits', 'closingDebits',
       'fees', 'collateralRequired', 'openContracts', 'expiredContracts', 'assignedContracts',
       'unmatchedTransactionCount', 'pendingResolutionContracts',
+      'closedPnlUnavailableContracts',
     ]) summary[field] += finiteNumber(row[field]);
   }
   for (const summary of Object.values(accountSummaries)) {
@@ -608,6 +623,9 @@ export function buildStockStickiesCspLedger(
       source: String(reconciliation.source || 'reviewed-ledger-reconciliation').slice(0, 160),
     });
   }
+  for (const summary of Object.values(accountSummaries)) {
+    if (summary.closedPnlUnavailableContracts > 0) summary.totalPnl = null;
+  }
 
   return {
     year,
@@ -623,6 +641,10 @@ export function buildStockStickiesCspLedger(
       (sum, row) => sum + row.pendingResolutionContracts,
       0
     )),
+    closedPnlUnavailableCount: contractRows.filter(
+      row => row.status === 'closed-pnl-unavailable'
+    ).length,
+    pnlComplete: !contractRows.some(row => row.status === 'closed-pnl-unavailable'),
     appliedReconciliations,
     accounts: accountSummaries,
     contracts: contractRows

@@ -391,6 +391,39 @@ test('reviewed CSP ledger reconciliation preserves audited history without reope
   assert.equal(ledger.appliedReconciliations.length, 1);
 });
 
+test('confirmed closed CSP with missing close cost is not reported as pending or profitable', () => {
+  const ledger = buildStockStickiesCspLedger([{
+    id: 'intc-open',
+    stockStickiesAccount: 'roth',
+    securityId: 'intc-put',
+    date: '2026-07-17',
+    name: 'sell 1.000 INTC put with strike of $70.00 for $7.30 each to open - SOLD',
+    amount: -730,
+    fees: 0.04,
+    type: 'sell',
+    subtype: 'sell',
+    optionContract: {
+      contractType: 'put', expirationDate: '2026-12-18', strikePrice: 70,
+      underlyingSecurityTicker: 'INTC',
+    },
+  }], [], 2026, '2026-08-06', {
+    closedWithoutPnlContracts: [{
+      account: 'roth', underlyingTicker: 'INTC', strikePrice: 70,
+      source: 'user-confirmed closed',
+    }],
+  });
+
+  assert.equal(ledger.pendingResolutionCount, 0);
+  assert.equal(ledger.closedPnlUnavailableCount, 1);
+  assert.equal(ledger.pnlComplete, false);
+  assert.equal(ledger.contracts[0].status, 'closed-pnl-unavailable');
+  assert.equal(ledger.accounts.roth.openContracts, 0);
+  assert.equal(ledger.accounts.roth.collateralRequired, 0);
+  assert.equal(ledger.accounts.roth.unrealizedPnl, 0);
+  assert.equal(ledger.accounts.roth.closedPnlUnavailableContracts, 1);
+  assert.equal(ledger.accounts.roth.totalPnl, null);
+});
+
 test('refresh consistency hides an unexplained cash withdrawal until its transaction arrives', () => {
   const previous = {
     fetchedAt: '2026-08-05T16:00:00Z',

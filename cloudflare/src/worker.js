@@ -2903,6 +2903,8 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
         config?.excludedCspTransactionIds?.[String(year)] || [],
       reviewedResolvedContracts:
         config?.cspLedgerReconciliations?.[String(year)]?.reviewedResolvedContracts || [],
+      closedWithoutPnlContracts:
+        config?.cspLedgerReconciliations?.[String(year)]?.closedWithoutPnlContracts || [],
       accountReconciliations:
         config?.cspLedgerReconciliations?.[String(year)]?.accounts || {},
     }
@@ -3061,6 +3063,18 @@ async function buildStockStickiesPerformance(env, year, snapshot, options = {}) 
       `${cspLedger.pendingResolutionCount} short-put lifecycle${cspLedger.pendingResolutionCount === 1 ? '' : 's'} ` +
       `(${pendingContracts}) disappeared from current holdings before Plaid supplied a closing, expiration, or assignment transaction. ` +
       'They are excluded from open-contract, collateral, and unrealized CSP P&L totals until resolved.'
+    );
+  }
+  if (cspLedger.closedPnlUnavailableCount) {
+    const confirmedClosedContracts = cspLedger.contracts
+      .filter(contract => contract.status === 'closed-pnl-unavailable')
+      .map(contract => `${contract.underlyingTicker || contract.ticker || 'unknown'} ${contract.strikePrice || ''}`.trim())
+      .join(', ');
+    warnings.push(
+      `${cspLedger.closedPnlUnavailableCount} short-put lifecycle` +
+      `${cspLedger.closedPnlUnavailableCount === 1 ? '' : 's'} (${confirmedClosedContracts}) ` +
+      'were confirmed closed, but Plaid has not supplied their closing costs. They have zero open-contract ' +
+      'and collateral exposure; affected CSP realized and total P&L remain incomplete.'
     );
   }
   if (cspLedger.appliedReconciliations.length) {

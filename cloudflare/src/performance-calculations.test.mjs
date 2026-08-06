@@ -101,6 +101,63 @@ test('manual reconciliation only replaces Plaid flows through its coverage date'
   );
 });
 
+test('a manual bridge flow is replaced when Plaid reports it after the coverage date', () => {
+  const manualWithdrawal = {
+    id: 'manual-withdrawal',
+    stockStickiesAccount: 'individual',
+    date: '2026-08-06',
+    subtype: 'withdrawal',
+    amount: 10_000,
+  };
+  const plaidWithdrawal = {
+    id: 'delayed-plaid-withdrawal',
+    stockStickiesAccount: 'individual',
+    date: '2026-08-10',
+    type: 'transfer',
+    subtype: 'transfer',
+    name: 'ACH withdrawal of $10000 from Robinhood Brokerage - TRANSFER',
+    amount: 10_000,
+  };
+
+  const beforePlaid = mergeStockStickiesTransactions(
+    [],
+    [manualWithdrawal],
+    { individual: '2026-07-24' }
+  );
+  assert.deepEqual(beforePlaid.map(transaction => transaction.id), ['manual-withdrawal']);
+
+  const afterPlaid = mergeStockStickiesTransactions(
+    [plaidWithdrawal],
+    [manualWithdrawal],
+    { individual: '2026-07-24' }
+  );
+  assert.deepEqual(afterPlaid.map(transaction => transaction.id), ['manual-withdrawal']);
+  assert.equal(afterPlaid.reduce(
+    (sum, transaction) => sum + stockStickiesExternalFlow(transaction),
+    0
+  ), -10_000);
+});
+
+test('manual bridge matching does not consume two same-value Plaid flows', () => {
+  const manual = [{
+    id: 'one-manual-deposit',
+    stockStickiesAccount: 'individual',
+    date: '2026-08-06',
+    subtype: 'deposit',
+    amount: -500,
+  }];
+  const plaid = [
+    { id: 'deposit-one', stockStickiesAccount: 'individual', date: '2026-08-06', subtype: 'deposit', amount: -500 },
+    { id: 'deposit-two', stockStickiesAccount: 'individual', date: '2026-08-07', subtype: 'deposit', amount: -500 },
+  ];
+
+  assert.deepEqual(
+    mergeStockStickiesTransactions(plaid, manual, { individual: '2026-07-24' })
+      .map(transaction => transaction.id),
+    ['deposit-two', 'one-manual-deposit']
+  );
+});
+
 test('institution-reported performance rolls forward without treating later deposits as gains', () => {
   const result = anchoredInstitutionPerformance(
     1561.47,
@@ -118,6 +175,21 @@ test('institution-reported performance rolls forward without treating later depo
   assert.equal(result.valueChangeAfterAnchor, 1100);
   assert.equal(result.netExternalFlowAfterAnchor, 500);
   assert.equal(result.externalFlowCountAfterAnchor, 1);
+});
+
+test('institution-reported performance does not treat a withdrawal as a loss', () => {
+  const result = anchoredInstitutionPerformance(
+    61_000,
+    100_000,
+    89_500,
+    [{ date: '2026-08-06', subtype: 'withdrawal', amount: 10_000 }],
+    '2026-08-05',
+    '2026-08-06'
+  );
+
+  assert.equal(result.valueChangeAfterAnchor, -10_500);
+  assert.equal(result.netExternalFlowAfterAnchor, -10_000);
+  assert.equal(result.gain, 60_500);
 });
 
 test('all-account return weights account gains by their time-weighted capital', () => {

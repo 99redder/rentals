@@ -6,6 +6,7 @@ const EXTERNAL_FLOW_SUBTYPES = new Set([
   'distribution',
   'withdrawal',
 ]);
+const MANUAL_FLOW_MATCH_WINDOW_MS = 10 * 86_400_000;
 
 export function stockStickiesAccountValues(snapshot) {
   const values = Object.fromEntries(STOCK_STICKIES_ACCOUNT_IDS.map(id => [id, 0]));
@@ -71,8 +72,41 @@ export function mergeStockStickiesTransactions(
       .map(transaction => transaction?.stockStickiesAccount)
       .filter(account => STOCK_STICKIES_ACCOUNT_IDS.includes(account))
   );
-  const merged = plaid.filter(transaction =>
-    !(
+  // A user-confirmed/manual flow may bridge the delay between a live holdings
+  // refresh and Plaid's investment-transaction export. Once Plaid later emits
+  // the same flow (Robinhood settlement dates can lag several days), remove
+  // the Plaid copy by account, direction, amount, and a bounded date window.
+  const matchedPlaidTransactions = new Set();
+  const availablePlaidFlows = plaid
+    .map((transaction, index) => ({
+      transaction,
+      index,
+      flow: stockStickiesExternalFlow(transaction),
+      dateMs: Date.parse(`${transaction?.date || ''}T12:00:00Z`),
+    }))
+    .filter(candidate =>
+      candidate.flow !== null && Number.isFinite(candidate.dateMs)
+    );
+  for (const manualTransaction of manual) {
+    const manualFlow = stockStickiesExternalFlow(manualTransaction);
+    const manualDateMs = Date.parse(`${manualTransaction?.date || ''}T12:00:00Z`);
+    if (manualFlow === null || !Number.isFinite(manualDateMs)) continue;
+    const match = availablePlaidFlows
+      .filter(candidate =>
+        !matchedPlaidTransactions.has(candidate.index) &&
+        candidate.transaction?.stockStickiesAccount ===
+          manualTransaction?.stockStickiesAccount &&
+        Math.abs(candidate.flow - manualFlow) < 0.005 &&
+        Math.abs(candidate.dateMs - manualDateMs) <= MANUAL_FLOW_MATCH_WINDOW_MS
+      )
+      .sort((left, right) =>
+        Math.abs(left.dateMs - manualDateMs) - Math.abs(right.dateMs - manualDateMs)
+      )[0];
+    if (match) matchedPlaidTransactions.add(match.index);
+  }
+  const merged = plaid.filter((transaction, index) =>
+    {
+      return !matchedPlaidTransactions.has(index) && !(
       manuallyReconciledAccounts.has(transaction?.stockStickiesAccount) &&
       isRecognizedExternalFlow(transaction) &&
       (
@@ -81,7 +115,8 @@ export function mergeStockStickiesTransactions(
         String(transaction?.date || '') <=
           String(manualCoverageThrough[transaction.stockStickiesAccount])
       )
-    )
+      );
+    }
   );
   const seen = new Set(merged.map(transaction => String(transaction?.id || '')).filter(Boolean));
   for (const transaction of manual) {

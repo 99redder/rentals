@@ -1197,19 +1197,34 @@ async function handleSaveCashFlow(env, year, data) {
     amount: (typeof item.amount === 'number' && isFinite(item.amount) && item.amount >= 0) ? item.amount : 0,
     note: String(item.note || '').trim().slice(0, 300),
   })).filter(item => item.name || item.amount > 0) : [];
+  const sanitizeDismissed = arr => Array.isArray(arr)
+    ? [...new Set(arr.filter(x => typeof x === 'string').map(x => x.slice(0, 80)))].slice(0, 100)
+    : [];
+  const sanitizeScenario = s => ({
+    income: sanitizeItems(s?.income),
+    expenses: sanitizeItems(s?.expenses),
+    dismissedAuto: sanitizeDismissed(s?.dismissedAuto),
+  });
+
+  // Cash Flow carries two independent scenarios ('sell' = 6AL sells as scheduled,
+  // 'nosale' = 6AL doesn't sell). Legacy payloads sent income/expenses/dismissedAuto
+  // at the top level — treat that as the 'sell' scenario. The top-level fields are
+  // ALSO mirrored from 'sell' below so the read-only mobile PWA (which reads the flat
+  // shape) keeps showing the primary scenario without needing an update.
+  const rawScenarios = (data.scenarios && typeof data.scenarios === 'object') ? data.scenarios : null;
+  const sell = sanitizeScenario(rawScenarios ? rawScenarios.sell : data);
+  const nosale = rawScenarios ? sanitizeScenario(rawScenarios.nosale) : sanitizeScenario(data);
 
   const saved = {
     year: Number(year),
     robinhoodChecking: (typeof data.robinhoodChecking === 'number' && isFinite(data.robinhoodChecking) && data.robinhoodChecking >= 0)
       ? data.robinhoodChecking
       : 0,
-    income: sanitizeItems(data.income),
-    expenses: sanitizeItems(data.expenses),
-    // Ids of auto-generated lines the user has dismissed (e.g. a sale-tax
-    // expense removed after it's been paid).
-    dismissedAuto: Array.isArray(data.dismissedAuto)
-      ? [...new Set(data.dismissedAuto.filter(x => typeof x === 'string').map(x => x.slice(0, 80)))].slice(0, 100)
-      : [],
+    scenarios: { sell, nosale },
+    // Backward-compat mirror of the 'sell' scenario for the read-only mobile PWA.
+    income: sell.income,
+    expenses: sell.expenses,
+    dismissedAuto: sell.dismissedAuto,
   };
   await env.RENTALS.put(`cash_flow:${year}`, JSON.stringify(saved));
   return jsonResponse({ success: true, data: saved });

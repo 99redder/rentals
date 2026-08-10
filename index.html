@@ -9300,6 +9300,45 @@ let _cfExpenseSort = 'date'; // 'amount' | 'date' — default soonest-first
 const _cfExpandedIncome = new Set();
 let _cfDetailsPromise = null;
 
+// Cash Flow supports two side-by-side scenarios: 'sell' (6AL sells as scheduled —
+// the original behavior) and 'nosale' (6AL does NOT sell). Each scenario carries
+// its own independent manual income/expense lists and dismissed-auto set, so
+// deleting a line in one tab never touches the other. The only structural
+// difference in the auto-derived lines is 6AL: in 'nosale' 6AL is treated as not
+// selling, so its projected sale-proceeds income disappears and the sale-tax
+// reserves fall back to 95EB-only. Scenario choice is UI state (persisted in
+// localStorage), not part of the saved record's math.
+const CF_SCENARIOS = ['sell', 'nosale'];
+const CF_SCENARIO_LABELS = { sell: '6AL Sells', nosale: "6AL Doesn't Sell" };
+const CF_SCENARIO_SALE_PROP = '6AL'; // the property whose sale is conditional
+let _cfScenario = (localStorage.getItem('rentals_cash_flow_scenario') === 'nosale') ? 'nosale' : 'sell';
+
+// The active scenario's manual lists ({ income, expenses, dismissedAuto }).
+function cfActive() {
+  const cf = state.cashFlow;
+  const empty = { income: [], expenses: [], dismissedAuto: [] };
+  if (!cf) return empty;
+  if (!cf.scenarios) return cf; // pre-migration safety (shouldn't happen after normalize)
+  return cf.scenarios[_cfScenario] || cf.scenarios.sell || empty;
+}
+
+// Properties whose sale is "active" in the current scenario. 6AL drops out of the
+// no-sale scenario; every other auto-proceeds property behaves the same in both.
+function cfScenarioSaleProps() {
+  return _cfScenario === 'nosale'
+    ? CASH_FLOW_AUTO_PROCEEDS_PROPS.filter(p => p !== CF_SCENARIO_SALE_PROP)
+    : CASH_FLOW_AUTO_PROCEEDS_PROPS;
+}
+
+function cfSetScenario(key) {
+  const next = CF_SCENARIOS.includes(key) ? key : 'sell';
+  if (next === _cfScenario) return;
+  _cfScenario = next;
+  localStorage.setItem('rentals_cash_flow_scenario', _cfScenario);
+  _cfEdit = null; // cancel any in-progress add/edit when switching tabs
+  _renderCashFlowHtml();
+}
+
 function cfNewId(prefix = 'cf') {
   return crypto.randomUUID ? crypto.randomUUID() : `${prefix}_${Math.random().toString(36).slice(2)}`;
 }
@@ -9327,13 +9366,26 @@ function normalizeCashFlow(raw) {
     amount: tpN(item.amount),
     note: String(item.note || '').trim()
   })).filter(item => item.name || item.amount) : [];
+  const normalizeScenario = s => ({
+    income: normalizeItems(s?.income),
+    expenses: normalizeItems(s?.expenses),
+    dismissedAuto: Array.isArray(s?.dismissedAuto) ? s.dismissedAuto.filter(x => typeof x === 'string') : []
+  });
+
+  // Migration: records saved before the two-scenario split store income/expenses/
+  // dismissedAuto at the top level. Those become the 'sell' scenario, and 'nosale'
+  // is seeded as a copy (duplicated once, then edited independently going forward).
+  const rawScenarios = (raw && typeof raw.scenarios === 'object' && raw.scenarios) ? raw.scenarios : null;
+  const legacy = normalizeScenario(raw);
+  const sell = rawScenarios ? normalizeScenario(rawScenarios.sell) : legacy;
+  const nosale = rawScenarios
+    ? normalizeScenario(rawScenarios.nosale)
+    : JSON.parse(JSON.stringify(legacy));
 
   return {
     year: CASH_FLOW_YEAR,
     robinhoodChecking: tpN(raw?.robinhoodChecking),
-    income: normalizeItems(raw?.income),
-    expenses: normalizeItems(raw?.expenses),
-    dismissedAuto: Array.isArray(raw?.dismissedAuto) ? raw.dismissedAuto.filter(x => typeof x === 'string') : []
+    scenarios: { sell, nosale }
   };
 }
 
@@ -9412,9 +9464,10 @@ function cfRobinhoodChecking() {
 }
 
 function cfTotals(autoIncome = [], autoExpenses = []) {
+  const active = cfActive();
   const income = cfRobinhoodChecking() +
-    [...autoIncome, ...(state.cashFlow?.income || [])].reduce((s, item) => s + tpN(item.amount), 0);
-  const expenses = [...autoExpenses, ...(state.cashFlow?.expenses || [])].reduce((s, item) => s + cfItemAmount(item), 0);
+    [...autoIncome, ...active.income].reduce((s, item) => s + tpN(item.amount), 0);
+  const expenses = [...autoExpenses, ...active.expenses].reduce((s, item) => s + cfItemAmount(item), 0);
   return { income, expenses, excess: income - expenses };
 }
 
@@ -9422,7 +9475,7 @@ function cfAutoIncomeItems() {
   // A finalized sale's proceeds land in the linked bank balance (pinned income),
   // so don't also project them here — that would double-count. Only unsold
   // (draft/estimate) properties contribute a projected proceeds line.
-  return CASH_FLOW_AUTO_PROCEEDS_PROPS
+  return cfScenarioSaleProps()
     .filter(prop => !state.data[prop]?.investment?.saleCloseout?.closedAt)
     .map(prop => cfPropertySaleProceedsItem(prop));
 }
@@ -9430,7 +9483,7 @@ function cfAutoIncomeItems() {
 // Finalized sales instead contribute their estimated sale tax as an expense —
 // cash that's earmarked to be paid at filing.
 function cfAutoExpenseItems() {
-  const dismissed = new Set(state.cashFlow?.dismissedAuto || []);
+  const dismissed = new Set(cfActive().dismissedAuto || []);
   const items = [...cfSaleTaxExpenseItems()];
   const critical = cfCriticalSavingsItem();
   if (critical) items.push(critical);
@@ -9444,11 +9497,16 @@ function cfAutoExpenseItems() {
 // state.cfSaleTax during loadCashFlowDetails). Otherwise each finalized sale keeps
 // its own independent per-property line.
 function cfSaleTaxExpenseItems() {
-  const otherProps = CASH_FLOW_AUTO_PROCEEDS_PROPS.filter(p => !CF_COMBINED_SALE_TAX_PROPS.includes(p));
+  const saleProps = cfScenarioSaleProps();
+  // The combined 6AL+95EB line only exists when 6AL is selling — i.e. the sell
+  // scenario. In the no-sale scenario 6AL is dropped, leaving 95EB (and any other
+  // finalized sale) to emit its own independent per-property sale-tax lines.
+  const combinedActive = _cfScenario !== 'nosale';
+  const otherProps = saleProps.filter(p => !CF_COMBINED_SALE_TAX_PROPS.includes(p));
   const st = state.cfSaleTax;
-  if (!st || !st.parts?.some(p => p.projected)) {
-    // No projected combined sale yet — original independent per-property lines.
-    return CASH_FLOW_AUTO_PROCEEDS_PROPS.flatMap(prop => cfPropertySaleTaxItems(prop));
+  if (!combinedActive || !st || !st.parts?.some(p => p.projected)) {
+    // No projected combined sale — independent per-property lines (closed sales only).
+    return saleProps.flatMap(prop => cfPropertySaleTaxItems(prop));
   }
   return [...cfCombinedSaleTaxItems(), ...otherProps.flatMap(prop => cfPropertySaleTaxItems(prop))];
 }
@@ -9696,8 +9754,23 @@ function cfPropertySaleProceedsItem(prop) {
   };
 }
 
+function cfScenarioTabsHtml() {
+  const tab = key => {
+    const active = _cfScenario === key;
+    return `<button class="btn btn-sm" onclick="cfSetScenario('${key}')"
+      style="padding:.4rem .85rem;font-weight:700;font-size:.82rem;border-radius:999px;border:1px solid ${active ? 'var(--primary)' : 'var(--border)'};background:${active ? 'var(--primary)' : 'transparent'};color:${active ? '#fff' : 'var(--text-muted)'};box-shadow:${active ? '0 2px 8px rgba(37,99,235,.28)' : 'none'}">${CF_SCENARIO_LABELS[key]}</button>`;
+  };
+  return `<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem">
+    <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-right:.15rem">Scenario</span>
+    ${CF_SCENARIOS.map(tab).join('')}
+    <span style="font-size:.75rem;color:var(--text-muted);margin-left:.25rem">${_cfScenario === 'nosale'
+      ? '6AL treated as not sold — no 6AL sale proceeds or sale taxes. Income & expenses are independent from the other tab.'
+      : '6AL sells as scheduled. Income & expenses are independent from the other tab.'}</span>
+  </div>`;
+}
+
 function _renderCashFlowHtml() {
-  const cf = state.cashFlow;
+  const cf = cfActive();
   const autoIncome = cfAutoIncomeItems();
   const autoExpenses = cfAutoExpenseItems();
   const totals = cfTotals(autoIncome, autoExpenses);
@@ -9717,6 +9790,7 @@ function _renderCashFlowHtml() {
         <div style="font-size:.8rem;color:var(--text-muted)">Track expected income and expense events, then see what is left over.</div>
       </div>
     </div>
+    ${cfScenarioTabsHtml()}
     ${bankSyncBannerHtml()}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.85rem;margin-bottom:1rem">
       ${stat('Income Events', totals.income, 'var(--success)', `1 pinned + ${autoIncome.length} auto + ${cf.income.length} manual`)}
@@ -9731,12 +9805,12 @@ function _renderCashFlowHtml() {
       ${cfColumnHtml('income', 'Income', 'var(--success)', autoIncome)}
       ${cfColumnHtml('expenses', 'Expenses', 'var(--danger)', autoExpenses)}
     </div>
-    ${(state.cashFlow?.dismissedAuto?.length) ? `<div style="margin-top:.85rem;font-size:.8rem;color:var(--text-muted)">${state.cashFlow.dismissedAuto.length} auto line${state.cashFlow.dismissedAuto.length === 1 ? '' : 's'} removed. <button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;color:var(--primary)" onclick="cfRestoreDismissed()">Restore</button></div>` : ''}
+    ${(cf.dismissedAuto?.length) ? `<div style="margin-top:.85rem;font-size:.8rem;color:var(--text-muted)">${cf.dismissedAuto.length} auto line${cf.dismissedAuto.length === 1 ? '' : 's'} removed. <button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;color:var(--primary)" onclick="cfRestoreDismissed()">Restore</button></div>` : ''}
   `;
 }
 
 function cfColumnHtml(type, title, color, autoItems = []) {
-  const manual = (state.cashFlow?.[type] || []).slice();
+  const manual = (cfActive()[type] || []).slice();
   const pinnedTotal = type === 'income' ? cfRobinhoodChecking() : 0;
   const total = pinnedTotal + [...autoItems, ...manual].reduce((s, item) => s + cfItemAmount(item), 0);
   const pinnedRow = type === 'income' ? cfPinnedCheckingRow(color) : '';
@@ -9953,7 +10027,7 @@ function cfAdd(type) {
 }
 
 function cfEdit(type, id) {
-  if (!state.cashFlow?.[type]?.some(item => item.id === id)) return;
+  if (!cfActive()[type]?.some(item => item.id === id)) return;
   _cfEdit = { type, id };
   _renderCashFlowHtml();
 }
@@ -9972,10 +10046,11 @@ async function cfSave(type, id) {
   if (!name) { alert('Event name is required.'); return; }
   if (!isFinite(amount) || amount < 0) { alert('Amount must be zero or greater.'); return; }
 
+  const active = cfActive();
   if (id === 'new') {
-    state.cashFlow[type].push({ id: cfNewId(), date, name, amount, note });
+    active[type].push({ id: cfNewId(), date, name, amount, note });
   } else {
-    const item = state.cashFlow[type].find(x => x.id === id);
+    const item = active[type].find(x => x.id === id);
     if (item) Object.assign(item, { date, name, amount, note });
   }
   _cfEdit = null;
@@ -9984,15 +10059,16 @@ async function cfSave(type, id) {
 }
 
 async function cfDelete(type, id) {
-  const item = state.cashFlow?.[type]?.find(x => x.id === id);
+  const active = cfActive();
+  const item = active[type]?.find(x => x.id === id);
   if (!item) return;
   showBrandedNotice({
     title: 'Delete Cash Flow Event',
     type: 'danger',
-    message: `"${item.name}" (${fmt(item.amount || 0)}) will be removed from ${CASH_FLOW_YEAR} ${type}.`,
+    message: `"${item.name}" (${fmt(item.amount || 0)}) will be removed from ${CASH_FLOW_YEAR} ${type} in the ${CF_SCENARIO_LABELS[_cfScenario]} scenario.`,
     confirmLabel: 'Delete',
     onConfirm: async () => {
-      state.cashFlow[type] = state.cashFlow[type].filter(x => x.id !== id);
+      active[type] = active[type].filter(x => x.id !== id);
       await saveCashFlow();
       _renderCashFlowHtml();
     }
@@ -10000,7 +10076,7 @@ async function cfDelete(type, id) {
 }
 
 // Dismiss an auto-generated line (e.g. a sale-tax expense once it's been paid).
-// Persisted by id in state.cashFlow.dismissedAuto and reversible via Restore.
+// Persisted by id in the active scenario's dismissedAuto and reversible via Restore.
 async function cfDismissAuto(id) {
   const item = [...cfAutoIncomeItems(), ...cfAutoExpenseItems()].find(x => x.id === id);
   const label = item ? `"${item.name}" (${fmt(item.amount || 0)})` : 'this auto line';
@@ -10010,8 +10086,9 @@ async function cfDismissAuto(id) {
     message: `${label} will be removed from the ${CASH_FLOW_YEAR} cash flow. You can restore it later.`,
     confirmLabel: 'Remove',
     onConfirm: async () => {
-      if (!Array.isArray(state.cashFlow.dismissedAuto)) state.cashFlow.dismissedAuto = [];
-      if (!state.cashFlow.dismissedAuto.includes(id)) state.cashFlow.dismissedAuto.push(id);
+      const active = cfActive();
+      if (!Array.isArray(active.dismissedAuto)) active.dismissedAuto = [];
+      if (!active.dismissedAuto.includes(id)) active.dismissedAuto.push(id);
       await saveCashFlow();
       _renderCashFlowHtml();
     }
@@ -10019,7 +10096,7 @@ async function cfDismissAuto(id) {
 }
 
 async function cfRestoreDismissed() {
-  state.cashFlow.dismissedAuto = [];
+  cfActive().dismissedAuto = [];
   await saveCashFlow();
   _renderCashFlowHtml();
 }
@@ -10086,7 +10163,10 @@ function constructionCashToClose(prop) {
   const cfg = constructionConfig(prop);
   if (!cfg) return { amount: 0, live: false, label: '' };
   const label = cfg.cashToCloseLabel.trim().toLowerCase();
-  const item = (state.cashFlow?.expenses || []).find(e => String(e.name || '').trim().toLowerCase() === label);
+  // Anchor to the primary 'sell' scenario (falling back to the legacy flat shape)
+  // so build funding doesn't shift when the user is viewing the no-sale tab.
+  const expenses = state.cashFlow?.scenarios?.sell?.expenses || state.cashFlow?.expenses || [];
+  const item = expenses.find(e => String(e.name || '').trim().toLowerCase() === label);
   return { amount: item ? tpN(item.amount) : 0, live: !!item, label: cfg.cashToCloseLabel };
 }
 

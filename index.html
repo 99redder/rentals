@@ -8902,10 +8902,18 @@ async function renderTaxPlanning() {
     projection_rh_interest_through_month: 12
   };
   let projectionSeeded = false;
-  for (const [key, value] of Object.entries(projectionDefaults)) {
-    if (tp[key] !== undefined) continue;
-    tp[key] = value;
+  const projectionAssumptionsVersion = 2;
+  if (CURRENT_YEAR === 2026 && tp.projection_assumptions_version !== projectionAssumptionsVersion) {
+    // Repair projection assumptions that the original initial render could
+    // overwrite with zero before the projection controls existed in the DOM.
+    Object.assign(tp, projectionDefaults, { projection_assumptions_version: projectionAssumptionsVersion });
     projectionSeeded = true;
+  } else {
+    for (const [key, value] of Object.entries(projectionDefaults)) {
+      if (tp[key] !== undefined) continue;
+      tp[key] = value;
+      projectionSeeded = true;
+    }
   }
   if (projectionSeeded) tpSave(tp);
   // Default county to Wicomico
@@ -9250,7 +9258,9 @@ async function renderTaxPlanning() {
   </div><!-- end tp-layout -->`;
 
   tpHydrateCollapsibleSections();
-  tpUpdateResults();
+  // Use the record loaded above. Reading the form here would run before the
+  // projection card has rendered its assumption controls.
+  tpUpdateResults(tp);
 }
 
 // ── View: Deductions Tracker ──────────────────────────────────────────────────
@@ -12980,6 +12990,10 @@ function fsPrintAgreement() {
 function tpReadForm() {
   const tp = tpLoadLocal(); // get existing (preserves estimated_payments)
   const g = id => { const el = document.getElementById(id); return el && el.value !== '' ? tpN(el.value) : 0; };
+  const projectionValue = (id, key) => {
+    const el = document.getElementById(id);
+    return el ? (el.value !== '' ? tpN(el.value) : 0) : tpN(tp[key]);
+  };
   const gc = id => { const el = document.getElementById(id); return el ? el.checked : true; };
   if (!tp.navy_locked) { tp.navy_gross = g('tp-navy-gross'); tp.navy_fed = g('tp-navy-fed'); tp.navy_state = g('tp-navy-state'); }
   if (!tp.wife_locked) { tp.wife_gross = g('tp-wife-gross'); tp.wife_fed = g('tp-wife-fed'); tp.wife_state = g('tp-wife-state'); }
@@ -12991,13 +13005,13 @@ function tpReadForm() {
   tp.crypto_income = g('tp-crypto-income');
   tp.crypto_st = g('tp-crypto-st'); tp.rh_st = g('tp-rh-st'); tp.megan_rh_st = g('tp-megan-rh-st'); tp.ibkr_st = g('tp-ibkr-st');
   tp.crypto_lt = g('tp-crypto-lt'); tp.rh_lt = g('tp-rh-lt'); tp.ibkr_lt = g('tp-ibkr-lt');
-  tp.projection_fmg_full_year = g('tp-proj-fmg-full-year');
-  tp.projection_446_tax_full_year = g('tp-proj-446-tax-full-year');
-  tp.projection_rh_checking_interest_ytd = g('tp-proj-rh-checking-interest-ytd');
-  tp.projection_rh_brokerage_interest_final = g('tp-proj-rh-brokerage-interest-final');
-  tp.projection_rh_dividends_final = g('tp-proj-rh-dividends-final');
-  tp.projection_rh_apy = g('tp-proj-rh-apy');
-  tp.projection_rh_interest_through_month = Math.max(0, Math.min(12, Math.round(g('tp-proj-rh-through-month'))));
+  tp.projection_fmg_full_year = projectionValue('tp-proj-fmg-full-year', 'projection_fmg_full_year');
+  tp.projection_446_tax_full_year = projectionValue('tp-proj-446-tax-full-year', 'projection_446_tax_full_year');
+  tp.projection_rh_checking_interest_ytd = projectionValue('tp-proj-rh-checking-interest-ytd', 'projection_rh_checking_interest_ytd');
+  tp.projection_rh_brokerage_interest_final = projectionValue('tp-proj-rh-brokerage-interest-final', 'projection_rh_brokerage_interest_final');
+  tp.projection_rh_dividends_final = projectionValue('tp-proj-rh-dividends-final', 'projection_rh_dividends_final');
+  tp.projection_rh_apy = projectionValue('tp-proj-rh-apy', 'projection_rh_apy');
+  tp.projection_rh_interest_through_month = Math.max(0, Math.min(12, Math.round(projectionValue('tp-proj-rh-through-month', 'projection_rh_interest_through_month'))));
   const salePropEl = document.getElementById('tp-property-sale-property');
   if (salePropEl) tp.property_sale_property = salePropEl.value || '';
   if (tp.property_sale_imported) tp.property_sale_taxable_gain = g('tp-property-sale-taxable-gain');

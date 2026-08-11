@@ -6548,6 +6548,7 @@ function tpBuildPayments(payments) {
 const TP_COLLAPSE_KEY = `rentals_tp_collapsed_${CURRENT_YEAR}`;
 const TP_AGI_WARNINGS_COLLAPSE_KEY = `rentals_tp_agi_warnings_collapsed_${CURRENT_YEAR}`;
 const TP_YEAR_END_PROJECTION_COLLAPSE_KEY = `rentals_tp_year_end_projection_collapsed_${CURRENT_YEAR}`;
+const TP_SAFE_HARBOR_COLLAPSE_KEY = `rentals_tp_safe_harbor_collapsed_${CURRENT_YEAR}`;
 function tpCollapsedMap() { try { return JSON.parse(localStorage.getItem(TP_COLLAPSE_KEY) || '{}'); } catch { return {}; } }
 function tpSaveCollapsedMap(map) { localStorage.setItem(TP_COLLAPSE_KEY, JSON.stringify(map || {})); }
 function tpAgiWarningsCollapsed() { return localStorage.getItem(TP_AGI_WARNINGS_COLLAPSE_KEY) !== '0'; }
@@ -6558,6 +6559,11 @@ function tpToggleAgiWarnings() {
 function tpYearEndProjectionCollapsed() { return localStorage.getItem(TP_YEAR_END_PROJECTION_COLLAPSE_KEY) !== '0'; }
 function tpToggleYearEndProjection() {
   localStorage.setItem(TP_YEAR_END_PROJECTION_COLLAPSE_KEY, tpYearEndProjectionCollapsed() ? '0' : '1');
+  tpUpdateResults(tpLoadLocal());
+}
+function tpSafeHarborCollapsed() { return localStorage.getItem(TP_SAFE_HARBOR_COLLAPSE_KEY) !== '0'; }
+function tpToggleSafeHarbor() {
+  localStorage.setItem(TP_SAFE_HARBOR_COLLAPSE_KEY, tpSafeHarborCollapsed() ? '0' : '1');
   tpUpdateResults(tpLoadLocal());
 }
 function tpToggleSection(id) {
@@ -13419,6 +13425,7 @@ function tpUpdatePriorYear(key, val) {
 // safe harbor no estimated payment is required and the rest waits for the return.
 function tpSafeHarborHtml(r, tp) {
   const md = r.md;
+  const collapsed = tpSafeHarborCollapsed();
   const has = v => v !== undefined && v !== null && v !== '';
   const priorAgi = has(tp.prior_year_agi) ? tpN(tp.prior_year_agi) : TP_PRIOR_YEAR_DEFAULTS.agi;
   const priorFed = has(tp.prior_year_fed) ? tpN(tp.prior_year_fed) : TP_PRIOR_YEAR_DEFAULTS.fed;
@@ -13463,8 +13470,14 @@ function tpSafeHarborHtml(r, tp) {
     </div>`;
 
   return `
-    <div class="card-header"><div class="card-title">🛡️ ${CURRENT_YEAR} Safe Harbor — Estimated Payments</div></div>
-    <div class="card-body" style="padding:.4rem 1.25rem 1rem">
+    <div class="card-header" onclick="tpToggleSafeHarbor()" style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;flex-wrap:wrap;cursor:pointer">
+      <div class="card-title">🛡️ ${CURRENT_YEAR} Safe Harbor — Estimated Payments</div>
+      <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+        <div style="font-size:.72rem;color:var(--text-muted)">Federal <strong style="color:${fedNeed > 0.005 ? 'var(--danger)' : 'var(--success)'}">${fmt(fedNeed)}</strong> · Maryland <strong style="color:${mdNeed > 0.005 ? 'var(--danger)' : 'var(--success)'}">${fmt(mdNeed)}</strong></div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();tpToggleSafeHarbor()" aria-expanded="${collapsed ? 'false' : 'true'}" style="margin-left:.25rem;font-size:.8rem;padding:.2rem .5rem">${collapsed ? 'Maximize' : 'Minimize'}</button>
+      </div>
+    </div>
+    <div class="card-body" style="padding:.4rem 1.25rem 1rem;display:${collapsed ? 'none' : ''}">
       <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.2rem">Minimum to pay in (withholding + estimates) to avoid an underpayment penalty — the rest waits for the return. Federal prior-year factor <strong>${fedFactorPct}</strong> (${py} AGI ${priorAgi > TP_SAFE_HARBOR_AGI ? 'over' : 'under'} $150k); Maryland prior-year factor <strong>110%</strong>.</div>
       ${priorInputs}
       ${block('Federal', fedSafe, fedVia, r.estPmts > 0 ? 'Withholding + estimates' : 'Projected withholding', fedPaid, fedNeed, fedDefer)}
@@ -14050,6 +14063,7 @@ window.tpPayAmt                = tpPayAmt;
 window.tpToggleSection         = tpToggleSection;
 window.tpToggleAgiWarnings     = tpToggleAgiWarnings;
 window.tpToggleYearEndProjection = tpToggleYearEndProjection;
+window.tpToggleSafeHarbor      = tpToggleSafeHarbor;
 window.tpApplyPropertySale     = tpApplyPropertySale;
 window.tpClearPropertySale     = tpClearPropertySale;
 window.tpUpdatePriorYear       = tpUpdatePriorYear;

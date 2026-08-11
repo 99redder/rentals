@@ -3096,15 +3096,16 @@ async function renderHistorical() {
   // to its Net — the footnote explains why.
   const yearRows = years.map(y => {
     const d = summaries[y];
-    const { income: inc, expense: exp } = histYearOperating(d);
+    const placedInService = state.data[prop].depreciation?.placedInService;
+    const { income: inc, expense: exp } = histYearOperating(d, y, placedInService);
     const net = inc - exp;
     const netClass = net > 0 ? 'amount-income' : net < 0 ? 'amount-expense' : '';
-    const rentalMonths = Number.isFinite(Number(d.rental_months)) ? Number(d.rental_months) : null;
-    const isPartialRental = rentalMonths !== null && rentalMonths > 0 && rentalMonths < 12;
+    const rentalMonths = histYearRentalMonths(d, y, placedInService);
+    const isPartialRental = rentalMonths > 0 && rentalMonths < 12;
     const cols = allShow.map(c => {
       const v = d[c.code] || 0;
       const isIncome = CAT_TYPE[c.code] === 'income';
-      return `<td class="text-right ${v === 0 ? '' : isIncome ? 'amount-income' : 'amount-expense'}">${v === 0 ? '—' : fmtShort(v)}</td>`;
+      return `<td class="text-right ${v === 0 ? '' : isIncome ? 'amount-income' : 'amount-expense'}">${v === 0 ? '—' : `${v < 0 ? '−' : ''}${fmtShort(v)}`}</td>`;
     }).join('');
 
     const badge = (text) => `<span style="font-size:.6rem;font-weight:700;background:var(--text-muted);color:var(--bg);border-radius:3px;padding:.1rem .3rem;margin-left:.4rem;vertical-align:middle;white-space:nowrap">${text}</span>`;
@@ -4993,17 +4994,31 @@ async function renderTaxSummary() {
 //  • The remaining carrying costs (taxes, insurance, HOA, utilities, PMI, and
 //    rental operating fees) only count for the portion of the year the property
 //    was actually a rental. `rental_months` (0–12) sets that portion; if it is
-//    absent it defaults to 0 for a flagged primary-residence year, else 12.
+//    absent it defaults to 0 for a flagged primary-residence year; a conversion
+//    year is inferred from the depreciation placed-in-service date, else 12.
 //    A full primary year → income $0 + repairs + mortgage interest only; a full
 //    rental year → everything; a mid-year conversion year → prorated.
-function histYearOperating(d) {
-  if (!d) return { income: 0, expense: 0 };
-  let rentalMonths = 12;
-  if (Number.isFinite(Number(d.rental_months))) {
-    rentalMonths = Math.min(12, Math.max(0, Number(d.rental_months)));
-  } else if (d.primary_residence) {
-    rentalMonths = 0;
+function histYearRentalMonths(d, year = '', placedInService = '') {
+  if (Number.isFinite(Number(d?.rental_months))) {
+    return Math.min(12, Math.max(0, Number(d.rental_months)));
   }
+  if (d?.primary_residence) return 0;
+
+  // Older summaries predate the rental_months field. Infer the first rental
+  // year's active months from the placed-in-service date: March–December is 10.
+  // An explicit rental_months value always takes precedence.
+  const service = String(placedInService || '');
+  const serviceYear = service.slice(0, 4);
+  const serviceMonth = Number(service.slice(5, 7));
+  if (String(year) === serviceYear && serviceMonth >= 1 && serviceMonth <= 12) {
+    return 13 - serviceMonth;
+  }
+  return 12;
+}
+
+function histYearOperating(d, year = '', placedInService = '') {
+  if (!d) return { income: 0, expense: 0 };
+  const rentalMonths = histYearRentalMonths(d, year, placedInService);
   const rentalFrac = rentalMonths / 12;
 
   // Rent is only earned while it's a rental, so income is $0 in a full primary year.
@@ -5133,21 +5148,25 @@ async function renderInvestmentReturn() {
   const cumulativeImprovements = calcCumulativeImprovements(prop, summs, txns, maintenance, yearStr);
   const totalCapitalInvested = purchasePrice + purchaseClosing + cumulativeImprovements;
 
-  // ── Depreciation Recapture ────────────────────────────────────────────────
-  let cumulativeDepreciation = 0;
-  if (dc) {
-    const sched = calcDepreciationSchedule(dc.costBasis, dc.placedInService, isSold ? saleCloseout.saleDate : null);
-    if (sched.length) cumulativeDepreciation = sched[sched.length - 1].cumulative;
-  }
-  // Primary residences: no depreciation recapture (never rented), no capital gains tax (§121 exclusion)
-  let depreciationRecaptureTax = 0;
-
   // ── Sale Value / Net Proceeds ─────────────────────────────────────────────
   const defaultSaleState = PROPERTY_SALE_STATE[prop] || saleCloseout?.saleState || 'NH';
   const closeoutDraft = isSold ? {} : loadSaleCloseoutDraft(prop);
   const draftBreakdown = closeoutDraft?.breakdown?.items ? closeoutDraft.breakdown : null;
   const saleValue = isSold ? saleCloseout.salePrice : (closeoutDraft.price || null);
+  const dispositionDate = isSold
+    ? saleCloseout.saleDate
+    : (saleValue ? (closeoutDraft.date || null) : null);
   const initialCloseoutPrice = closeoutDraft.price || saleValue || '';
+
+  // ── Depreciation Recapture ────────────────────────────────────────────────
+  let cumulativeDepreciation = 0;
+  if (dc) {
+    const sched = calcDepreciationSchedule(dc.costBasis, dc.placedInService, dispositionDate);
+    if (sched.length) cumulativeDepreciation = sched[sched.length - 1].cumulative;
+  }
+  // Primary residences: no depreciation recapture (never rented), no capital gains tax (§121 exclusion)
+  let depreciationRecaptureTax = 0;
+
   const savedMortgagePayoff = saleCloseout?.mortgagePayoff;
   const liveMortgage = propertyMortgagePayoff(prop);
   const mortgagePayoff = isSold && typeof savedMortgagePayoff === 'number'
@@ -5190,7 +5209,7 @@ async function renderInvestmentReturn() {
   let allYearsIncome = 0, allYearsExpenses = 0;
   const histYears = Object.keys(summs).filter(y => y !== yearStr).sort();
   for (const yr of histYears) {
-    const { income, expense } = histYearOperating(summs[yr]);
+    const { income, expense } = histYearOperating(summs[yr], yr, dc?.placedInService);
     allYearsIncome   += income;
     allYearsExpenses += expense;
   }
@@ -5218,8 +5237,8 @@ async function renderInvestmentReturn() {
   const purchaseDateStr = inv.purchaseDate || dc?.purchaseDate || null;
   if (purchaseDateStr && totalCapitalInvested > 0 && totalReturn !== null) {
     const purchaseMs = new Date(purchaseDateStr + 'T00:00:00').getTime();
-    const returnDateMs = isSold && saleCloseout.saleDate
-      ? new Date(saleCloseout.saleDate + 'T00:00:00').getTime()
+    const returnDateMs = dispositionDate
+      ? new Date(dispositionDate + 'T00:00:00').getTime()
       : new Date().getTime();
     yearsHeld = (returnDateMs - purchaseMs) / (365.25 * 24 * 60 * 60 * 1000);
     if (yearsHeld > 0) {
@@ -5744,7 +5763,7 @@ async function closeOutInvestmentSale() {
   let allYearsIncome = 0, allYearsExpenses = 0;
   for (const [yr, d] of Object.entries(summs)) {
     if (yr === yearStr) continue;
-    const { income, expense } = histYearOperating(d);
+    const { income, expense } = histYearOperating(d, yr, dc?.placedInService);
     allYearsIncome += income;
     allYearsExpenses += expense;
   }
@@ -9979,7 +9998,7 @@ function cfPropertySaleProceedsItem(prop) {
   let cumulativeDepreciation = 0;
   const dc = state.data[prop]?.depreciation;
   if (!isPrimaryResidence && dc) {
-    const sched = calcDepreciationSchedule(dc.costBasis, dc.placedInService, isSold ? saleCloseout.saleDate : null);
+    const sched = calcDepreciationSchedule(dc.costBasis, dc.placedInService, date || null);
     if (sched.length) cumulativeDepreciation = sched[sched.length - 1].cumulative;
   }
 
@@ -13022,7 +13041,8 @@ function calcPropertySaleTaxDetails(prop) {
 
   let cumulativeDepreciation = 0;
   if (!isPrimaryResidence && dc) {
-    const sched = calcDepreciationSchedule(dc.costBasis, dc.placedInService, isSold ? saleCloseout.saleDate : null);
+    const dispositionDate = isSold ? saleCloseout.saleDate : (closeoutDraft.date || null);
+    const sched = calcDepreciationSchedule(dc.costBasis, dc.placedInService, dispositionDate);
     if (sched.length) cumulativeDepreciation = sched[sched.length - 1].cumulative;
   }
   const basis = purchasePrice + purchaseClosing + cumulativeImprovements;

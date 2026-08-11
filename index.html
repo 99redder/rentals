@@ -6547,12 +6547,18 @@ function tpBuildPayments(payments) {
 
 const TP_COLLAPSE_KEY = `rentals_tp_collapsed_${CURRENT_YEAR}`;
 const TP_AGI_WARNINGS_COLLAPSE_KEY = `rentals_tp_agi_warnings_collapsed_${CURRENT_YEAR}`;
+const TP_YEAR_END_PROJECTION_COLLAPSE_KEY = `rentals_tp_year_end_projection_collapsed_${CURRENT_YEAR}`;
 function tpCollapsedMap() { try { return JSON.parse(localStorage.getItem(TP_COLLAPSE_KEY) || '{}'); } catch { return {}; } }
 function tpSaveCollapsedMap(map) { localStorage.setItem(TP_COLLAPSE_KEY, JSON.stringify(map || {})); }
 function tpAgiWarningsCollapsed() { return localStorage.getItem(TP_AGI_WARNINGS_COLLAPSE_KEY) !== '0'; }
 function tpToggleAgiWarnings() {
   localStorage.setItem(TP_AGI_WARNINGS_COLLAPSE_KEY, tpAgiWarningsCollapsed() ? '0' : '1');
-  tpUpdateResults();
+  tpUpdateResults(tpLoadLocal());
+}
+function tpYearEndProjectionCollapsed() { return localStorage.getItem(TP_YEAR_END_PROJECTION_COLLAPSE_KEY) !== '0'; }
+function tpToggleYearEndProjection() {
+  localStorage.setItem(TP_YEAR_END_PROJECTION_COLLAPSE_KEY, tpYearEndProjectionCollapsed() ? '0' : '1');
+  tpUpdateResults(tpLoadLocal());
 }
 function tpToggleSection(id) {
   const map = tpCollapsedMap();
@@ -13385,11 +13391,11 @@ function tpAgiWarningsHtml(r, tp) {
       <div class="card-title">⚠️ AGI Threshold Watch</div>
       <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
         <div style="font-size:.72rem;color:var(--text-muted)">AGI <strong style="color:var(--text)">${fmt(agi)}</strong> · MAGI <strong style="color:var(--text)">${fmt(r.magi)}</strong> · Taxable <strong style="color:var(--text)">${fmt(r.taxInc)}</strong></div>
-        <div style="font-size:.72rem">${headline}</div>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();tpToggleAgiWarnings()" aria-expanded="${collapsed ? 'false' : 'true'}" style="margin-left:.25rem;font-size:.8rem;padding:.2rem .5rem">${collapsed ? 'Expand' : 'Minimize'}</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();tpToggleAgiWarnings()" aria-expanded="${collapsed ? 'false' : 'true'}" style="margin-left:.25rem;font-size:.8rem;padding:.2rem .5rem">${collapsed ? 'Maximize' : 'Minimize'}</button>
       </div>
     </div>
     <div class="card-body" style="padding:0.75rem 1rem;display:${collapsed ? 'none' : ''}">
+      <div style="font-size:.72rem;margin-bottom:.45rem">${headline}</div>
       <div style="font-size:.68rem;color:var(--text-muted);margin-bottom:.55rem">Projected AGI <strong>${fmt(agi)}</strong> · MAGI <strong>${fmt(r.magi)}</strong>${r.iraAdj > 0 ? ' (AGI + IRA deduction added back — the basis for the Roth limit)' : ' (equals AGI — no add-backs apply)'} · taxable income <strong>${fmt(r.taxInc)}</strong> — checked against ${CURRENT_YEAR} MFJ phase-out thresholds.</div>
       ${rows || '<div style="font-size:.78rem;color:var(--success);font-weight:600">✓ No AGI-based phase-outs triggered at this income.</div>'}
     </div>`;
@@ -13586,6 +13592,7 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
   const p = tpYearEndProjection(tp, r, rentalRows);
   const over = p.thresholdGap < 0;
   const color = over ? 'var(--danger)' : 'var(--success)';
+  const collapsed = tpYearEndProjectionCollapsed();
   const breakdown = p.adjustments
     .filter(item => Math.abs(item.amount) >= 0.005 || item.key === 'rent446' || item.key === 'repair6al')
     .map(item => `<div class="tp-row"><span><span>${escHtml(item.label)}</span><small style="display:block;color:var(--text-muted);font-size:.67rem">${escHtml(item.detail)}</small></span><span style="color:${item.amount > 0 ? 'var(--danger)' : item.amount < 0 ? 'var(--success)' : 'var(--text-muted)'}">${fmtSigned(item.amount)}</span></div>`)
@@ -13593,8 +13600,14 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
   const assumptionInput = (id, label, value, suffix = '$') => `<label style="display:block;font-size:.67rem;color:var(--text-muted)">${escHtml(label)}<div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem">${suffix === '$' ? '<span>$</span>' : ''}<input id="${id}" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(value))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right">${suffix !== '$' ? `<span>${escHtml(suffix)}</span>` : ''}</div></label>`;
   const monthOptions = Array.from({ length: 13 }, (_, month) => `<option value="${month}" ${p.throughMonth === month ? 'selected' : ''}>${month === 0 ? 'None' : new Date(2000, month - 1, 1).toLocaleString('en-US', { month: 'short' })}</option>`).join('');
   return `
-    <div class="card-header"><div class="card-title">📈 Live ${CURRENT_YEAR} Year-End AGI Projection</div></div>
-    <div class="card-body" style="padding:.7rem 1.25rem 1rem">
+    <div class="card-header" onclick="tpToggleYearEndProjection()" style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;flex-wrap:wrap;cursor:pointer">
+      <div class="card-title">📈 Live ${CURRENT_YEAR} Year-End AGI Projection</div>
+      <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+        <strong style="font-size:1rem;color:${color}">${fmt(p.agi)}</strong>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();tpToggleYearEndProjection()" aria-expanded="${collapsed ? 'false' : 'true'}" style="margin-left:.25rem;font-size:.8rem;padding:.2rem .5rem">${collapsed ? 'Maximize' : 'Minimize'}</button>
+      </div>
+    </div>
+    <div class="card-body" style="padding:.7rem 1.25rem 1rem;display:${collapsed ? 'none' : ''}">
       <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-end;margin-bottom:.45rem">
         <div><div style="font-size:.68rem;color:var(--text-muted)">Projected ending AGI</div><div style="font-size:1.45rem;font-weight:800;color:${color}">${fmt(p.agi)}</div></div>
         <div style="text-align:right"><div style="font-size:.68rem;color:var(--text-muted)">${over ? 'Over threshold' : 'Cushion below threshold'}</div><div style="font-size:1.05rem;font-weight:750;color:${color}">${fmt(Math.abs(p.thresholdGap))}</div></div>
@@ -14035,6 +14048,8 @@ window.tpRemovePayment         = tpRemovePayment;
 window.tpPayDate               = tpPayDate;
 window.tpPayAmt                = tpPayAmt;
 window.tpToggleSection         = tpToggleSection;
+window.tpToggleAgiWarnings     = tpToggleAgiWarnings;
+window.tpToggleYearEndProjection = tpToggleYearEndProjection;
 window.tpApplyPropertySale     = tpApplyPropertySale;
 window.tpClearPropertySale     = tpClearPropertySale;
 window.tpUpdatePriorYear       = tpUpdatePriorYear;

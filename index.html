@@ -2759,8 +2759,9 @@ function closeNoticeModal() {
   _noticeModalConfirmCb = null;
 }
 function noticeModalConfirm() {
-  if (_noticeModalConfirmCb) _noticeModalConfirmCb();
+  const confirmCb = _noticeModalConfirmCb;
   closeNoticeModal();
+  if (confirmCb) confirmCb();
 }
 
 function handleModalOverlayClick(e, modalId) {
@@ -3682,6 +3683,7 @@ function mipRowHtml(prop, e) {
       <td class="mip-num">${fmt(e.estimatedPrice || 0)}</td>
       <td class="mip-num no-print" style="width:1%">
         ${_mipEditMode ? `<span class="mip-act">
+          <button class="mip-icon-btn" title="Move to Later List" aria-label="Move ${escAttr(e.item)} to Later List" onclick="confirmMovePurchaseItem('${escAttr(e.id)}', 'move-in')">Later →</button>
           <button class="mip-icon-btn" title="Edit item" onclick="editMoveInPurchase('${escAttr(e.id)}')">Edit</button>
           <button class="mip-icon-btn is-danger" title="Delete item" aria-label="Delete ${escAttr(e.item)}" onclick="deleteMoveInPurchase('${escAttr(e.id)}')">✕</button>
         </span>` : ''}
@@ -3958,6 +3960,55 @@ async function deleteMoveInPurchase(id) {
   });
 }
 
+function confirmMovePurchaseItem(id, source) {
+  const prop = MOVE_IN_PURCHASE_PROPERTY;
+  const fromMoveIn = source === 'move-in';
+  const sourceEntries = fromMoveIn ? state.data[prop].moveInPurchases : state.data[prop].laterList;
+  const entry = (sourceEntries || []).find(e => e.id === id);
+  if (!entry) return;
+
+  const sourceLabel = fromMoveIn ? 'Move-In Purchases' : 'Later List';
+  const destinationLabel = fromMoveIn ? 'Later List' : 'Move-In Purchases';
+  const detail = `${entry.item || 'Item'} — ${fmt(entry.estimatedPrice || 0)}`;
+
+  showBrandedNotice({
+    title: `Move to ${destinationLabel}?`,
+    message: `${detail}\n\nThis will remove the item from ${sourceLabel} and add it to ${destinationLabel}.`,
+    confirmLabel: 'Continue',
+    onConfirm: () => {
+      showBrandedNotice({
+        title: 'Confirm Item Move',
+        message: `${detail}\n\nFinal approval: move this item from ${sourceLabel} to ${destinationLabel}?`,
+        confirmLabel: `Move to ${destinationLabel}`,
+        onConfirm: () => movePurchaseItem(id, source)
+      });
+    }
+  });
+}
+
+async function movePurchaseItem(id, source) {
+  const prop = MOVE_IN_PURCHASE_PROPERTY;
+  const fromMoveIn = source === 'move-in';
+  try {
+    const result = await callApi({ action: 'move_purchase_item', property: prop, id, source });
+    const sourceKey = fromMoveIn ? 'moveInPurchases' : 'laterList';
+    const destinationKey = fromMoveIn ? 'laterList' : 'moveInPurchases';
+    state.data[prop][sourceKey] = (state.data[prop][sourceKey] || []).filter(e => e.id !== id);
+    if (state.data[prop][destinationKey] !== null) {
+      state.data[prop][destinationKey] = state.data[prop][destinationKey].filter(e => e.id !== id);
+      state.data[prop][destinationKey].push(result.entry);
+    }
+    if (fromMoveIn) renderMoveInPurchases();
+    else renderLaterList();
+  } catch (e) {
+    showBrandedNotice({
+      title: 'Move Failed',
+      message: `The item was not moved: ${e.message}`,
+      confirmLabel: 'OK'
+    });
+  }
+}
+
 // ── Move-In Purchase Categories ───────────────────────────────────────────────
 
 function renderMoveInCategoriesModalBody(prop) {
@@ -4211,6 +4262,7 @@ function llRowHtml(prop, e) {
       <td class="mip-num">${fmt(e.estimatedPrice || 0)}</td>
       <td class="mip-num no-print" style="width:1%">
         ${_llEditMode ? `<span class="mip-act">
+          <button class="mip-icon-btn" title="Move to Move-In Purchases" aria-label="Move ${escAttr(e.item)} to Move-In Purchases" onclick="confirmMovePurchaseItem('${escAttr(e.id)}', 'later')">← Move In</button>
           <button class="mip-icon-btn" title="Edit item" onclick="editLaterListItem('${escAttr(e.id)}')">Edit</button>
           <button class="mip-icon-btn is-danger" title="Delete item" aria-label="Delete ${escAttr(e.item)}" onclick="deleteLaterListItem('${escAttr(e.id)}')">✕</button>
         </span>` : ''}
@@ -13711,6 +13763,7 @@ window.editMoveInPurchase      = editMoveInPurchase;
 window.saveMoveInPurchase      = saveMoveInPurchase;
 window.toggleMoveInPurchase    = toggleMoveInPurchase;
 window.deleteMoveInPurchase    = deleteMoveInPurchase;
+window.confirmMovePurchaseItem = confirmMovePurchaseItem;
 window.setMoveInPurchaseSort   = setMoveInPurchaseSort;
 window.toggleMoveInEditMode    = toggleMoveInEditMode;
 window.mipSetSearch            = mipSetSearch;

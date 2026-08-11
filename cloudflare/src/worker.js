@@ -312,7 +312,7 @@ async function handleDataApi(request, env) {
     'save_move_in_purchases', 'add_move_in_purchase', 'update_move_in_purchase', 'delete_move_in_purchase',
     'save_move_in_categories',
     'save_later_list', 'add_later_item', 'update_later_item', 'delete_later_item',
-    'save_later_categories'
+    'save_later_categories', 'move_purchase_item'
   ]);
   if (readOnlyWhenSold.has(action) && await isPropertySold(env, property)) {
     return jsonResponse({ error: 'Property is sold/closed. Records are historical and read-only.' }, 409);
@@ -411,6 +411,9 @@ async function handleDataApi(request, env) {
 
     case 'save_later_categories':
       return handleSaveLaterCategories(env, property, body.categories);
+
+    case 'move_purchase_item':
+      return handleMovePurchaseItem(env, property, body.id, body.source);
 
     case 'get_investment':
       return handleGetInvestment(env, property);
@@ -1114,6 +1117,38 @@ async function handleDeleteLaterItem(env, property, id) {
   if (filtered.length === entries.length) return jsonResponse({ error: 'Entry not found' }, 404);
   await env.RENTALS.put(`later_list:${property}`, JSON.stringify(filtered));
   return jsonResponse({ success: true });
+}
+
+async function handleMovePurchaseItem(env, property, id, source) {
+  const propertyError = requireMoveInPurchaseProperty(property);
+  if (propertyError) return propertyError;
+  if (!id) return jsonResponse({ error: 'Missing id' }, 400);
+  if (source !== 'move-in' && source !== 'later') {
+    return jsonResponse({ error: 'Source must be move-in or later' }, 400);
+  }
+
+  const sourceKey = source === 'move-in'
+    ? `move_in_purchases:${property}`
+    : `later_list:${property}`;
+  const destinationKey = source === 'move-in'
+    ? `later_list:${property}`
+    : `move_in_purchases:${property}`;
+  const sourceEntries = await env.RENTALS.get(sourceKey, 'json') || [];
+  const sourceIndex = sourceEntries.findIndex(e => e.id === id);
+  if (sourceIndex === -1) return jsonResponse({ error: 'Entry not found' }, 404);
+
+  const entry = normalizeMoveInPurchase({ ...sourceEntries[sourceIndex], id });
+  const destinationEntries = await env.RENTALS.get(destinationKey, 'json') || [];
+  if (destinationEntries.some(e => e.id === id)) {
+    return jsonResponse({ error: 'Entry already exists in the destination list' }, 409);
+  }
+
+  // Write the destination first so an interrupted move cannot lose the item.
+  destinationEntries.push(entry);
+  await env.RENTALS.put(destinationKey, JSON.stringify(destinationEntries));
+  sourceEntries.splice(sourceIndex, 1);
+  await env.RENTALS.put(sourceKey, JSON.stringify(sourceEntries));
+  return jsonResponse({ success: true, entry });
 }
 
 async function handleGetLaterCategories(env, property) {

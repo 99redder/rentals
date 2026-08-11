@@ -2021,6 +2021,7 @@ const TP_QBI_PHASEIN_END     = 553500;
 const TP_ADDL_MEDICARE       = 250000;   // 0.9% Additional Medicare Tax on wages/SE comp over this
 const TP_MD_EXEMPT_PHASEOUT  = 200000;   // MD personal exemptions reach $0 above this federal AGI (MFJ)
 const TP_SAFE_HARBOR_AGI     = 150000;   // above this, the estimated-tax safe harbor is 110% of prior-year tax
+const TP_MD_SAFE_HARBOR_FACTOR = 1.10;   // Maryland prior-year safe harbor is always 110% of prior-year MD tax
 const TP_CHARITY_FLOOR_PCT   = 0.005;    // 2026+: itemized charitable gifts deductible only above 0.5% of AGI
 
 // ── Maryland Tax Constants (TY2025+ law, per BRFA of 2025 / Comptroller Tax Alert 12-22-2025) ──
@@ -9801,23 +9802,24 @@ function cfComputeCombinedSaleTax(tp, rentalRows) {
   });
   const r = tpCalc(withSales, rentalRows);
 
-  // Prior-year safe-harbor factor (110% over $150k AGI, else 100%).
+  // Federal uses 110% over $150k prior-year AGI, otherwise 100%; Maryland's
+  // prior-year safe harbor is always 110%, regardless of federal AGI.
   const has = v => v !== undefined && v !== null && v !== '';
   const priorAgi = has(tp.prior_year_agi) ? tpN(tp.prior_year_agi) : TP_PRIOR_YEAR_DEFAULTS.agi;
   const priorFed = has(tp.prior_year_fed) ? tpN(tp.prior_year_fed) : TP_PRIOR_YEAR_DEFAULTS.fed;
   const priorMd  = has(tp.prior_year_md)  ? tpN(tp.prior_year_md)  : TP_PRIOR_YEAR_DEFAULTS.md;
-  const factor = priorAgi > 150000 ? 1.10 : 1.00;
+  const fedFactor = priorAgi > TP_SAFE_HARBOR_AGI ? 1.10 : 1.00;
 
   // Federal: Sept-15 estimate = safe harbor shortfall; the rest is due at filing.
   const fedTax = r.netFedTax, fedPaid = r.totFedPaid;
-  const fedSafe = priorFed > 0 ? Math.min(fedTax * 0.90, priorFed * factor) : fedTax * 0.90;
+  const fedSafe = priorFed > 0 ? Math.min(fedTax * 0.90, priorFed * fedFactor) : fedTax * 0.90;
   const fedOwed = Math.max(0, fedTax - fedPaid);
   const fedSep15 = Math.min(fedOwed, Math.max(0, fedSafe - fedPaid));
   const fedApril = Math.max(0, fedOwed - fedSep15);
 
   // Maryland: same split (MD waives the penalty entirely if the balance is < $500).
   const mdTax = r.md.totalTax, mdPaid = r.md.paid;
-  const mdSafe = priorMd > 0 ? Math.min(mdTax * 0.90, priorMd * factor) : mdTax * 0.90;
+  const mdSafe = priorMd > 0 ? Math.min(mdTax * 0.90, priorMd * TP_MD_SAFE_HARBOR_FACTOR) : mdTax * 0.90;
   const mdOwed = Math.max(0, mdTax - mdPaid);
   const mdSep15 = mdOwed < 500 ? 0 : Math.min(mdOwed, Math.max(0, mdSafe - mdPaid));
   const mdApril = Math.max(0, mdOwed - mdSep15);
@@ -9825,7 +9827,7 @@ function cfComputeCombinedSaleTax(tp, rentalRows) {
   const projectedPart = parts.find(p => p.projected);
   const sep15Date = estimatedTaxDueDate(projectedPart ? (loadSaleCloseoutDraft(projectedPart.prop)?.date || '') : '') || '2026-09-15';
   return {
-    parts, sep15Date, filingDate: `${CURRENT_YEAR + 1}-04-15`, agiWith: r.agi, factorPct: priorAgi > 150000 ? '110%' : '100%',
+    parts, sep15Date, filingDate: `${CURRENT_YEAR + 1}-04-15`, agiWith: r.agi, factorPct: priorAgi > TP_SAFE_HARBOR_AGI ? '110%' : '100%',
     fedSep15, fedApril, fedTax, fedPaid, fedSafe, fedOwed,
     mdSep15, mdApril, mdTax, mdPaid, mdSafe, mdOwed, priorMdSet: priorMd > 0,
   };
@@ -13337,32 +13339,32 @@ function tpUpdatePriorYear(key, val) {
 }
 
 // 2026 estimated-tax safe harbor. No underpayment penalty if withholding +
-// estimates ≥ the SMALLER of 90% of this year's tax or (100%/110% — 110% when
-// prior-year AGI > $150k) of last year's tax. Withholding counts as paid evenly,
-// so if it already clears the safe harbor no estimated payment is required and the
-// rest of the balance can wait for the return.
+// estimates ≥ the SMALLER of 90% of this year's tax or the applicable prior-year
+// target. Federal uses 100%/110% (110% when prior-year AGI > $150k); Maryland
+// always uses 110%. Withholding counts as paid evenly, so if it already clears the
+// safe harbor no estimated payment is required and the rest waits for the return.
 function tpSafeHarborHtml(r, tp) {
   const md = r.md;
   const has = v => v !== undefined && v !== null && v !== '';
   const priorAgi = has(tp.prior_year_agi) ? tpN(tp.prior_year_agi) : TP_PRIOR_YEAR_DEFAULTS.agi;
   const priorFed = has(tp.prior_year_fed) ? tpN(tp.prior_year_fed) : TP_PRIOR_YEAR_DEFAULTS.fed;
   const priorMd  = has(tp.prior_year_md)  ? tpN(tp.prior_year_md)  : TP_PRIOR_YEAR_DEFAULTS.md;
-  const factor = priorAgi > 150000 ? 1.10 : 1.00;   // IRS prior-year multiplier (MD mirrors)
-  const factorPct = priorAgi > 150000 ? '110%' : '100%';
+  const fedFactor = priorAgi > TP_SAFE_HARBOR_AGI ? 1.10 : 1.00;
+  const fedFactorPct = priorAgi > TP_SAFE_HARBOR_AGI ? '110%' : '100%';
   const py = CURRENT_YEAR - 1;
 
   const fedCur = r.netFedTax * 0.90;
-  const fedPrior = priorFed * factor;
+  const fedPrior = priorFed * fedFactor;
   const fedSafe = priorFed > 0 ? Math.min(fedCur, fedPrior) : fedCur;
-  const fedVia = (priorFed > 0 && fedPrior <= fedCur) ? `${factorPct} of ${py} tax` : `90% of ${CURRENT_YEAR} tax`;
+  const fedVia = (priorFed > 0 && fedPrior <= fedCur) ? `${fedFactorPct} of ${py} tax` : `90% of ${CURRENT_YEAR} tax`;
   const fedPaid = r.totFedPaid;
   const fedNeed = Math.max(0, fedSafe - fedPaid);
   const fedDefer = Math.max(0, Math.max(0, r.netFedTax - fedPaid) - fedNeed);
 
   const mdCur = md.totalTax * 0.90;
-  const mdPrior = priorMd * factor;
+  const mdPrior = priorMd * TP_MD_SAFE_HARBOR_FACTOR;
   const mdSafe = priorMd > 0 ? Math.min(mdCur, mdPrior) : mdCur;
-  const mdVia = (priorMd > 0 && mdPrior <= mdCur) ? `${factorPct} of ${py} tax` : `90% of ${CURRENT_YEAR} tax`;
+  const mdVia = (priorMd > 0 && mdPrior <= mdCur) ? `110% of ${py} tax` : `90% of ${CURRENT_YEAR} tax`;
   const mdPaid = md.paid;
   const mdBalance = Math.max(0, md.totalTax - mdPaid);
   const mdDeMinimis = mdBalance < 500;
@@ -13389,7 +13391,7 @@ function tpSafeHarborHtml(r, tp) {
   return `
     <div class="card-header"><div class="card-title">🛡️ ${CURRENT_YEAR} Safe Harbor — Estimated Payments</div></div>
     <div class="card-body" style="padding:.4rem 1.25rem 1rem">
-      <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.2rem">Minimum to pay in (withholding + estimates) to avoid an underpayment penalty — the rest waits for the return. Prior-year factor <strong>${factorPct}</strong> (${py} AGI ${priorAgi > 150000 ? 'over' : 'under'} $150k).</div>
+      <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.2rem">Minimum to pay in (withholding + estimates) to avoid an underpayment penalty — the rest waits for the return. Federal prior-year factor <strong>${fedFactorPct}</strong> (${py} AGI ${priorAgi > TP_SAFE_HARBOR_AGI ? 'over' : 'under'} $150k); Maryland prior-year factor <strong>110%</strong>.</div>
       ${priorInputs}
       ${block('Federal', fedSafe, fedVia, r.estPmts > 0 ? 'Withholding + estimates' : 'Projected withholding', fedPaid, fedNeed, fedDefer)}
       ${block('Maryland', mdSafe, mdVia, md.estState > 0 ? 'Withholding + estimates' : 'Projected withholding', mdPaid, mdNeed, mdDefer, mdDeMinimis ? `<div style="font-size:.7rem;color:var(--success)">Balance after withholding under $500 — no MD penalty.</div>` : (priorMd <= 0 ? `<div style="font-size:.7rem;color:var(--warning)">Enter your ${py} MD tax above to use the lower prior-year safe harbor.</div>` : ''))}

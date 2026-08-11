@@ -8938,7 +8938,10 @@ async function renderTaxPlanning() {
   const saleOptions2 = `<option value="">— Select property —</option>` + PROPERTIES.map(p => `<option value="${p}" ${tp.property_sale_2_property === p ? 'selected' : ''}>${p}</option>`).join('');
   const selectedSale2Prop = tp.property_sale_2_property || '';
   const selectedSale2 = selectedSale2Prop ? propertySaleRows[selectedSale2Prop] : null;
-  if (tpSyncImportedPropertySale(tp, 1, selectedSale) || tpSyncImportedPropertySale(tp, 2, selectedSale2)) {
+  const propertySale1Synced = tpSyncImportedPropertySale(tp, 1, selectedSale);
+  const propertySale2Synced = tpSyncImportedPropertySale(tp, 2, selectedSale2);
+  const knownProjectionInputsSynced = tpSyncKnownProjectionInputs(tp, rentalRows);
+  if (propertySale1Synced || propertySale2Synced || knownProjectionInputsSynced) {
     tpSave(tp);
   }
   const propertySaleDetails = selectedSaleProp && tp.property_sale_imported
@@ -13562,6 +13565,35 @@ function tpProjectionDepreciation(tp, rentalRows) {
   }, 0);
 }
 
+function tpProjectedRobinhoodIncome(tp) {
+  const checkingBalance = tpN(state.savings?.accounts?.robinhoodChecking) || tpN(state.cashFlow?.robinhoodChecking);
+  const throughMonth = Math.max(0, Math.min(12, Math.round(tpN(tp.projection_rh_interest_through_month))));
+  const interestMonthsRemaining = 12 - throughMonth;
+  const checkingFutureInterest = checkingBalance * (tpN(tp.projection_rh_apy) / 100) * (interestMonthsRemaining / 12);
+  const projectedInterest = tpN(tp.projection_rh_checking_interest_ytd) +
+    tpN(tp.projection_rh_brokerage_interest_final) + checkingFutureInterest;
+  return { checkingBalance, throughMonth, interestMonthsRemaining, projectedInterest };
+}
+
+function tpSyncKnownProjectionInputs(tp, rentalRows) {
+  if (CURRENT_YEAR !== 2026 || tp.projection_assumptions_version !== 2) return false;
+  const robinhood = tpProjectedRobinhoodIncome(tp);
+  const projectedDepreciation = tpProjectionDepreciation(tp, rentalRows);
+  const updates = {
+    rh_int: robinhood.projectedInterest,
+    rh_div: tpN(tp.projection_rh_dividends_final)
+  };
+  if (projectedDepreciation > 0) updates.rental_depr = projectedDepreciation;
+
+  let changed = false;
+  for (const [key, value] of Object.entries(updates)) {
+    if (Math.abs(tpN(tp[key]) - value) < 0.005) continue;
+    tp[key] = value;
+    changed = true;
+  }
+  return changed;
+}
+
 function tpYearEndProjection(tp, r, rentalRows) {
   const fmgTarget = tpN(tp.projection_fmg_full_year);
   const fmgRemaining = Math.max(0, fmgTarget - tpN(tp.fmg));
@@ -13582,12 +13614,9 @@ function tpYearEndProjection(tp, r, rentalRows) {
   const projectedDepreciation = tpProjectionDepreciation(tp, rentalRows);
   const depreciationAgiImpact = r.rentalDepr - projectedDepreciation;
 
-  const checkingBalance = tpN(state.savings?.accounts?.robinhoodChecking) || tpN(state.cashFlow?.robinhoodChecking);
-  const throughMonth = Math.max(0, Math.min(12, Math.round(tpN(tp.projection_rh_interest_through_month))));
-  const interestMonthsRemaining = 12 - throughMonth;
-  const checkingFutureInterest = checkingBalance * (tpN(tp.projection_rh_apy) / 100) * (interestMonthsRemaining / 12);
-  const projectedRhInterest = tpN(tp.projection_rh_checking_interest_ytd) +
-    tpN(tp.projection_rh_brokerage_interest_final) + checkingFutureInterest;
+  const robinhood = tpProjectedRobinhoodIncome(tp);
+  const { checkingBalance, throughMonth, interestMonthsRemaining } = robinhood;
+  const projectedRhInterest = robinhood.projectedInterest;
   const rhInterestImpact = projectedRhInterest - tpN(tp.rh_int);
   const rhDividendImpact = tpN(tp.projection_rh_dividends_final) - tpN(tp.rh_div);
 

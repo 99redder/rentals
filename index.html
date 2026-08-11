@@ -6440,7 +6440,8 @@ function tpCalc(tp, rentalRows) {
 
   // Above-the-line adjustments
   const iraAdj     = Math.min(tpN(tp.ira), TP_IRA_LIMIT);
-  const adjustments = iraAdj + halfSeTax;
+  const solo401kAdj = Math.max(0, tpN(tp.fmg_solo_401k));
+  const adjustments = iraAdj + solo401kAdj + halfSeTax;
   const agi         = Math.max(0, grossIncome - adjustments);
   // MAGI: the phase-out rules watched by this tab define MAGI as AGI plus
   // add-backs. With no foreign-earned-income-exclusion or tax-exempt-interest
@@ -6450,7 +6451,10 @@ function tpCalc(tp, rentalRows) {
 
   // Deductions
   const stdDed  = tpN(tp.std_ded) || TP_STD_DEDUCTION;
-  const qbiBase = Math.max(0, businessInc - halfSeTax);
+  // Qualified-plan contributions attributable to the business also reduce QBI
+  // even though FMG correctly records them as owner equity rather than a
+  // Schedule C expense (Form 8995 instructions, Determining Your QBI).
+  const qbiBase = Math.max(0, businessInc - halfSeTax - solo401kAdj);
   // QBI is the LESSER of 20% of qualified business income and 20% of (taxable
   // income before QBI − net capital gain). Net capital gain here = net LT gains +
   // §1250 recapture; large sale gains can make this income cap bind and shrink the
@@ -6503,7 +6507,7 @@ function tpCalc(tp, rentalRows) {
     wages, businessInc, rentalNet, rentalDepr, rentalTaxInc,
     interest, dividends, cryptoInc, stGains, ltGains, propertySaleTaxableGain,
     propertySaleDepRecapture, depRecaptureTaxable, depRecaptureTax,
-    seTax, halfSeTax, grossIncome, iraAdj, adjustments, agi, magi,
+    seTax, halfSeTax, grossIncome, iraAdj, solo401kAdj, adjustments, agi, magi,
     stdDed, qbiDed, totDed, taxInc, ordinaryTaxable, ltcgTaxable,
     ordTax, ltcgTax, nii, niit, addlMedicare, grossFedTax, ctcRaw, ctcPhaseout, ctc, netFedTax,
     fedWithheld, estPmts, totFedPaid, fedOwed, md
@@ -9091,6 +9095,7 @@ async function renderTaxPlanning() {
         <div class="tp-group">FMG — LLC (read-only sync)</div>
         <div class="tp-fetch-row" style="margin-bottom:.25rem">
           ${tpFld('tp-fmg','Net Income ($)',tp.fmg)}
+          ${tpFld('tp-fmg-solo-401k','Solo 401(k) Contributions ($)',tp.fmg_solo_401k,true)}
         </div>
         <div id="tp-fmg-fetched" class="tp-note" style="font-style:italic">${tpFetchedLabel(tp.fmg_fetched_at)}</div>
         <div id="tp-fmg-msg" class="tp-note"></div>
@@ -9101,7 +9106,7 @@ async function renderTaxPlanning() {
         </div>
         <div id="tp-esai-fetched" class="tp-note" style="font-style:italic">${tpFetchedLabel(tp.esai_fetched_at)}</div>
         <div id="tp-esai-msg" class="tp-note"></div>
-        <div class="tp-note" style="margin-top:.5rem">Totals synchronize automatically every day at 6:00 AM Eastern. The integration can read annual totals only and cannot access transaction details or make changes.</div>
+        <div class="tp-note" style="margin-top:.5rem">Totals synchronize automatically every day at 6:00 AM Eastern. FMG Solo 401(k) contributions reduce AGI and QBI here, but remain owner-equity transfers rather than Schedule C expenses in FMG. The integration can read annual totals only and cannot access transaction details or make changes.</div>
         <div class="tp-note" style="margin-top:.5rem">SE tax (15.3%) applies automatically. Half is deducted above-the-line.</div>
       </div>
     </div>
@@ -13029,6 +13034,7 @@ function tpReadForm() {
   if (!tp.wife_locked) { tp.wife_gross = g('tp-wife-gross'); tp.wife_fed = g('tp-wife-fed'); tp.wife_state = g('tp-wife-state'); }
   if (!tp.fmg_sp_locked) tp.fmg_sp = g('tp-fmg-sp');
   tp.fmg = g('tp-fmg'); tp.esai = g('tp-esai');
+  tp.fmg_solo_401k = g('tp-fmg-solo-401k');
   if (!tp.treasury_locked) tp.treasury_int = g('tp-treasury-int');
   tp.rh_div = g('tp-rh-div'); tp.rh_int = g('tp-rh-int');
   tp.ibkr_int = g('tp-ibkr-int'); tp.ally_int = g('tp-ally-int'); tp.ibkr_div = g('tp-ibkr-div');
@@ -13763,6 +13769,7 @@ function tpUpdateResults(tp) {
 
       ${sec('Adjustments')}
       ${r.iraAdj > 0 ? row('Traditional IRA', r.iraAdj, 'in', true) : ''}
+      ${r.solo401kAdj > 0 ? row('FMG Solo 401(k)', r.solo401kAdj, 'in', true) : ''}
       ${r.halfSeTax > 0 ? row('½ Self-Employment Tax', r.halfSeTax, 'in', true) : ''}
       ${row('AGI', r.agi, 'sub')}
       ${Math.abs(r.magi - r.agi) >= 0.005 ? row('MAGI (AGI + IRA deduction, for Roth limits)', r.magi, 'in') : ''}
@@ -13855,10 +13862,18 @@ async function tpFetchBusinessIncome(button) {
       const dollars = Number(result.netCents || 0) / 100;
       const input = document.getElementById(inputId);
       if (input) input.value = dollars.toFixed(2);
+      if (key === 'fmg') {
+        const retirementDollars = Number(result.ownerRetirementContributionCents || 0) / 100;
+        const retirementInput = document.getElementById('tp-fmg-solo-401k');
+        if (retirementInput) retirementInput.value = retirementDollars.toFixed(2);
+        tp.fmg_solo_401k = retirementDollars;
+      }
       tp[`${key}_fetched_at`] = result.fetchedAt;
       const fetchedEl = document.getElementById(fetchedId);
       if (fetchedEl) fetchedEl.textContent = tpFetchedLabel(result.fetchedAt);
-      if (msgEl) msgEl.textContent = `Synchronized: ${fmt(incomeCents/100)} income − ${fmt(expenseCents/100)} expenses = ${fmt(dollars)} net`;
+      if (msgEl) msgEl.textContent = key === 'fmg'
+        ? `Synchronized: ${fmt(incomeCents/100)} income − ${fmt(expenseCents/100)} expenses = ${fmt(dollars)} net; ${fmt(Number(result.ownerRetirementContributionCents || 0)/100)} Solo 401(k)`
+        : `Synchronized: ${fmt(incomeCents/100)} income − ${fmt(expenseCents/100)} expenses = ${fmt(dollars)} net`;
       return true;
     };
     const fmgChanged = applyResult('fmg', 'tp-fmg', 'tp-fmg-fetched', fmgMsg, 'FMG');

@@ -528,7 +528,13 @@ async function fetchBusinessTaxSummary(env, sourceKey, year) {
   if (![incomeCents, expenseCents, netCents].every(Number.isFinite)) {
     throw new Error(`${source.label} returned an invalid tax summary`);
   }
-  return { ok: true, incomeCents, expenseCents, netCents, fetchedAt: new Date().toISOString() };
+  const ownerRetirementContributionCents = sourceKey === 'fmg'
+    ? Number(payload.ownerRetirementContributionCents)
+    : 0;
+  if (!Number.isFinite(ownerRetirementContributionCents)) {
+    throw new Error(`${source.label} returned an invalid owner-retirement total`);
+  }
+  return { ok: true, incomeCents, expenseCents, netCents, ownerRetirementContributionCents, fetchedAt: new Date().toISOString() };
 }
 
 async function refreshBusinessIncome(env, year) {
@@ -549,6 +555,7 @@ async function refreshBusinessIncome(env, year) {
     const data = await env.RENTALS.get(`tax_planning:${validYear}`, 'json') || {};
     if (result.fmg.ok) {
       data.fmg = result.fmg.netCents / 100;
+      data.fmg_solo_401k = result.fmg.ownerRetirementContributionCents / 100;
       data.fmg_fetched_at = result.fmg.fetchedAt;
     }
     if (result.esai.ok) {

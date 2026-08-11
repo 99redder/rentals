@@ -2344,6 +2344,13 @@ function loadSaleCloseoutDraft(prop = state.currentProperty) {
   return state.saleCloseoutDrafts[prop] || {};
 }
 
+function propertyDepreciationDispositionDate(prop) {
+  const finalizedDate = state.data[prop]?.investment?.saleCloseout?.saleDate || '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(finalizedDate)) return finalizedDate;
+  const scheduledDate = loadSaleCloseoutDraft(prop)?.date || '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(scheduledDate) ? scheduledDate : null;
+}
+
 function saveSaleCloseoutDraft(prop = state.currentProperty) {
   const date = document.getElementById('sale-closeout-date')?.value || '';
   const price = parseMoney(document.getElementById('sale-closeout-price')?.value);
@@ -2945,11 +2952,12 @@ function renderDepreciationSection(prop) {
       </div>`;
   }
 
-  const disposedDate = state.data[prop].investment?.saleCloseout?.saleDate || null;
+  const disposedDate = propertyDepreciationDispositionDate(prop);
   const schedule = calcDepreciationSchedule(config.costBasis, config.placedInService, disposedDate);
   const totalDepr = schedule.length ? schedule[schedule.length - 1].cumulative : 0;
   const annualAmount = config.costBasis / 27.5;
   const remainingBasis = Math.max(0, config.costBasis - totalDepr);
+  const currentYearDeduction = schedule.find(item => item.year === CURRENT_YEAR)?.annual || 0;
 
   const rows = schedule.map(({ year, annual, cumulative }) => `
     <tr>
@@ -2992,8 +3000,10 @@ function renderDepreciationSection(prop) {
           <div class="tax-row"><span>Structure Cost Basis</span><span>${fmt(config.costBasis)}</span></div>
           <div class="tax-row"><span>Placed In Service</span><span>${fmtDate(config.placedInService)}</span></div>
           ${config.purchaseDate ? `<div class="tax-row"><span>Purchase Date</span><span>${fmtDate(config.purchaseDate)}</span></div>` : ''}
-          <div class="tax-row"><span>Annual Deduction</span><span>${fmt(annualAmount)}</span></div>
-          <div class="tax-row"><span>Years Completed</span><span>${schedule.length}</span></div>
+          ${disposedDate ? `<div class="tax-row"><span>${closed ? 'Disposed' : 'Scheduled Disposition'}</span><span>${fmtDate(disposedDate)}</span></div>` : ''}
+          <div class="tax-row"><span>Full-Year Deduction</span><span>${fmt(annualAmount)}</span></div>
+          <div class="tax-row"><span>${CURRENT_YEAR} Deduction${disposedDate ? ' (mid-month)' : ''}</span><span>${fmt(currentYearDeduction)}</span></div>
+          <div class="tax-row"><span>Schedule Years Shown</span><span>${schedule.length}</span></div>
           <div class="tax-row subtotal"><span>Total Depreciation Taken</span><span>${fmt(totalDepr)}</span></div>
           <div class="tax-row" style="margin-top:0.5rem"><span>Remaining Depreciable Basis</span><span>${fmt(remainingBasis)}</span></div>
         </div>
@@ -3070,6 +3080,7 @@ function closeDepreciationEdit() {
 async function renderHistorical() {
   const prop = state.currentProperty;
   await ensureLoaded(prop, 'investment');
+  await ensureSaleCloseoutDraftLoaded(prop);
   await ensureLoaded(prop, 'summaries');
   await ensureLoaded(prop, 'depreciation');
 
@@ -4840,6 +4851,7 @@ async function renderTaxSummary() {
     ensureLoaded(prop, 'investment'),
     ensureLoaded(prop, 'depreciation'),
   ]);
+  await ensureSaleCloseoutDraftLoaded(prop);
 
   const yearTxns = state.data[prop].transactions.filter(t => t.date.startsWith(String(CURRENT_YEAR)));
 
@@ -4875,11 +4887,17 @@ async function renderTaxSummary() {
   const inv = state.data[prop].investment || {};
   const sc = inv.saleCloseout || null;
   const isSold = !!sc?.closedAt;
+  const depreciationConfig = state.data[prop].depreciation;
+  const depreciationDispositionDate = propertyDepreciationDispositionDate(prop);
+  const depreciationSchedule = depreciationConfig
+    ? calcDepreciationSchedule(depreciationConfig.costBasis, depreciationConfig.placedInService, depreciationDispositionDate)
+    : [];
+  const currentYearDepreciation = depreciationSchedule.find(item => item.year === CURRENT_YEAR)?.annual || 0;
+  const netAfterDepreciation = net - currentYearDepreciation;
   let taxCheatCard = '';
   if (isSold) {
-    const dc = state.data[prop].depreciation;
-    const acquired = inv.purchaseDate || dc?.purchaseDate || null;
-    const placedInService = dc?.placedInService || null;
+    const acquired = inv.purchaseDate || depreciationConfig?.purchaseDate || null;
+    const placedInService = depreciationConfig?.placedInService || null;
     const amountRealized = sc.grossAfterClosing;                 // sale price − selling costs
     const accumDepr = sc.cumulativeDepreciation || 0;
     const adjBasis = sc.totalCapitalInvested - accumDepr;
@@ -4889,11 +4907,7 @@ async function renderTaxSummary() {
     // Disposition-year depreciation: straight-line 27.5yr, mid-month convention
     // in the month of sale (months allowed = saleMonth − 0.5). Not a ledger
     // transaction, so it is not in the Expenses table above.
-    let finalYearDepr = 0;
-    if (dc?.costBasis) {
-      const saleMonth = parseInt(String(sc.saleDate || '').slice(5, 7), 10) || 12;
-      finalYearDepr = Math.round((dc.costBasis / 27.5) * ((saleMonth - 0.5) / 12) * 100) / 100;
-    }
+    const finalYearDepr = currentYearDepreciation;
     const stateLabel = SALE_STATE_NAMES[sc.saleState] || sc.saleState || '';
 
     const sec = t => `<tr><td colspan="2" style="padding:.55rem .75rem;background:var(--surface2);font-weight:700;font-size:.8rem;border-top:1px solid var(--border);text-transform:uppercase;letter-spacing:.02em;color:var(--text-muted)">${t}</td></tr>`;
@@ -4937,7 +4951,7 @@ async function renderTaxSummary() {
             ${tr('Depreciation deduction (partial year, mid-month — est.)', fmt(finalYearDepr), { color: 'var(--danger)' })}
           </table>
           <div style="padding:.7rem .9rem;border-top:2px solid var(--border);color:var(--text-muted);font-size:.8rem;line-height:1.5">
-            <strong>Reminders:</strong> The Income / Expenses / Net below are this year's Schedule E rental operations — add the depreciation deduction above on top of them.
+            <strong>Reminders:</strong> The Income / Expenses / Net below are this year's transaction-ledger rental operations. The separate depreciation adjustment below converts that result to income after depreciation.
             No §121 exclusion — it was a rental at sale. Depreciation recapture is taxed up to 25% (unrecaptured §1250).
             <strong>NIIT (3.8%)</strong> likely applies to the gain over the $250k MFJ MAGI threshold and is <em>not</em> in the estimate above (≈ ${fmt(totalGain * 0.038)}).
             Expenses include the <strong>$250 move-out cleaning placeholder</strong> (pending final bill). Selling-expense line-by-line detail is on the Investment Return tab's Final Sale Closeout card.
@@ -4978,6 +4992,15 @@ async function renderTaxSummary() {
           <span>Net Income</span>
           <span class="tax-amt ${netClass}">${net < 0 ? '−' : ''}${fmt(Math.abs(net))}</span>
         </div>
+        ${currentYearDepreciation > 0 ? `
+        <div class="tax-row" style="margin-top:.55rem">
+          <span>Less ${CURRENT_YEAR} Depreciation${depreciationDispositionDate ? ` (mid-month through ${fmtDate(depreciationDispositionDate)})` : ''}</span>
+          <span class="tax-amt amount-expense">−${fmt(currentYearDepreciation)}</span>
+        </div>
+        <div class="tax-row net">
+          <span>Rental Income After Depreciation</span>
+          <span class="tax-amt ${netAfterDepreciation >= 0 ? 'positive' : 'negative'}">${netAfterDepreciation < 0 ? '−' : ''}${fmt(Math.abs(netAfterDepreciation))}</span>
+        </div>` : ''}
       </div>
     </div>
   `;
@@ -8865,7 +8888,7 @@ async function renderTaxPlanning() {
   const rentalRows = rentalPropsOnly.map(prop => {
     const { income, expenses, net } = currentYearRentalOperatingTotals(prop);
     const dc = state.data[prop].depreciation;
-    const disposedDate = state.data[prop].investment?.saleCloseout?.saleDate || null;
+    const disposedDate = propertyDepreciationDispositionDate(prop);
     const deprAmt = dc ? (calcDepreciationSchedule(dc.costBasis, dc.placedInService, disposedDate).find(r => r.year === CURRENT_YEAR)?.annual || 0) : 0;
     return { prop, income, expenses, net, deprAmt };
   });
@@ -9791,7 +9814,7 @@ async function cfComputeAgi() {
     const rentalRows = rentalProps.map(prop => {
       const { income, expenses, net } = currentYearRentalOperatingTotals(prop);
       const dc = state.data[prop].depreciation;
-      const disposedDate = state.data[prop].investment?.saleCloseout?.saleDate || null;
+      const disposedDate = propertyDepreciationDispositionDate(prop);
       const deprAmt = dc ? (calcDepreciationSchedule(dc.costBasis, dc.placedInService, disposedDate).find(r => r.year === CURRENT_YEAR)?.annual || 0) : 0;
       return { prop, income, expenses, net, deprAmt };
     });
@@ -13553,12 +13576,7 @@ function tpProjectionDepreciation(tp, rentalRows) {
     const prop = row.prop;
     const config = state.data[prop]?.depreciation;
     if (!config) return sum;
-    const closeout = state.data[prop]?.investment?.saleCloseout;
-    let dispositionDate = closeout?.saleDate || null;
-    for (const prefix of ['property_sale', 'property_sale_2']) {
-      if (!tp[`${prefix}_imported`] || tp[`${prefix}_property`] !== prop) continue;
-      dispositionDate = dispositionDate || loadSaleCloseoutDraft(prop)?.date || null;
-    }
+    const dispositionDate = propertyDepreciationDispositionDate(prop);
     const annual = calcDepreciationSchedule(config.costBasis, config.placedInService, dispositionDate)
       .find(item => item.year === CURRENT_YEAR)?.annual || 0;
     return sum + annual;

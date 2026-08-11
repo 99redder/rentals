@@ -8842,11 +8842,13 @@ async function renderTaxPlanning() {
   // Load all rental transaction + depreciation data, plus investment sale data for the property-sale capital gains worksheet.
   const rentalPropsOnly = PROPERTIES.filter(p => !PRIMARY_PROPERTIES.has(p));
   await Promise.all(PROPERTIES.flatMap(p => {
-    const keys = ['transactions', 'summaries', 'depreciation', 'investment'];
+    const keys = ['transactions', 'summaries', 'defaults', 'depreciation', 'investment'];
     if (MAINTENANCE_BASIS_PROPERTIES.has(p)) keys.push('maintenance');
     return keys.map(k => ensureLoaded(p, k));
   }));
   await Promise.all(PROPERTIES.map(prop => ensureSaleCloseoutDraftLoaded(prop)));
+  await loadSavings().catch(() => {});
+  await loadCashFlow().catch(() => {});
 
   const rentalRows = rentalPropsOnly.map(prop => {
     const { income, expenses, net } = currentYearRentalOperatingTotals(prop);
@@ -8869,6 +8871,31 @@ async function renderTaxPlanning() {
     tp.megan_rh_st = CURRENT_YEAR === 2026 ? -273.90 : 0;
     tpSave(tp);
   }
+  const current446Taxes = tpProjectionCategoryTotal('446BB', 'taxes');
+  const projectionDefaults = CURRENT_YEAR === 2026 ? {
+    projection_fmg_full_year: 8704.80,
+    projection_446_tax_full_year: 1582.08,
+    projection_rh_checking_interest_ytd: 1282.48,
+    projection_rh_brokerage_interest_final: 96.79,
+    projection_rh_dividends_final: 56.90,
+    projection_rh_apy: 3.5,
+    projection_rh_interest_through_month: 7
+  } : {
+    projection_fmg_full_year: tpN(tp.fmg),
+    projection_446_tax_full_year: current446Taxes,
+    projection_rh_checking_interest_ytd: 0,
+    projection_rh_brokerage_interest_final: 0,
+    projection_rh_dividends_final: tpN(tp.rh_div),
+    projection_rh_apy: 0,
+    projection_rh_interest_through_month: 12
+  };
+  let projectionSeeded = false;
+  for (const [key, value] of Object.entries(projectionDefaults)) {
+    if (tp[key] !== undefined) continue;
+    tp[key] = value;
+    projectionSeeded = true;
+  }
+  if (projectionSeeded) tpSave(tp);
   // Default county to Wicomico
   if (!tp.md_county) tp.md_county = 'Wicomico';
   // Seed 529 deduction default
@@ -9202,6 +9229,7 @@ async function renderTaxPlanning() {
 
   <!-- ── Right Column: Results ── -->
   <div class="tp-sticky">
+    <div class="card" id="tp-year-end-projection" style="margin-bottom:1rem"></div>
     <div class="card" id="tp-warnings" style="margin-bottom:1rem"></div>
     <div class="card" id="tp-safe-harbor" style="margin-bottom:1rem"></div>
     <div class="card" id="tp-results"></div>
@@ -11243,6 +11271,9 @@ async function startRobinhoodBalanceRefreshFor(cfg, forceRefresh = false) {
     state[cfg.loadingKey] = false;
     if (state.currentView === 'savings') _renderSavingsHtml();
     if (cfg.rerenderCashFlow && state.currentView === 'cash-flow') _renderCashFlowHtml();
+    if (cfg.rerenderCashFlow && state.currentView === 'tax-planning' && document.getElementById('tp-year-end-projection')) {
+      tpUpdateResults(tpLoadLocal());
+    }
   }
 }
 
@@ -12948,6 +12979,13 @@ function tpReadForm() {
   tp.crypto_income = g('tp-crypto-income');
   tp.crypto_st = g('tp-crypto-st'); tp.rh_st = g('tp-rh-st'); tp.megan_rh_st = g('tp-megan-rh-st'); tp.ibkr_st = g('tp-ibkr-st');
   tp.crypto_lt = g('tp-crypto-lt'); tp.rh_lt = g('tp-rh-lt'); tp.ibkr_lt = g('tp-ibkr-lt');
+  tp.projection_fmg_full_year = g('tp-proj-fmg-full-year');
+  tp.projection_446_tax_full_year = g('tp-proj-446-tax-full-year');
+  tp.projection_rh_checking_interest_ytd = g('tp-proj-rh-checking-interest-ytd');
+  tp.projection_rh_brokerage_interest_final = g('tp-proj-rh-brokerage-interest-final');
+  tp.projection_rh_dividends_final = g('tp-proj-rh-dividends-final');
+  tp.projection_rh_apy = g('tp-proj-rh-apy');
+  tp.projection_rh_interest_through_month = Math.max(0, Math.min(12, Math.round(g('tp-proj-rh-through-month'))));
   const salePropEl = document.getElementById('tp-property-sale-property');
   if (salePropEl) tp.property_sale_property = salePropEl.value || '';
   if (tp.property_sale_imported) tp.property_sale_taxable_gain = g('tp-property-sale-taxable-gain');
@@ -13429,9 +13467,166 @@ function tpSafeHarborHtml(r, tp) {
     </div>`;
 }
 
+function tpProjectionCategoryTotal(prop, category) {
+  return (state.data[prop]?.transactions || []).reduce((sum, transaction) => {
+    if (!String(transaction.date || '').startsWith(String(CURRENT_YEAR))) return sum;
+    if (transaction.type !== 'expense' || transaction.category !== category) return sum;
+    return sum + (Number(transaction.amount) || 0);
+  }, 0);
+}
+
+function tpProjectionNormalMonths(prop) {
+  const transactions = (state.data[prop]?.transactions || []).filter(transaction =>
+    transaction.type === 'income' &&
+    transaction.category === 'rent' &&
+    String(transaction.date || '').startsWith(String(CURRENT_YEAR))
+  );
+  const recordedMonths = new Set(transactions.map(transaction => Number(String(transaction.date).slice(5, 7))).filter(Boolean));
+  const latestRecordedMonth = recordedMonths.size ? Math.max(...recordedMonths) : 0;
+  const remainingMonths = [];
+  for (let month = latestRecordedMonth + 1; month <= 12; month++) {
+    if (!recordedMonths.has(month)) remainingMonths.push(month);
+  }
+  const defaultRent = tpN(state.data[prop]?.defaults?.rent);
+  const recentRent = transactions.length ? tpN(transactions[transactions.length - 1].amount) : 0;
+  const rent = defaultRent || recentRent;
+  const config = NORMAL_MONTH_CONFIG[prop] || { mgmtPct: 0, hoa: [] };
+  const management = rent * (Number(config.mgmtPct) || 0);
+  const hoa = (config.hoa || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  return { months: remainingMonths, rent, management, hoa, monthlyNet: rent - management - hoa };
+}
+
+function tpProjectionCashFlowExpense(nameMatcher) {
+  const sell = state.cashFlow?.scenarios?.sell || state.cashFlow || {};
+  return (sell.expenses || []).find(item => nameMatcher(String(item.name || '').toLowerCase())) || null;
+}
+
+function tpProjectionExpenseRecorded(prop, cashFlowItem) {
+  if (!cashFlowItem) return false;
+  const target = tpN(cashFlowItem.amount);
+  return (state.data[prop]?.transactions || []).some(transaction => {
+    if (transaction.type !== 'expense' || !String(transaction.date || '').startsWith(String(CURRENT_YEAR))) return false;
+    const description = String(transaction.description || '').toLowerCase();
+    const repairLike = transaction.category === 'repairs' || description.includes('handyman');
+    return repairLike && (description.includes('handyman') || Math.abs(tpN(transaction.amount) - target) < 1);
+  });
+}
+
+function tpProjectionDepreciation(tp, rentalRows) {
+  return (rentalRows || []).reduce((sum, row) => {
+    const prop = row.prop;
+    const config = state.data[prop]?.depreciation;
+    if (!config) return sum;
+    const closeout = state.data[prop]?.investment?.saleCloseout;
+    let dispositionDate = closeout?.saleDate || null;
+    for (const prefix of ['property_sale', 'property_sale_2']) {
+      if (!tp[`${prefix}_imported`] || tp[`${prefix}_property`] !== prop) continue;
+      dispositionDate = dispositionDate || loadSaleCloseoutDraft(prop)?.date || null;
+    }
+    const annual = calcDepreciationSchedule(config.costBasis, config.placedInService, dispositionDate)
+      .find(item => item.year === CURRENT_YEAR)?.annual || 0;
+    return sum + annual;
+  }, 0);
+}
+
+function tpYearEndProjection(tp, r, rentalRows) {
+  const fmgTarget = tpN(tp.projection_fmg_full_year);
+  const fmgRemaining = Math.max(0, fmgTarget - tpN(tp.fmg));
+  const projectedBusinessIncome = r.businessInc + fmgRemaining;
+  const projectedNetSe = Math.max(0, projectedBusinessIncome) * 0.9235;
+  const projectedSeTax = Math.min(projectedNetSe, TP_SE_SS_BASE) * 0.124 + projectedNetSe * 0.029;
+  const extraHalfSeTax = Math.max(0, projectedSeTax / 2 - r.halfSeTax);
+  const fmgAgiImpact = fmgRemaining - extraHalfSeTax;
+
+  const normal446 = tpProjectionNormalMonths('446BB');
+  const normal446Impact = normal446.monthlyNet * normal446.months.length;
+  const taxes446Current = tpProjectionCategoryTotal('446BB', 'taxes');
+  const taxes446Remaining = Math.max(0, tpN(tp.projection_446_tax_full_year) - taxes446Current);
+
+  const repair6al = tpProjectionCashFlowExpense(name => name.includes('6al') && (name.includes('handyman') || name.includes('repair')));
+  const repair6alRemaining = repair6al && !tpProjectionExpenseRecorded('6AL', repair6al) ? tpN(repair6al.amount) : 0;
+
+  const projectedDepreciation = tpProjectionDepreciation(tp, rentalRows);
+  const depreciationAgiImpact = r.rentalDepr - projectedDepreciation;
+
+  const checkingBalance = tpN(state.savings?.accounts?.robinhoodChecking) || tpN(state.cashFlow?.robinhoodChecking);
+  const throughMonth = Math.max(0, Math.min(12, Math.round(tpN(tp.projection_rh_interest_through_month))));
+  const interestMonthsRemaining = 12 - throughMonth;
+  const checkingFutureInterest = checkingBalance * (tpN(tp.projection_rh_apy) / 100) * (interestMonthsRemaining / 12);
+  const projectedRhInterest = tpN(tp.projection_rh_checking_interest_ytd) +
+    tpN(tp.projection_rh_brokerage_interest_final) + checkingFutureInterest;
+  const rhInterestImpact = projectedRhInterest - tpN(tp.rh_int);
+  const rhDividendImpact = tpN(tp.projection_rh_dividends_final) - tpN(tp.rh_div);
+
+  const adjustments = [
+    { key: 'fmg', label: 'FMG LLC remaining net profit, after extra ½ SE-tax deduction', amount: fmgAgiImpact, detail: `${fmt(fmgRemaining)} profit remaining` },
+    { key: 'rent446', label: `446BB normal months (${normal446.months.length})`, amount: normal446Impact, detail: normal446.months.length ? `${fmt(normal446.monthlyNet)} net per month` : 'All rent months recorded' },
+    { key: 'tax446', label: '446BB remaining property tax', amount: -taxes446Remaining, detail: `${fmt(taxes446Current)} recorded of ${fmt(tp.projection_446_tax_full_year)}` },
+    { key: 'repair6al', label: '6AL pending handyman repair', amount: -repair6alRemaining, detail: repair6alRemaining ? 'Linked from Cash Flow until recorded as a rental expense' : 'Already recorded or no Cash Flow item' },
+    { key: 'depreciation', label: 'Sale-year depreciation reconciliation', amount: depreciationAgiImpact, detail: `${fmt(r.rentalDepr)} entered → ${fmt(projectedDepreciation)} projected` },
+    { key: 'rhInterest', label: 'Robinhood projected interest', amount: rhInterestImpact, detail: `${fmt(projectedRhInterest)} projected from ${fmt(checkingBalance)} checking balance` },
+    { key: 'rhDividends', label: 'Robinhood projected dividends', amount: rhDividendImpact, detail: `${fmt(tp.projection_rh_dividends_final)} full-year projection` }
+  ];
+  const adjustmentTotal = adjustments.reduce((sum, item) => sum + item.amount, 0);
+  const agi = r.agi + adjustmentTotal;
+  const thresholdGap = MD_CG_SURCHARGE_AGI - agi;
+  const minimumReduction = Math.max(0, -thresholdGap);
+  const recommendedReduction = minimumReduction > 0 ? minimumReduction + 2000 : 0;
+  const surchargeBase = agi > MD_CG_SURCHARGE_AGI ? mdNetCapitalGain(tp) : 0;
+  const surcharge = surchargeBase * MD_CG_SURCHARGE_RATE;
+  return {
+    agi, thresholdGap, minimumReduction, recommendedReduction, surchargeBase, surcharge,
+    adjustmentTotal, adjustments, fmgTarget, fmgRemaining, normal446, taxes446Current,
+    repair6alRemaining, projectedDepreciation, checkingBalance, projectedRhInterest,
+    throughMonth, interestMonthsRemaining
+  };
+}
+
+function tpYearEndProjectionHtml(tp, r, rentalRows) {
+  const p = tpYearEndProjection(tp, r, rentalRows);
+  const over = p.thresholdGap < 0;
+  const color = over ? 'var(--danger)' : 'var(--success)';
+  const breakdown = p.adjustments
+    .filter(item => Math.abs(item.amount) >= 0.005 || item.key === 'rent446' || item.key === 'repair6al')
+    .map(item => `<div class="tp-row"><span><span>${escHtml(item.label)}</span><small style="display:block;color:var(--text-muted);font-size:.67rem">${escHtml(item.detail)}</small></span><span style="color:${item.amount > 0 ? 'var(--danger)' : item.amount < 0 ? 'var(--success)' : 'var(--text-muted)'}">${fmtSigned(item.amount)}</span></div>`)
+    .join('');
+  const assumptionInput = (id, label, value, suffix = '$') => `<label style="display:block;font-size:.67rem;color:var(--text-muted)">${escHtml(label)}<div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem">${suffix === '$' ? '<span>$</span>' : ''}<input id="${id}" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(value))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right">${suffix !== '$' ? `<span>${escHtml(suffix)}</span>` : ''}</div></label>`;
+  const monthOptions = Array.from({ length: 13 }, (_, month) => `<option value="${month}" ${p.throughMonth === month ? 'selected' : ''}>${month === 0 ? 'None' : new Date(2000, month - 1, 1).toLocaleString('en-US', { month: 'short' })}</option>`).join('');
+  return `
+    <div class="card-header"><div class="card-title">📈 Live ${CURRENT_YEAR} Year-End AGI Projection</div></div>
+    <div class="card-body" style="padding:.7rem 1.25rem 1rem">
+      <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-end;margin-bottom:.45rem">
+        <div><div style="font-size:.68rem;color:var(--text-muted)">Projected ending AGI</div><div style="font-size:1.45rem;font-weight:800;color:${color}">${fmt(p.agi)}</div></div>
+        <div style="text-align:right"><div style="font-size:.68rem;color:var(--text-muted)">${over ? 'Over threshold' : 'Cushion below threshold'}</div><div style="font-size:1.05rem;font-weight:750;color:${color}">${fmt(Math.abs(p.thresholdGap))}</div></div>
+      </div>
+      <div class="tp-row"><span>Current Tax Planning AGI</span><span>${fmt(r.agi)}</span></div>
+      ${breakdown}
+      <div class="tp-row sub"><span>Net future adjustments</span><span>${fmtSigned(p.adjustmentTotal)}</span></div>
+      ${over ? `<div style="margin-top:.65rem;padding:.65rem .75rem;border:1px solid color-mix(in srgb,var(--danger) 45%,var(--border));background:color-mix(in srgb,var(--danger) 8%,transparent);border-radius:var(--radius);font-size:.75rem;line-height:1.45">
+        <strong style="color:var(--danger)">Action indicated:</strong> reduce AGI by at least <strong>${fmt(p.minimumReduction)}</strong>. A ${fmt(p.recommendedReduction)} reduction provides an approximately $2,000 cushion. At the current projection, Maryland's estimated 2% capital-gain surcharge is <strong>${fmt(p.surcharge)}</strong> on a ${fmt(p.surchargeBase)} base.
+      </div>` : `<div style="margin-top:.65rem;padding:.65rem .75rem;border:1px solid color-mix(in srgb,var(--success) 45%,var(--border));background:color-mix(in srgb,var(--success) 8%,transparent);border-radius:var(--radius);font-size:.75rem"><strong style="color:var(--success)">Below the surcharge threshold</strong> by ${fmt(p.thresholdGap)}.</div>`}
+      <details style="margin-top:.7rem" open>
+        <summary style="cursor:pointer;font-size:.72rem;font-weight:700;color:var(--text-muted)">Projection assumptions</summary>
+        <div class="tp-grid-3" style="margin-top:.55rem;gap:.55rem">
+          ${assumptionInput('tp-proj-fmg-full-year','FMG LLC full-year net',tp.projection_fmg_full_year)}
+          ${assumptionInput('tp-proj-446-tax-full-year','446BB full-year property tax',tp.projection_446_tax_full_year)}
+          ${assumptionInput('tp-proj-rh-checking-interest-ytd','RH checking interest YTD',tp.projection_rh_checking_interest_ytd)}
+          ${assumptionInput('tp-proj-rh-brokerage-interest-final','RH brokerage interest final',tp.projection_rh_brokerage_interest_final)}
+          ${assumptionInput('tp-proj-rh-dividends-final','RH dividends final',tp.projection_rh_dividends_final)}
+          ${assumptionInput('tp-proj-rh-apy','RH checking APY',tp.projection_rh_apy,'%')}
+          <label style="display:block;font-size:.67rem;color:var(--text-muted)">Interest actuals through<select id="tp-proj-rh-through-month" onchange="tpChanged()" style="width:100%;margin-top:.15rem">${monthOptions}</select></label>
+        </div>
+      </details>
+      <div style="font-size:.65rem;color:var(--text-muted);margin-top:.55rem;line-height:1.4">Automatically refreshes from Tax Planning entries, FMG sync, rental transactions, sale dates, and Cash Flow's Robinhood balance and 6AL repair item. Assumptions above are saved with the ${CURRENT_YEAR} tax plan.</div>
+    </div>`;
+}
+
 function tpUpdateResults(tp) {
   if (!tp) tp = tpReadForm();
   const r = tpCalc(tp, window._tpRentalRows || []);
+
+  const projectionEl = document.getElementById('tp-year-end-projection');
+  if (projectionEl) projectionEl.innerHTML = tpYearEndProjectionHtml(tp, r, window._tpRentalRows || []);
 
   const warnEl = document.getElementById('tp-warnings');
   if (warnEl) warnEl.innerHTML = tpAgiWarningsHtml(r, tp);

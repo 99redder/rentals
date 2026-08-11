@@ -2069,7 +2069,7 @@ const MD_COUNTY_RATES = {
 // than $1.5M (TB-58); positive ST gains are taxed as ordinary income and are
 // NOT part of "net capital gain", so they don't enter the surcharge base.
 function mdNetCapitalGain(tp) {
-  const st = tpN(tp.crypto_st) + tpN(tp.rh_st) + tpN(tp.ibkr_st);
+  const st = tpN(tp.crypto_st) + tpN(tp.rh_st) + tpN(tp.megan_rh_st) + tpN(tp.ibkr_st);
   let lt = tpN(tp.crypto_lt) + tpN(tp.rh_lt) + tpN(tp.ibkr_lt);
   for (const pfx of ['property_sale', 'property_sale_2']) {
     if (!tp[`${pfx}_imported`]) continue;
@@ -6401,7 +6401,7 @@ function tpCalc(tp, rentalRows) {
   const cryptoInc    = tpN(tp.crypto_income);
   const propertySaleTaxableGain = tpN(tp.property_sale_taxable_gain) + tpN(tp.property_sale_2_taxable_gain || 0);
   const propertySaleDepRecapture = tpN(tp.property_sale_depr_recapture) + tpN(tp.property_sale_2_depr_recapture || 0);
-  const stGains      = tpN(tp.crypto_st) + tpN(tp.rh_st) + tpN(tp.ibkr_st);
+  const stGains      = tpN(tp.crypto_st) + tpN(tp.rh_st) + tpN(tp.megan_rh_st) + tpN(tp.ibkr_st);
   const ltGains      = tpN(tp.crypto_lt) + tpN(tp.rh_lt) + tpN(tp.ibkr_lt) + propertySaleTaxableGain;
 
   // Self-employment tax (only applies when net SE income is positive)
@@ -8863,6 +8863,12 @@ async function renderTaxPlanning() {
   // Seed FMG SP defaults for first load
   if (tp.fmg_sp === undefined) tp.fmg_sp = 747;
   if (tp.fmg_sp_locked === undefined) tp.fmg_sp_locked = true;
+  // Keep Megan's taxable brokerage activity separate from Chris's Robinhood
+  // figures so each account can be reconciled directly to its own statement.
+  if (tp.megan_rh_st === undefined) {
+    tp.megan_rh_st = CURRENT_YEAR === 2026 ? -273.90 : 0;
+    tpSave(tp);
+  }
   // Default county to Wicomico
   if (!tp.md_county) tp.md_county = 'Wicomico';
   // Seed 529 deduction default
@@ -9076,13 +9082,17 @@ async function renderTaxPlanning() {
         <div class="tp-group">Short-Term — taxed as ordinary income</div>
         <div class="tp-grid-3" style="margin-bottom:.75rem">
           ${tpFld('tp-crypto-st','Crypto ST Gains',tp.crypto_st)}
-          ${tpFld('tp-rh-st','RH Stock ST Gains',tp.rh_st)}
+          ${tpFld('tp-rh-st','Chris RH Stock ST Gains',tp.rh_st)}
           ${tpFld('tp-ibkr-st','IBKR Stock ST Gains',tp.ibkr_st)}
+        </div>
+        <div class="tp-group">Megan — Taxable Robinhood Account</div>
+        <div class="tp-grid-3" style="margin-bottom:.75rem">
+          ${tpFld('tp-megan-rh-st','Megan RH Stock ST Gains / Losses',tp.megan_rh_st)}
         </div>
         <div class="tp-group">Long-Term — preferential rates (0% / 15% / 20%)</div>
         <div class="tp-grid-3">
           ${tpFld('tp-crypto-lt','Crypto LT Gains',tp.crypto_lt)}
-          ${tpFld('tp-rh-lt','RH Stock LT Gains',tp.rh_lt)}
+          ${tpFld('tp-rh-lt','Chris RH Stock LT Gains',tp.rh_lt)}
           ${tpFld('tp-ibkr-lt','IBKR Stock LT Gains',tp.ibkr_lt)}
         </div>
 
@@ -12936,7 +12946,7 @@ function tpReadForm() {
   tp.rh_div = g('tp-rh-div'); tp.rh_int = g('tp-rh-int');
   tp.ibkr_int = g('tp-ibkr-int'); tp.ally_int = g('tp-ally-int'); tp.ibkr_div = g('tp-ibkr-div');
   tp.crypto_income = g('tp-crypto-income');
-  tp.crypto_st = g('tp-crypto-st'); tp.rh_st = g('tp-rh-st'); tp.ibkr_st = g('tp-ibkr-st');
+  tp.crypto_st = g('tp-crypto-st'); tp.rh_st = g('tp-rh-st'); tp.megan_rh_st = g('tp-megan-rh-st'); tp.ibkr_st = g('tp-ibkr-st');
   tp.crypto_lt = g('tp-crypto-lt'); tp.rh_lt = g('tp-rh-lt'); tp.ibkr_lt = g('tp-ibkr-lt');
   const salePropEl = document.getElementById('tp-property-sale-property');
   if (salePropEl) tp.property_sale_property = salePropEl.value || '';
@@ -13459,7 +13469,7 @@ function tpUpdateResults(tp) {
       ${r.rentalNet !== 0 ? row('Rental Net', r.rentalNet, 'in') : ''}
       ${r.rentalDepr > 0 ? row('Less Depreciation', r.rentalDepr, 'in', true) : ''}
       ${row('Interest & Dividends', r.interest + r.dividends + r.cryptoInc, 'in')}
-      ${r.stGains !== 0 ? row('ST Capital Gains', r.stGains, 'in') : ''}
+      ${r.stGains !== 0 ? rowSigned('Total ST Capital Gains/Losses', r.stGains, r.stGains < 0 ? 'in amount-expense' : 'in') : ''}
       ${r.propertySaleTaxableGain !== 0 ? rowSigned(`Property Sale LT Gain/Loss (${propertySaleLabel})`, r.propertySaleTaxableGain, r.propertySaleTaxableGain < 0 ? 'in amount-expense' : 'in') : ''}
       ${r.propertySaleDepRecapture > 0 ? row(`Property Depreciation Recapture (${propertySaleLabel})`, r.propertySaleDepRecapture, 'in') : ''}
       ${r.ltGains !== 0 ? rowSigned('Total LT Capital Gains/Losses', r.ltGains, r.ltGains < 0 ? 'in amount-expense' : 'in') : ''}

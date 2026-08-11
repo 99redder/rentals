@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6 Alicia Street — Offer Comparison</title>
+<style>
+  /* ── Palette ───────────────────────────────────────────────────────────── */
+  :root {
+    --bg:      #0f1419;
+    --panel:   #1a2029;
+    --border:  #2a323d;
+    --text:    #e6ebf0;
+    --muted:   #8a97a6;
+    --green:   #4ade80;
+    --amber:   #f0b429;
+    --red:     #f0625d;
+    --green-tint: rgba(74, 222, 128, 0.08);
+    --green-head: rgba(74, 222, 128, 0.16);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 24px 16px 48px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1100px; margin: 0 auto; }
+
+  h1 {
+    font-size: clamp(20px, 4vw, 28px);
+    margin: 0 0 4px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0 0 24px;
+  }
+
+  /* ── Table ─────────────────────────────────────────────────────────────── */
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 640px;
+    font-size: 14px;
+  }
+
+  th, td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  /* Sticky header row */
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--panel);
+    font-weight: 600;
+    border-bottom: 2px solid var(--border);
+  }
+
+  /* Sticky first column (attribute labels) */
+  th.row-label, td.row-label {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--panel);
+    color: var(--muted);
+    font-weight: 500;
+    white-space: normal;
+    min-width: 130px;
+  }
+  /* Top-left corner cell must stack above both sticky axes */
+  thead th.row-label { z-index: 4; }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Leader column highlight */
+  td.leader, th.leader { background: var(--green-tint); }
+  thead th.leader {
+    background: var(--green-head);
+    color: var(--green);
+  }
+  .leader-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--green);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  .offer-name { font-weight: 700; font-size: 15px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .strong-net { color: var(--green); font-weight: 600; }
+
+  /* ── Pill badges ───────────────────────────────────────────────────────── */
+  .pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .pill.green { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+  .pill.amber { background: rgba(240, 180, 41, 0.15);  color: var(--amber); }
+  .pill.red   { background: rgba(240, 98, 93, 0.15);   color: var(--red); }
+
+  /* ── Highlight chips ───────────────────────────────────────────────────── */
+  .highlights {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 16px 0 0;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    font-size: 13px;
+  }
+  .chip b { color: var(--text); }
+  .chip .lbl { color: var(--muted); }
+
+  /* ── Footnotes ─────────────────────────────────────────────────────────── */
+  .footnotes {
+    margin-top: 28px;
+    padding: 18px 20px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .footnotes h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 0 0 12px;
+    font-weight: 600;
+  }
+  .footnotes ol { margin: 0; padding-left: 20px; }
+  .footnotes li { margin-bottom: 10px; font-size: 14px; color: var(--text); }
+  .footnotes li:last-child { margin-bottom: 0; }
+  .footnotes b { color: var(--green); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>6 Alicia Street, Somersworth NH — Offer Comparison</h1>
+  <p class="subtitle" id="subtitle"></p>
+
+  <div class="table-scroll">
+    <table id="offer-table"></table>
+  </div>
+
+  <div class="highlights" id="highlights"></div>
+
+  <div class="footnotes">
+    <h2>Footnotes</h2>
+    <ol>
+      <li><b>Vezeau net is conditional.</b> The ~$349,850 gross / ~$341,100 net assumes the
+        escalation clause triggers. If it does not, the offer falls back to a base of
+        $330,000 (~$321,750 net).</li>
+      <li><b>Morans "info-only" inspections are not a shield.</b> Info-only inspections do
+        not stop FHA-appraiser-required repairs, which can still be mandated as a condition
+        of the loan.</li>
+      <li><b>The core trade-off.</b> Vezeau nets roughly <b>$17,700 more</b> than Fisher, but
+        Fisher is a <b>verified 33%-down</b> buyer where appraisal or financing problems can't
+        easily kill the deal — certainty vs. top-line dollars.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  OFFER DATA — edit here. Add a new offer by copying one object and changing
+//  the values; a new column renders automatically. Set leader:true on exactly
+//  one offer to highlight its column.
+// ─────────────────────────────────────────────────────────────────────────────
+const OFFERS = [
+  {
+    name: 'Baroudi',
+    gross: '$345,000',
+    buyerFee: '3% (~$10.4k)',
+    netToYou: '~$334,650',
+    financing: 'Conventional',
+    downLtv: '6.25% down',
+    preApproval: 'Stale/wrong property',
+    apprTarget: '$345k',
+    apprRisk: 'Hard out',
+    inspections: 'Waived',
+    earnest: '$2,500',
+    deed: 'Warranty',
+    close: '9/16',
+    certainty: 'Mid',
+    leader: false,
+  },
+  {
+    name: 'Morans',
+    gross: '$345,000',
+    buyerFee: '2% (~$6.9k)',
+    netToYou: '~$338,100',
+    financing: 'FHA',
+    downLtv: '3.5% down',
+    preApproval: 'None',
+    apprTarget: '$345k',
+    apprRisk: 'FHA + value sticks',
+    inspections: 'Info-only*',
+    earnest: '$5,000',
+    deed: 'QuitClaim',
+    close: '9/29',
+    certainty: 'Low',
+    leader: false,
+  },
+  {
+    name: 'Vezeau',
+    gross: '~$349,850*',
+    buyerFee: '2.5% (~$8.75k)',
+    netToYou: '~$341,100*',
+    financing: 'Conventional',
+    downLtv: '5% down',
+    preApproval: 'None',
+    apprTarget: '~$350k',
+    apprRisk: 'Highest, thin cushion',
+    inspections: 'Live (gen/sewer/radon)',
+    earnest: '$6,000',
+    deed: 'Warranty',
+    close: '9/10',
+    certainty: 'Mid',
+    leader: false,
+  },
+  {
+    name: 'Fisher',
+    gross: '$330,000',
+    buyerFee: '2% (~$6.6k)',
+    netToYou: '~$323,400',
+    financing: 'Conventional',
+    downLtv: '33% down',
+    preApproval: 'Verified',
+    apprTarget: '$330k (lowest)',
+    apprRisk: 'Minimal',
+    inspections: 'Waived',
+    earnest: '$5,000',
+    deed: 'Warranty',
+    close: '8/31',
+    certainty: 'Highest',
+    leader: true,
+  },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ROW CONFIG — the left-hand attribute labels, defined once. `key` maps to a
+//  field on each offer; `badge:true` renders the value as a colored pill.
+// ─────────────────────────────────────────────────────────────────────────────
+const ROWS = [
+  { key: 'gross',       label: 'Gross Price' },
+  { key: 'buyerFee',    label: 'Buyer-Broker Fee' },
+  { key: 'netToYou',    label: 'Net to You', net: true },
+  { key: 'financing',   label: 'Financing' },
+  { key: 'downLtv',     label: 'Down / LTV' },
+  { key: 'preApproval', label: 'Pre-Approval', badge: true },
+  { key: 'apprTarget',  label: 'Appraisal Target' },
+  { key: 'apprRisk',    label: 'Appraisal Risk', badge: true },
+  { key: 'inspections', label: 'Inspections', badge: true },
+  { key: 'earnest',     label: 'Earnest Money' },
+  { key: 'deed',        label: 'Deed Type' },
+  { key: 'close',       label: 'Close Date' },
+  { key: 'certainty',   label: 'Certainty', badge: true },
+];
+
+const LAST_UPDATED = 'August 10, 2026';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Badge sentiment — maps a short status string to green (strong) / amber
+//  (caution) / red (weak). Uses explicit phrase matches first, then keyword
+//  heuristics, so new/edited values still get a sensible color.
+// ─────────────────────────────────────────────────────────────────────────────
+function badgeClass(value) {
+  const v = String(value).toLowerCase();
+
+  const green = ['verified', 'minimal', 'highest', 'waived', 'strong', 'clean'];
+  const red   = ['none', 'stale', 'wrong', 'hard out', 'low', 'weak', 'thin cushion'];
+  const amber = ['mid', 'info-only', 'live', 'fha', 'sticks', 'caution', 'radon', 'sewer'];
+
+  // Red wins over green so "Highest, thin cushion" (weak) isn't mis-flagged
+  // strong by the "highest" keyword, which is only strong for certainty.
+  if (red.some(k => v.includes(k)))   return 'red';
+  if (green.some(k => v.includes(k))) return 'green';
+  if (amber.some(k => v.includes(k))) return 'amber';
+  return 'amber';
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+  ));
+}
+
+function cell(row, offer) {
+  const raw = offer[row.key];
+  if (row.badge) {
+    return `<span class="pill ${badgeClass(raw)}">${esc(raw)}</span>`;
+  }
+  if (row.net) {
+    return `<span class="num strong-net">${esc(raw)}</span>`;
+  }
+  return `<span class="num">${esc(raw)}</span>`;
+}
+
+function render() {
+  document.getElementById('subtitle').textContent =
+    `Last updated ${LAST_UPDATED} · Net figures are after buyer-broker fee, before listing commission.`;
+
+  // Header row: blank corner + one column per offer.
+  let html = '<thead><tr>';
+  html += '<th class="row-label">&nbsp;</th>';
+  OFFERS.forEach(o => {
+    const cls = o.leader ? ' leader' : '';
+    const tag = o.leader ? '<span class="leader-tag">Leader</span>' : '';
+    html += `<th class="${cls.trim()}"><span class="offer-name">${esc(o.name)}</span>${tag}</th>`;
+  });
+  html += '</tr></thead>';
+
+  // One body row per attribute.
+  html += '<tbody>';
+  ROWS.forEach(row => {
+    html += '<tr>';
+    html += `<td class="row-label">${esc(row.label)}</td>`;
+    OFFERS.forEach(o => {
+      const cls = o.leader ? ' leader' : '';
+      html += `<td class="${cls.trim()}">${cell(row, o)}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+
+  document.getElementById('offer-table').innerHTML = html;
+
+  renderHighlights();
+}
+
+// Small "highest net / earliest close" indicator chips.
+function renderHighlights() {
+  const money = s => parseFloat(String(s).replace(/[^0-9.]/g, '')) || 0;
+  const dayOf = s => {
+    const m = String(s).match(/(\d+)\/(\d+)/);
+    return m ? new Date(2026, +m[1] - 1, +m[2]).getTime() : Infinity;
+  };
+
+  let bestNet = OFFERS[0], earliest = OFFERS[0];
+  OFFERS.forEach(o => {
+    if (money(o.netToYou) > money(bestNet.netToYou)) bestNet = o;
+    if (dayOf(o.close) < dayOf(earliest.close))      earliest = o;
+  });
+
+  document.getElementById('highlights').innerHTML =
+    `<div class="chip"><span class="lbl">💰 Highest net</span> <b>${esc(bestNet.name)}</b> — ${esc(bestNet.netToYou)}</div>` +
+    `<div class="chip"><span class="lbl">📅 Earliest close</span> <b>${esc(earliest.name)}</b> — ${esc(earliest.close)}</div>`;
+}
+
+render();
+</script>
+</body>
+</html>

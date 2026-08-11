@@ -1459,6 +1459,7 @@
     <button class="view-btn" data-view="maintenance">Maintenance</button>
     <button class="view-btn" data-view="move-in-purchases">Move in Purchases</button>
     <button class="view-btn" data-view="later-list">Later List</button>
+    <button class="view-btn" data-view="offers">Offers</button>
     <button class="view-btn" data-view="portfolio">All Properties</button>
   </div>
 </header>
@@ -1858,6 +1859,8 @@ const LATER_LIST_CATEGORY_ICON_FALLBACK = '🏷️';
 function laterListCategoryIcon(name) {
   return LATER_LIST_CATEGORY_ICONS[name] || LATER_LIST_CATEGORY_ICON_FALLBACK;
 }
+// Offers — offer-comparison dashboard, 6AL only (home sale).
+const OFFERS_PROPERTY = '6AL';
 const PRIMARY_VIEWS = new Set(['investment-return', 'maintenance']);
 const GLOBAL_HEADER_VIEWS = new Set(['tax-planning', 'net-worth', 'budget', 'cash-flow', 'mom-budget', 'solar', 'deductions', 'savings']);
 const CASH_FLOW_YEAR = 2026;
@@ -2449,6 +2452,7 @@ function onSaleCloseoutFieldInput() {
 function isViewAvailableForProperty(prop, view) {
   if (view === 'move-in-purchases') return prop === MOVE_IN_PURCHASE_PROPERTY;
   if (view === 'later-list') return prop === LATER_LIST_PROPERTY;
+  if (view === 'offers') return prop === OFFERS_PROPERTY;
   if (view === 'portfolio') return true;
   if (PRIMARY_PROPERTIES.has(prop)) return PRIMARY_VIEWS.has(view);
   return true;
@@ -2548,6 +2552,7 @@ async function renderView() {
       case 'maintenance':   await renderMaintenance();  break;
       case 'move-in-purchases': await renderMoveInPurchases(); break;
       case 'later-list': await renderLaterList(); break;
+      case 'offers':        await renderOffers();        break;
       case 'add-entry':     await renderAddEntry();     break;
       case 'portfolio':     await renderPortfolio();    break;
       case 'tax-planning':  await renderTaxPlanning();   break;
@@ -4617,6 +4622,148 @@ async function changeLaterListCategory(id, category) {
     alert('Failed to update: ' + err.message);
     renderLaterList();
   }
+}
+
+// ── View: Offers (6AL) ────────────────────────────────────────────────────────
+// Offer-comparison dashboard for the 6AL home sale. Self-contained — the same
+// data/render also lives in the standalone offers.html; edit both if the deal
+// changes. Add an offer by copying one OFFER object; a new column renders.
+
+const OFFERS_LAST_UPDATED = 'August 10, 2026';
+
+const OFFER_LIST = [
+  { name: 'Baroudi', gross: '$345,000', buyerFee: '3% (~$10.4k)', netToYou: '~$334,650', financing: 'Conventional', downLtv: '6.25% down', preApproval: 'Stale/wrong property', apprTarget: '$345k', apprRisk: 'Hard out', inspections: 'Waived', earnest: '$2,500', deed: 'Warranty', close: '9/16', certainty: 'Mid', leader: false },
+  { name: 'Morans', gross: '$345,000', buyerFee: '2% (~$6.9k)', netToYou: '~$338,100', financing: 'FHA', downLtv: '3.5% down', preApproval: 'None', apprTarget: '$345k', apprRisk: 'FHA + value sticks', inspections: 'Info-only*', earnest: '$5,000', deed: 'QuitClaim', close: '9/29', certainty: 'Low', leader: false },
+  { name: 'Vezeau', gross: '~$349,850*', buyerFee: '2.5% (~$8.75k)', netToYou: '~$341,100*', financing: 'Conventional', downLtv: '5% down', preApproval: 'None', apprTarget: '~$350k', apprRisk: 'Highest, thin cushion', inspections: 'Live (gen/sewer/radon)', earnest: '$6,000', deed: 'Warranty', close: '9/10', certainty: 'Mid', leader: false },
+  { name: 'Fisher', gross: '$330,000', buyerFee: '2% (~$6.6k)', netToYou: '~$323,400', financing: 'Conventional', downLtv: '33% down', preApproval: 'Verified', apprTarget: '$330k (lowest)', apprRisk: 'Minimal', inspections: 'Waived', earnest: '$5,000', deed: 'Warranty', close: '8/31', certainty: 'Highest', leader: true },
+];
+
+const OFFER_ROWS = [
+  { key: 'gross', label: 'Gross Price' },
+  { key: 'buyerFee', label: 'Buyer-Broker Fee' },
+  { key: 'netToYou', label: 'Net to You', net: true },
+  { key: 'financing', label: 'Financing' },
+  { key: 'downLtv', label: 'Down / LTV' },
+  { key: 'preApproval', label: 'Pre-Approval', badge: true },
+  { key: 'apprTarget', label: 'Appraisal Target' },
+  { key: 'apprRisk', label: 'Appraisal Risk', badge: true },
+  { key: 'inspections', label: 'Inspections', badge: true },
+  { key: 'earnest', label: 'Earnest Money' },
+  { key: 'deed', label: 'Deed Type' },
+  { key: 'close', label: 'Close Date' },
+  { key: 'certainty', label: 'Certainty', badge: true },
+];
+
+// Sentiment → pill color. Explicit phrases first, then keyword heuristics so
+// edited values still get a sensible color.
+function offerBadgeClass(value) {
+  const v = String(value).toLowerCase();
+  const green = ['verified', 'minimal', 'highest', 'waived', 'strong', 'clean'];
+  const red = ['none', 'stale', 'wrong', 'hard out', 'low', 'weak', 'thin cushion'];
+  const amber = ['mid', 'info-only', 'live', 'fha', 'sticks', 'caution', 'radon', 'sewer'];
+  // Red wins over green so "Highest, thin cushion" (weak) isn't mis-flagged
+  // strong by the "highest" keyword, which is only strong for certainty.
+  if (red.some(k => v.includes(k))) return 'red';
+  if (green.some(k => v.includes(k))) return 'green';
+  if (amber.some(k => v.includes(k))) return 'amber';
+  return 'amber';
+}
+
+function offerCellHtml(row, offer) {
+  const raw = offer[row.key];
+  if (row.badge) return `<span class="off-pill ${offerBadgeClass(raw)}">${escHtml(raw)}</span>`;
+  if (row.net) return `<span class="off-net">${escHtml(raw)}</span>`;
+  return escHtml(raw);
+}
+
+function offerHighlightsHtml() {
+  const money = s => parseFloat(String(s).replace(/[^0-9.]/g, '')) || 0;
+  const dayOf = s => {
+    const m = String(s).match(/(\d+)\/(\d+)/);
+    return m ? new Date(2026, +m[1] - 1, +m[2]).getTime() : Infinity;
+  };
+  let bestNet = OFFER_LIST[0], earliest = OFFER_LIST[0];
+  OFFER_LIST.forEach(o => {
+    if (money(o.netToYou) > money(bestNet.netToYou)) bestNet = o;
+    if (dayOf(o.close) < dayOf(earliest.close)) earliest = o;
+  });
+  return `<div class="off-chip"><span class="off-chip-lbl">💰 Highest net</span> <b>${escHtml(bestNet.name)}</b> — ${escHtml(bestNet.netToYou)}</div>` +
+    `<div class="off-chip"><span class="off-chip-lbl">📅 Earliest close</span> <b>${escHtml(earliest.name)}</b> — ${escHtml(earliest.close)}</div>`;
+}
+
+async function renderOffers() {
+  if (state.currentProperty !== OFFERS_PROPERTY) {
+    switchView(defaultViewForProperty(state.currentProperty));
+    return;
+  }
+
+  let head = '<tr><th class="off-row-label">&nbsp;</th>';
+  OFFER_LIST.forEach(o => {
+    head += `<th class="${o.leader ? 'off-leader' : ''}"><span class="off-name">${escHtml(o.name)}</span>${o.leader ? '<span class="off-leader-tag">Leader</span>' : ''}</th>`;
+  });
+  head += '</tr>';
+
+  let body = '';
+  OFFER_ROWS.forEach(row => {
+    body += `<tr><td class="off-row-label">${escHtml(row.label)}</td>`;
+    OFFER_LIST.forEach(o => {
+      body += `<td class="${o.leader ? 'off-leader' : ''}">${offerCellHtml(row, o)}</td>`;
+    });
+    body += '</tr>';
+  });
+
+  document.getElementById('app').innerHTML = `
+    <div class="offers-view">
+      <style>
+        .offers-view {
+          --off-panel:#1a2029; --off-border:#2a323d; --off-text:#e6ebf0; --off-muted:#8a97a6;
+          --off-green:#4ade80; --off-amber:#f0b429; --off-red:#f0625d;
+          --off-green-tint:rgba(74,222,128,.08); --off-green-head:rgba(74,222,128,.16);
+        }
+        .offers-view h1 { font-size:clamp(20px,4vw,26px); margin:0 0 4px; font-weight:700; letter-spacing:-.01em; }
+        .offers-view .off-sub { color:var(--off-muted); font-size:14px; margin:0 0 20px; }
+        .off-table-scroll { overflow-x:auto; border:1px solid var(--off-border); border-radius:12px; background:var(--off-panel); -webkit-overflow-scrolling:touch; }
+        .off-table { border-collapse:collapse; width:100%; min-width:640px; font-size:14px; color:var(--off-text); }
+        .off-table th, .off-table td { padding:12px 16px; text-align:left; border-bottom:1px solid var(--off-border); white-space:nowrap; }
+        .off-table thead th { position:sticky; top:0; z-index:3; background:var(--off-panel); font-weight:600; border-bottom:2px solid var(--off-border); }
+        .off-table th.off-row-label, .off-table td.off-row-label { position:sticky; left:0; z-index:2; background:var(--off-panel); color:var(--off-muted); font-weight:500; white-space:normal; min-width:130px; }
+        .off-table thead th.off-row-label { z-index:4; }
+        .off-table tbody tr:last-child td { border-bottom:none; }
+        .off-table td.off-leader, .off-table th.off-leader { background:var(--off-green-tint); }
+        .off-table thead th.off-leader { background:var(--off-green-head); color:var(--off-green); }
+        .off-leader-tag { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--off-green); margin-left:6px; vertical-align:middle; }
+        .off-name { font-weight:700; font-size:15px; }
+        .off-net { color:var(--off-green); font-weight:600; }
+        .off-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+        .off-pill.green { background:rgba(74,222,128,.15); color:var(--off-green); }
+        .off-pill.amber { background:rgba(240,180,41,.15); color:var(--off-amber); }
+        .off-pill.red { background:rgba(240,98,93,.15); color:var(--off-red); }
+        .off-highlights { display:flex; flex-wrap:wrap; gap:10px; margin:16px 0 0; }
+        .off-chip { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border:1px solid var(--off-border); border-radius:10px; background:var(--off-panel); font-size:13px; color:var(--off-text); }
+        .off-chip b { color:var(--off-text); }
+        .off-chip-lbl { color:var(--off-muted); }
+        .off-footnotes { margin-top:28px; padding:18px 20px; background:var(--off-panel); border:1px solid var(--off-border); border-radius:12px; }
+        .off-footnotes h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--off-muted); margin:0 0 12px; font-weight:600; }
+        .off-footnotes ol { margin:0; padding-left:20px; }
+        .off-footnotes li { margin-bottom:10px; font-size:14px; color:var(--off-text); }
+        .off-footnotes li:last-child { margin-bottom:0; }
+        .off-footnotes b { color:var(--off-green); font-weight:600; }
+      </style>
+      <h1>6 Alicia Street, Somersworth NH — Offer Comparison</h1>
+      <p class="off-sub">Last updated ${escHtml(OFFERS_LAST_UPDATED)} · Net figures are after buyer-broker fee, before listing commission.</p>
+      <div class="off-table-scroll">
+        <table class="off-table"><thead>${head}</thead><tbody>${body}</tbody></table>
+      </div>
+      <div class="off-highlights">${offerHighlightsHtml()}</div>
+      <div class="off-footnotes">
+        <h2>Footnotes</h2>
+        <ol>
+          <li><b>Vezeau net is conditional.</b> The ~$349,850 gross / ~$341,100 net assumes the escalation clause triggers. If it does not, the offer falls back to a base of $330,000 (~$321,750 net).</li>
+          <li><b>Morans "info-only" inspections are not a shield.</b> Info-only inspections do not stop FHA-appraiser-required repairs, which can still be mandated as a condition of the loan.</li>
+          <li><b>The core trade-off.</b> Vezeau nets roughly <b>$17,700 more</b> than Fisher, but Fisher is a <b>verified 33%-down</b> buyer where appraisal or financing problems can't easily kill the deal — certainty vs. top-line dollars.</li>
+        </ol>
+      </div>
+    </div>`;
 }
 
 // ── View: Tax Summary ─────────────────────────────────────────────────────────

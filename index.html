@@ -2347,6 +2347,10 @@ function loadSaleCloseoutDraft(prop = state.currentProperty) {
 function propertyDepreciationDispositionDate(prop) {
   const finalizedDate = state.data[prop]?.investment?.saleCloseout?.saleDate || '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(finalizedDate)) return finalizedDate;
+  // A closeout draft can also be a hypothetical valuation worksheet. Only 6AL
+  // currently has an actual scheduled sale whose draft date should truncate
+  // depreciation; 446BB explicitly remains a continuing rental.
+  if (prop !== '6AL') return null;
   const scheduledDate = loadSaleCloseoutDraft(prop)?.date || '';
   return /^\d{4}-\d{2}-\d{2}$/.test(scheduledDate) ? scheduledDate : null;
 }

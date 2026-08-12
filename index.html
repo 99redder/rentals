@@ -13054,8 +13054,6 @@ function tpReadForm() {
   if (saleProcEl) tp.projection_rh_sale_proceeds = saleProcEl.value.trim() === '' ? '' : tpN(saleProcEl.value);
   const saleDateEl = document.getElementById('tp-proj-rh-sale-date');
   if (saleDateEl) tp.projection_rh_sale_deposit_date = saleDateEl.value || '';
-  const ctcEl = document.getElementById('tp-proj-rh-cashtoclose');
-  if (ctcEl) tp.projection_rh_cashtoclose = ctcEl.value.trim() === '' ? '' : tpN(ctcEl.value);
   const salePropEl = document.getElementById('tp-property-sale-property');
   if (salePropEl) tp.property_sale_property = salePropEl.value || '';
   if (tp.property_sale_imported) tp.property_sale_taxable_gain = g('tp-property-sale-taxable-gain');
@@ -13626,44 +13624,24 @@ function tpProjectedSaleProceedsInterest(tp, apyPct) {
   return { amount, date, autoAmount, autoDate, hasAmtOverride, yearFraction, interest };
 }
 
-// The 4781MC settlement cash-to-close is held in the Robinhood checking account
-// too. Per the simplifying assumption, treat it as parked the FULL calendar year
-// (12/12) rather than modeling the exact settlement date it funds out — a small,
-// deliberately conservative overstatement that keeps the math easy. Auto-derived
-// live from the "4781MC Cash to Close" Cash Flow line; zero once the build has
-// settled (the cash has left the account). `projection_rh_cashtoclose` overrides.
-function tpAutoCashToCloseForChecking() {
-  const prop = '4781MC';
-  if (!isPreconstruction(prop)) return 0; // settled — cash already funded out
-  return Math.max(0, tpN(constructionCashToClose(prop).amount));
-}
-
-function tpProjectedCashToCloseInterest(tp, apyPct) {
-  const auto = tpAutoCashToCloseForChecking();
-  const hasOverride = tp.projection_rh_cashtoclose !== undefined &&
-    tp.projection_rh_cashtoclose !== '' && tp.projection_rh_cashtoclose !== null;
-  const amount = hasOverride ? Math.max(0, tpN(tp.projection_rh_cashtoclose)) : auto;
-  const interest = amount * (tpN(apyPct) / 100); // full calendar year (× 12/12)
-  return { amount, autoAmount: auto, hasOverride, interest };
-}
-
 function tpProjectedRobinhoodIncome(tp) {
   const checkingBalance = tpN(state.savings?.accounts?.robinhoodChecking) || tpN(state.cashFlow?.robinhoodChecking);
   const apyPct = tpN(tp.projection_rh_apy);
   const throughMonth = Math.max(0, Math.min(12, Math.round(tpN(tp.projection_rh_interest_through_month))));
   const interestMonthsRemaining = 12 - throughMonth;
+  // The full current balance is held flat through year-end here, so anything
+  // already sitting in checking (e.g. the 4781MC cash-to-close) is captured — no
+  // separate line for it, which would double-count. Only genuinely NEW money not
+  // yet in the balance (the 6AL sale proceeds, landing 9/3) is added on top.
   const checkingFutureInterest = checkingBalance * (apyPct / 100) * (interestMonthsRemaining / 12);
   const sale = tpProjectedSaleProceedsInterest(tp, apyPct);
-  const ctc = tpProjectedCashToCloseInterest(tp, apyPct);
   const projectedInterest = tpN(tp.projection_rh_checking_interest_ytd) +
-    tpN(tp.projection_rh_brokerage_interest_final) + checkingFutureInterest + sale.interest + ctc.interest;
+    tpN(tp.projection_rh_brokerage_interest_final) + checkingFutureInterest + sale.interest;
   return {
     checkingBalance, throughMonth, interestMonthsRemaining, checkingFutureInterest,
     saleProceeds: sale.amount, saleDepositDate: sale.date, saleProceedsInterest: sale.interest,
     saleYearFraction: sale.yearFraction, saleAutoAmount: sale.autoAmount, saleAutoDate: sale.autoDate,
-    saleAmtOverride: sale.hasAmtOverride,
-    cashToClose: ctc.amount, cashToCloseInterest: ctc.interest, cashToCloseAutoAmount: ctc.autoAmount,
-    cashToCloseOverride: ctc.hasOverride, projectedInterest
+    saleAmtOverride: sale.hasAmtOverride, projectedInterest
   };
 }
 
@@ -13706,16 +13684,12 @@ function tpYearEndProjection(tp, r, rentalRows) {
   const robinhood = tpProjectedRobinhoodIncome(tp);
   const { checkingBalance, throughMonth, interestMonthsRemaining, checkingFutureInterest,
     saleProceeds, saleDepositDate, saleProceedsInterest, saleYearFraction,
-    saleAutoAmount, saleAutoDate, cashToClose, cashToCloseInterest, cashToCloseAutoAmount } = robinhood;
+    saleAutoAmount, saleAutoDate } = robinhood;
   const projectedRhInterest = robinhood.projectedInterest;
   const rhInterestImpact = projectedRhInterest - tpN(tp.rh_int);
   const rhDividendImpact = tpN(tp.projection_rh_dividends_final) - tpN(tp.rh_div);
-  const rhInterestParts = [`${fmt(tpN(tp.projection_rh_checking_interest_ytd))} YTD`,
-    `${fmt(checkingFutureInterest)} on ${fmt(checkingBalance)} balance`];
-  if (saleProceedsInterest > 0.005) rhInterestParts.push(`${fmt(saleProceedsInterest)} on ${fmt(saleProceeds)} 6AL proceeds from ${saleDepositDate ? fmtDate(saleDepositDate) : '—'} (${Math.round(saleYearFraction * 365)} days)`);
-  if (cashToCloseInterest > 0.005) rhInterestParts.push(`${fmt(cashToCloseInterest)} on ${fmt(cashToClose)} 4781MC cash-to-close (full year)`);
-  const rhInterestDetail = (saleProceedsInterest > 0.005 || cashToCloseInterest > 0.005)
-    ? `${fmt(projectedRhInterest)}: ${rhInterestParts.join(' + ')}`
+  const rhInterestDetail = saleProceedsInterest > 0.005
+    ? `${fmt(projectedRhInterest)}: ${fmt(tpN(tp.projection_rh_checking_interest_ytd))} YTD + ${fmt(checkingFutureInterest)} on ${fmt(checkingBalance)} balance + ${fmt(saleProceedsInterest)} on ${fmt(saleProceeds)} 6AL proceeds parked from ${saleDepositDate ? fmtDate(saleDepositDate) : '—'} (${Math.round(saleYearFraction * 365)} days)`
     : `${fmt(projectedRhInterest)} projected from ${fmt(checkingBalance)} checking balance`;
 
   const adjustments = [
@@ -13739,8 +13713,7 @@ function tpYearEndProjection(tp, r, rentalRows) {
     projectedDepreciation, checkingBalance, projectedRhInterest,
     throughMonth, interestMonthsRemaining, checkingFutureInterest,
     saleProceeds, saleDepositDate, saleProceedsInterest, saleYearFraction,
-    saleAutoAmount, saleAutoDate,
-    cashToClose, cashToCloseInterest, cashToCloseAutoAmount
+    saleAutoAmount, saleAutoDate
   };
 }
 
@@ -13786,10 +13759,9 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
           <label style="display:block;font-size:.67rem;color:var(--text-muted)">Interest actuals through<select id="tp-proj-rh-through-month" onchange="tpChanged()" style="width:100%;margin-top:.15rem">${monthOptions}</select></label>
           <label style="display:block;font-size:.67rem;color:var(--text-muted)">6AL proceeds parked <span style="opacity:.75">(blank = auto ${fmt(p.saleAutoAmount)})</span><div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem"><span>$</span><input id="tp-proj-rh-sale-proceeds" type="text" inputmode="decimal" value="${escAttr((tp.projection_rh_sale_proceeds === undefined || tp.projection_rh_sale_proceeds === '' || tp.projection_rh_sale_proceeds === null) ? '' : moneyInputValue(tp.projection_rh_sale_proceeds))}" placeholder="${escAttr(moneyInputValue(p.saleAutoAmount))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right"></div></label>
           <label style="display:block;font-size:.67rem;color:var(--text-muted)">6AL proceeds deposit date <span style="opacity:.75">(blank = auto ${p.saleAutoDate ? fmtDate(p.saleAutoDate) : '—'})</span><input id="tp-proj-rh-sale-date" type="date" value="${escAttr(tp.projection_rh_sale_deposit_date || '')}" onchange="tpChanged()" style="width:100%;margin-top:.15rem"></label>
-          <label style="display:block;font-size:.67rem;color:var(--text-muted)">4781MC cash-to-close parked <span style="opacity:.75">(full yr; blank = auto ${fmt(p.cashToCloseAutoAmount)})</span><div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem"><span>$</span><input id="tp-proj-rh-cashtoclose" type="text" inputmode="decimal" value="${escAttr((tp.projection_rh_cashtoclose === undefined || tp.projection_rh_cashtoclose === '' || tp.projection_rh_cashtoclose === null) ? '' : moneyInputValue(tp.projection_rh_cashtoclose))}" placeholder="${escAttr(moneyInputValue(p.cashToCloseAutoAmount))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right"></div></label>
         </div>
       </details>
-      <div style="font-size:.65rem;color:var(--text-muted);margin-top:.55rem;line-height:1.4">Automatically refreshes from Tax Planning entries, FMG sync, rental transactions, sale dates, and Cash Flow's Robinhood balance. Checking interest projects the current balance forward at the APY for the remaining months, plus interest on the 6AL sale proceeds from their deposit date through year-end, plus a full-calendar-year of interest on the 4781MC cash-to-close (all auto-derived; override above). Assumptions are saved with the ${CURRENT_YEAR} tax plan.</div>
+      <div style="font-size:.65rem;color:var(--text-muted);margin-top:.55rem;line-height:1.4">Automatically refreshes from Tax Planning entries, FMG sync, rental transactions, sale dates, and Cash Flow's Robinhood balance. Checking interest projects the current balance forward at the APY for the remaining months and adds interest on the 6AL sale proceeds from their deposit date through year-end (both auto-derived; override above). The current balance is held flat all year, so cash already in the account — including the 4781MC cash-to-close — is already counted; only new money (the 6AL proceeds) is added on top. Assumptions are saved with the ${CURRENT_YEAR} tax plan.</div>
     </div>`;
 }
 

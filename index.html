@@ -13744,6 +13744,30 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
     .join('');
   const assumptionInput = (id, label, value, suffix = '$') => `<label class="tp-assum"><span class="tp-assum-label">${escHtml(label)}</span><div class="tp-assum-field">${suffix === '$' ? '<span>$</span>' : ''}<input id="${id}" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(value))}" onchange="tpChanged()" onblur="formatMoneyInput(this)">${suffix !== '$' ? `<span>${escHtml(suffix)}</span>` : ''}</div></label>`;
   const monthOptions = Array.from({ length: 13 }, (_, month) => `<option value="${month}" ${p.throughMonth === month ? 'selected' : ''}>${month === 0 ? 'None' : new Date(2000, month - 1, 1).toLocaleString('en-US', { month: 'short' })}</option>`).join('');
+  // Always-visible breakdown of the projected full-year Robinhood interest. It's
+  // auto-synced into tp.rh_int (so it's already inside Current Tax Planning AGI and
+  // nets to a $0 future adjustment) — showing the composition here is the only place
+  // the remainder-of-year interest math is actually visible.
+  const rhYtd = tpN(tp.projection_rh_checking_interest_ytd);
+  const rhBrok = tpN(tp.projection_rh_brokerage_interest_final);
+  const rhApy = tpN(tp.projection_rh_apy);
+  const monthShort = m => new Date(2000, ((m - 1) % 12 + 12) % 12, 1).toLocaleString('en-US', { month: 'short' });
+  const rhYtdLabel = (p.throughMonth >= 1 && p.throughMonth <= 12) ? `Jan–${monthShort(p.throughMonth)}` : 'YTD';
+  const rhFutureLabel = p.interestMonthsRemaining > 0 ? `${monthShort(p.throughMonth + 1)}–Dec` : '';
+  const rhRow = (label, val) => `<div style="display:flex;justify-content:space-between;gap:.75rem;font-size:.7rem;padding:.14rem 0"><span style="color:var(--text-muted)">${label}</span><span>${fmt(val)}</span></div>`;
+  const rhInterestBreakdown = `
+      <div style="margin-top:.6rem;padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2)">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem">
+          <span style="font-size:.74rem;font-weight:700">Robinhood interest — projected full year</span>
+          <strong style="font-size:.9rem">${fmt(p.projectedRhInterest)}</strong>
+        </div>
+        <div style="font-size:.63rem;color:var(--text-muted);margin:.15rem 0 .4rem;line-height:1.35">Already inside Current Tax Planning AGI above — auto-synced into the RH checking interest input, so it shows as a $0 future adjustment. Edit the inputs under Projection assumptions.</div>
+        ${rhRow(`${rhYtdLabel} checking interest (actual YTD)`, rhYtd)}
+        ${p.interestMonthsRemaining > 0 ? rhRow(`${rhFutureLabel} on ${fmt(p.checkingBalance)} balance @ ${rhApy}% (${p.interestMonthsRemaining} mo)`, p.checkingFutureInterest) : ''}
+        ${p.saleProceedsInterest > 0.005 ? rhRow(`6AL proceeds ${fmt(p.saleProceeds)} from ${p.saleDepositDate ? fmtDate(p.saleDepositDate) : '—'} @ ${rhApy}% (${Math.round(p.saleYearFraction * 365)} days)`, p.saleProceedsInterest) : ''}
+        ${rhBrok ? rhRow('Brokerage interest (final)', rhBrok) : ''}
+        <div style="display:flex;justify-content:space-between;gap:.75rem;font-size:.72rem;font-weight:700;padding:.28rem 0 0;margin-top:.2rem;border-top:1px solid var(--border)"><span>Total projected interest income</span><span>${fmt(p.projectedRhInterest)}</span></div>
+      </div>`;
   return `
     <div class="card-header" onclick="tpToggleYearEndProjection()" style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;flex-wrap:wrap;cursor:pointer">
       <div class="card-title">📈 Live ${CURRENT_YEAR} Year-End AGI Projection</div>
@@ -13763,6 +13787,7 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
         <span>${fmtSigned(p.adjustmentTotal)}</span>
       </div>
       ${adjCollapsed ? '' : `<div style="margin:.15rem 0 .35rem .55rem;padding-left:.6rem;border-left:2px solid var(--border)">${breakdown}</div>`}
+      ${rhInterestBreakdown}
       ${over ? `<div style="margin-top:.65rem;padding:.65rem .75rem;border:1px solid color-mix(in srgb,var(--danger) 45%,var(--border));background:color-mix(in srgb,var(--danger) 8%,transparent);border-radius:var(--radius);font-size:.75rem;line-height:1.45">
         <strong style="color:var(--danger)">Action indicated:</strong> reduce AGI by at least <strong>${fmt(p.minimumReduction)}</strong>. A ${fmt(p.recommendedReduction)} reduction provides an approximately $2,000 cushion. At the current projection, Maryland's estimated 2% capital-gain surcharge is <strong>${fmt(p.surcharge)}</strong> on a ${fmt(p.surchargeBase)} base.
       </div>` : `<div style="margin-top:.65rem;padding:.65rem .75rem;border:1px solid color-mix(in srgb,var(--success) 45%,var(--border));background:color-mix(in srgb,var(--success) 8%,transparent);border-radius:var(--radius);font-size:.75rem"><strong style="color:var(--success)">Below the surcharge threshold</strong> by ${fmt(p.thresholdGap)}.</div>`}

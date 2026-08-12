@@ -793,6 +793,14 @@
     .tp-layout { display: grid; grid-template-columns: 1fr 390px; gap: 1.25rem; align-items: start; }
     .tp-sticky { position: sticky; top: 5.5rem; }
     .tp-grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 0.75rem; }
+    /* Projection-assumption cells: label on top, input pinned to the bottom so
+       every input in a row aligns regardless of how many lines the label wraps. */
+    .tp-assum { display: flex; flex-direction: column; gap: .2rem; font-size: .67rem; color: var(--text-muted); min-width: 0; }
+    .tp-assum-label { line-height: 1.25; font-weight: 600; }
+    .tp-assum-hint { font-weight: 400; opacity: .7; }
+    .tp-assum-field { margin-top: auto; display: flex; align-items: center; gap: .25rem; }
+    .tp-assum-field input, .tp-assum-field select { width: 100%; text-align: right; }
+    .tp-assum-field select { text-align: left; }
     .tp-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
     .tp-lbl { font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; color:var(--text-muted); }
     .tp-group { font-size:0.8rem; font-weight:700; color:var(--text); margin:0.85rem 0 0.5rem; padding-bottom:0.35rem; border-bottom:1px solid var(--border); }
@@ -6579,6 +6587,7 @@ function tpBuildPayments(payments) {
 const TP_COLLAPSE_KEY = `rentals_tp_collapsed_${CURRENT_YEAR}`;
 const TP_AGI_WARNINGS_COLLAPSE_KEY = `rentals_tp_agi_warnings_collapsed_${CURRENT_YEAR}`;
 const TP_YEAR_END_PROJECTION_COLLAPSE_KEY = `rentals_tp_year_end_projection_collapsed_${CURRENT_YEAR}`;
+const TP_ADJ_BREAKDOWN_COLLAPSE_KEY = `rentals_tp_adj_breakdown_collapsed_${CURRENT_YEAR}`;
 const TP_SAFE_HARBOR_COLLAPSE_KEY = `rentals_tp_safe_harbor_collapsed_${CURRENT_YEAR}`;
 function tpCollapsedMap() { try { return JSON.parse(localStorage.getItem(TP_COLLAPSE_KEY) || '{}'); } catch { return {}; } }
 function tpSaveCollapsedMap(map) { localStorage.setItem(TP_COLLAPSE_KEY, JSON.stringify(map || {})); }
@@ -6590,6 +6599,12 @@ function tpToggleAgiWarnings() {
 function tpYearEndProjectionCollapsed() { return localStorage.getItem(TP_YEAR_END_PROJECTION_COLLAPSE_KEY) !== '0'; }
 function tpToggleYearEndProjection() {
   localStorage.setItem(TP_YEAR_END_PROJECTION_COLLAPSE_KEY, tpYearEndProjectionCollapsed() ? '0' : '1');
+  tpUpdateResults(tpLoadLocal());
+}
+// Net-future-adjustments breakdown collapse — minimized by default (null → true).
+function tpAdjBreakdownCollapsed() { return localStorage.getItem(TP_ADJ_BREAKDOWN_COLLAPSE_KEY) !== '0'; }
+function tpToggleAdjBreakdown() {
+  localStorage.setItem(TP_ADJ_BREAKDOWN_COLLAPSE_KEY, tpAdjBreakdownCollapsed() ? '0' : '1');
   tpUpdateResults(tpLoadLocal());
 }
 function tpSafeHarborCollapsed() { return localStorage.getItem(TP_SAFE_HARBOR_COLLAPSE_KEY) !== '0'; }
@@ -13722,11 +13737,12 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
   const over = p.thresholdGap < 0;
   const color = over ? 'var(--danger)' : 'var(--success)';
   const collapsed = tpYearEndProjectionCollapsed();
-  const breakdown = p.adjustments
-    .filter(item => Math.abs(item.amount) >= 0.005 || item.key === 'rent446')
+  const adjCollapsed = tpAdjBreakdownCollapsed();
+  const breakdownItems = p.adjustments.filter(item => Math.abs(item.amount) >= 0.005 || item.key === 'rent446');
+  const breakdown = breakdownItems
     .map(item => `<div class="tp-row"><span><span>${escHtml(item.label)}</span><small style="display:block;color:var(--text-muted);font-size:.67rem">${escHtml(item.detail)}</small></span><span style="color:${item.amount > 0 ? 'var(--danger)' : item.amount < 0 ? 'var(--success)' : 'var(--text-muted)'}">${fmtSigned(item.amount)}</span></div>`)
     .join('');
-  const assumptionInput = (id, label, value, suffix = '$') => `<label style="display:block;font-size:.67rem;color:var(--text-muted)">${escHtml(label)}<div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem">${suffix === '$' ? '<span>$</span>' : ''}<input id="${id}" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(value))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right">${suffix !== '$' ? `<span>${escHtml(suffix)}</span>` : ''}</div></label>`;
+  const assumptionInput = (id, label, value, suffix = '$') => `<label class="tp-assum"><span class="tp-assum-label">${escHtml(label)}</span><div class="tp-assum-field">${suffix === '$' ? '<span>$</span>' : ''}<input id="${id}" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(value))}" onchange="tpChanged()" onblur="formatMoneyInput(this)">${suffix !== '$' ? `<span>${escHtml(suffix)}</span>` : ''}</div></label>`;
   const monthOptions = Array.from({ length: 13 }, (_, month) => `<option value="${month}" ${p.throughMonth === month ? 'selected' : ''}>${month === 0 ? 'None' : new Date(2000, month - 1, 1).toLocaleString('en-US', { month: 'short' })}</option>`).join('');
   return `
     <div class="card-header" onclick="tpToggleYearEndProjection()" style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;flex-wrap:wrap;cursor:pointer">
@@ -13742,8 +13758,11 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
         <div style="text-align:right"><div style="font-size:.68rem;color:var(--text-muted)">${over ? 'Over threshold' : 'Cushion below threshold'}</div><div style="font-size:1.05rem;font-weight:750;color:${color}">${fmt(Math.abs(p.thresholdGap))}</div></div>
       </div>
       <div class="tp-row"><span>Current Tax Planning AGI</span><span>${fmt(r.agi)}</span></div>
-      ${breakdown}
-      <div class="tp-row sub"><span>Net future adjustments</span><span>${fmtSigned(p.adjustmentTotal)}</span></div>
+      <div class="tp-row sub" onclick="tpToggleAdjBreakdown()" role="button" tabindex="0" aria-expanded="${adjCollapsed ? 'false' : 'true'}" style="cursor:pointer">
+        <span><span style="display:inline-block;width:.9rem;color:var(--text-muted)">${adjCollapsed ? '▸' : '▾'}</span>Net future adjustments <small style="color:var(--text-muted);font-weight:400">(${breakdownItems.length} item${breakdownItems.length === 1 ? '' : 's'} — ${adjCollapsed ? 'show' : 'hide'})</small></span>
+        <span>${fmtSigned(p.adjustmentTotal)}</span>
+      </div>
+      ${adjCollapsed ? '' : `<div style="margin:.15rem 0 .35rem .55rem;padding-left:.6rem;border-left:2px solid var(--border)">${breakdown}</div>`}
       ${over ? `<div style="margin-top:.65rem;padding:.65rem .75rem;border:1px solid color-mix(in srgb,var(--danger) 45%,var(--border));background:color-mix(in srgb,var(--danger) 8%,transparent);border-radius:var(--radius);font-size:.75rem;line-height:1.45">
         <strong style="color:var(--danger)">Action indicated:</strong> reduce AGI by at least <strong>${fmt(p.minimumReduction)}</strong>. A ${fmt(p.recommendedReduction)} reduction provides an approximately $2,000 cushion. At the current projection, Maryland's estimated 2% capital-gain surcharge is <strong>${fmt(p.surcharge)}</strong> on a ${fmt(p.surchargeBase)} base.
       </div>` : `<div style="margin-top:.65rem;padding:.65rem .75rem;border:1px solid color-mix(in srgb,var(--success) 45%,var(--border));background:color-mix(in srgb,var(--success) 8%,transparent);border-radius:var(--radius);font-size:.75rem"><strong style="color:var(--success)">Below the surcharge threshold</strong> by ${fmt(p.thresholdGap)}.</div>`}
@@ -13756,9 +13775,9 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
           ${assumptionInput('tp-proj-rh-brokerage-interest-final','RH brokerage interest final',tp.projection_rh_brokerage_interest_final)}
           ${assumptionInput('tp-proj-rh-dividends-final','RH dividends final',tp.projection_rh_dividends_final)}
           ${assumptionInput('tp-proj-rh-apy','RH checking APY',tp.projection_rh_apy,'%')}
-          <label style="display:block;font-size:.67rem;color:var(--text-muted)">Interest actuals through<select id="tp-proj-rh-through-month" onchange="tpChanged()" style="width:100%;margin-top:.15rem">${monthOptions}</select></label>
-          <label style="display:block;font-size:.67rem;color:var(--text-muted)">6AL proceeds parked <span style="opacity:.75">(blank = auto ${fmt(p.saleAutoAmount)})</span><div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem"><span>$</span><input id="tp-proj-rh-sale-proceeds" type="text" inputmode="decimal" value="${escAttr((tp.projection_rh_sale_proceeds === undefined || tp.projection_rh_sale_proceeds === '' || tp.projection_rh_sale_proceeds === null) ? '' : moneyInputValue(tp.projection_rh_sale_proceeds))}" placeholder="${escAttr(moneyInputValue(p.saleAutoAmount))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right"></div></label>
-          <label style="display:block;font-size:.67rem;color:var(--text-muted)">6AL proceeds deposit date <span style="opacity:.75">(blank = auto ${p.saleAutoDate ? fmtDate(p.saleAutoDate) : '—'})</span><input id="tp-proj-rh-sale-date" type="date" value="${escAttr(tp.projection_rh_sale_deposit_date || '')}" onchange="tpChanged()" style="width:100%;margin-top:.15rem"></label>
+          <label class="tp-assum"><span class="tp-assum-label">Interest actuals through</span><div class="tp-assum-field"><select id="tp-proj-rh-through-month" onchange="tpChanged()">${monthOptions}</select></div></label>
+          <label class="tp-assum"><span class="tp-assum-label">6AL proceeds parked <span class="tp-assum-hint">(blank = auto ${fmt(p.saleAutoAmount)})</span></span><div class="tp-assum-field"><span>$</span><input id="tp-proj-rh-sale-proceeds" type="text" inputmode="decimal" value="${escAttr((tp.projection_rh_sale_proceeds === undefined || tp.projection_rh_sale_proceeds === '' || tp.projection_rh_sale_proceeds === null) ? '' : moneyInputValue(tp.projection_rh_sale_proceeds))}" placeholder="${escAttr(moneyInputValue(p.saleAutoAmount))}" onchange="tpChanged()" onblur="formatMoneyInput(this)"></div></label>
+          <label class="tp-assum"><span class="tp-assum-label">6AL proceeds deposit date <span class="tp-assum-hint">(blank = auto ${p.saleAutoDate ? fmtDate(p.saleAutoDate) : '—'})</span></span><div class="tp-assum-field"><input id="tp-proj-rh-sale-date" type="date" value="${escAttr(tp.projection_rh_sale_deposit_date || '')}" onchange="tpChanged()"></div></label>
         </div>
       </details>
       <div style="font-size:.65rem;color:var(--text-muted);margin-top:.55rem;line-height:1.4">Automatically refreshes from Tax Planning entries, FMG sync, rental transactions, sale dates, and Cash Flow's Robinhood balance. Checking interest projects the current balance forward at the APY for the remaining months and adds interest on the 6AL sale proceeds from their deposit date through year-end (both auto-derived; override above). The current balance is held flat all year, so cash already in the account — including the 4781MC cash-to-close — is already counted; only new money (the 6AL proceeds) is added on top. Assumptions are saved with the ${CURRENT_YEAR} tax plan.</div>
@@ -14190,6 +14209,7 @@ window.tpPayAmt                = tpPayAmt;
 window.tpToggleSection         = tpToggleSection;
 window.tpToggleAgiWarnings     = tpToggleAgiWarnings;
 window.tpToggleYearEndProjection = tpToggleYearEndProjection;
+window.tpToggleAdjBreakdown    = tpToggleAdjBreakdown;
 window.tpToggleSafeHarbor      = tpToggleSafeHarbor;
 window.tpApplyPropertySale     = tpApplyPropertySale;
 window.tpClearPropertySale     = tpClearPropertySale;

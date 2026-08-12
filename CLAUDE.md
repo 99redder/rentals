@@ -789,6 +789,11 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 
 ## Recent Updates
 
+### 2026-08-12 — Tax Planning projection: 6AL sale proceeds interest + repair line removed
+
+- **The Live Year-End AGI Projection's Robinhood checking interest now models the 6AL sale proceeds landing mid-year.** Previously `tpProjectedRobinhoodIncome` only carried the current checking balance forward flat at the APY for the remaining whole months (`checkingBalance × APY × monthsRemaining/12`), so the lump the 6AL sale deposits (tentative 9/3) earned no interest — understating interest income (and AGI, and the MD 2% surcharge check) by ~$2–3k. New `tpProjectedSaleProceedsInterest(tp, apyPct)` adds `proceeds × APY × tpYearFractionRemaining(depositDate)`, a day-based proration from the deposit date through Dec 31 (`tpYearFractionRemaining` clamps to [0,1]; empty/post-year-end dates → 0). Proceeds + date **auto-derive** from `cfPropertySaleProceedsItem('6AL')` (same pre-income-tax, after-mortgage cash the Cash Flow proceeds line uses, so it tracks the sale worksheet's price/date/closing costs), and a finalized/closed 6AL sale returns 0 (already in the live balance). Two new optional overrides in the Projection assumptions grid — `projection_rh_sale_proceeds` (blank = auto) and `projection_rh_sale_deposit_date` (blank = auto) — let the user park a different amount (e.g. money moved out to fund 4781MC) or shift the date; blank always means "use live auto" so overrides never go stale. The Robinhood interest breakdown detail now itemizes YTD + balance interest + proceeds interest.
+- **Removed the "6AL pending handyman repair" projection adjustment** (already recorded as a rental expense). Dropped the `repair6al` adjustment line and its now-unused helpers `tpProjectionCashFlowExpense` / `tpProjectionExpenseRecorded`.
+
 ### 2026-08-10 — Cash Flow: two scenario tabs (6AL sells vs. doesn't sell)
 
 - **The Cash Flow view now has two side-by-side scenario tabs** switched at the top of the page (`cfScenarioTabsHtml()` / `cfSetScenario()`): **`sell`** ("6AL Sells" — the original behavior, default) and **`nosale`** ("6AL Doesn't Sell"). Choice is UI state persisted in `localStorage` key `rentals_cash_flow_scenario` (module var `_cfScenario`), **not** part of the saved math.

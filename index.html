@@ -13048,6 +13048,12 @@ function tpReadForm() {
   tp.projection_rh_dividends_final = projectionValue('tp-proj-rh-dividends-final', 'projection_rh_dividends_final');
   tp.projection_rh_apy = projectionValue('tp-proj-rh-apy', 'projection_rh_apy');
   tp.projection_rh_interest_through_month = Math.max(0, Math.min(12, Math.round(projectionValue('tp-proj-rh-through-month', 'projection_rh_interest_through_month'))));
+  // Sale-proceeds override fields: a blank input means "use the live auto value"
+  // (empty string), so they're read raw rather than coerced to 0 like the others.
+  const saleProcEl = document.getElementById('tp-proj-rh-sale-proceeds');
+  if (saleProcEl) tp.projection_rh_sale_proceeds = saleProcEl.value.trim() === '' ? '' : tpN(saleProcEl.value);
+  const saleDateEl = document.getElementById('tp-proj-rh-sale-date');
+  if (saleDateEl) tp.projection_rh_sale_deposit_date = saleDateEl.value || '';
   const salePropEl = document.getElementById('tp-property-sale-property');
   if (salePropEl) tp.property_sale_property = salePropEl.value || '';
   if (tp.property_sale_imported) tp.property_sale_taxable_gain = g('tp-property-sale-taxable-gain');
@@ -13565,22 +13571,6 @@ function tpProjectionNormalMonths(prop) {
   return { months: remainingMonths, rent, management, hoa, monthlyNet: rent - management - hoa };
 }
 
-function tpProjectionCashFlowExpense(nameMatcher) {
-  const sell = state.cashFlow?.scenarios?.sell || state.cashFlow || {};
-  return (sell.expenses || []).find(item => nameMatcher(String(item.name || '').toLowerCase())) || null;
-}
-
-function tpProjectionExpenseRecorded(prop, cashFlowItem) {
-  if (!cashFlowItem) return false;
-  const target = tpN(cashFlowItem.amount);
-  return (state.data[prop]?.transactions || []).some(transaction => {
-    if (transaction.type !== 'expense' || !String(transaction.date || '').startsWith(String(CURRENT_YEAR))) return false;
-    const description = String(transaction.description || '').toLowerCase();
-    const repairLike = transaction.category === 'repairs' || description.includes('handyman');
-    return repairLike && (description.includes('handyman') || Math.abs(tpN(transaction.amount) - target) < 1);
-  });
-}
-
 function tpProjectionDepreciation(tp, rentalRows) {
   return (rentalRows || []).reduce((sum, row) => {
     const prop = row.prop;
@@ -13593,14 +13583,62 @@ function tpProjectionDepreciation(tp, rentalRows) {
   }, 0);
 }
 
+// Fraction of the current calendar year still remaining as of an ISO date —
+// used to prorate interest on a mid-year lump deposit (e.g. sale proceeds that
+// land on 9/3 only earn interest from that date through Dec 31). Day-based so a
+// mid-month deposit is handled more precisely than the whole-month base balance.
+function tpYearFractionRemaining(isoDate) {
+  const start = new Date(String(isoDate || '').slice(0, 10) + 'T00:00:00');
+  if (isNaN(start.getTime())) return 0;
+  const yearEnd = new Date(CURRENT_YEAR, 11, 31); // Dec 31 of the projection year
+  const days = Math.round((yearEnd.getTime() - start.getTime()) / 86400000);
+  return Math.max(0, Math.min(1, days / 365));
+}
+
+// The 6AL sale proceeds land in the Robinhood checking account mid-year (tentative
+// 9/3) and sit there for the rest of the year, earning interest the flat current
+// balance can't capture. Auto-derived live from the 6AL sale worksheet (same
+// pre-income-tax, after-mortgage cash the Cash Flow proceeds line uses) so it
+// tracks the scheduled price/date/closing costs. `projection_rh_sale_proceeds`
+// (amount) and `projection_rh_sale_deposit_date` (date) override the auto values
+// when the user expects to park a different amount or move money out sooner.
+function tpAutoSaleProceedsForChecking() {
+  const prop = CF_SCENARIO_SALE_PROP; // '6AL'
+  // A finalized sale's proceeds have already landed and are reflected in the live
+  // checking balance, so there's nothing extra to project.
+  if (state.data[prop]?.investment?.saleCloseout?.closedAt) return { amount: 0, date: '' };
+  const item = cfPropertySaleProceedsItem(prop);
+  return { amount: Math.max(0, tpN(item.amount)), date: (item.date || '').slice(0, 10) };
+}
+
+function tpProjectedSaleProceedsInterest(tp, apyPct) {
+  const auto = tpAutoSaleProceedsForChecking();
+  const hasAmtOverride = tp.projection_rh_sale_proceeds !== undefined &&
+    tp.projection_rh_sale_proceeds !== '' && tp.projection_rh_sale_proceeds !== null;
+  const amount = hasAmtOverride ? Math.max(0, tpN(tp.projection_rh_sale_proceeds)) : auto.amount;
+  const date = (tp.projection_rh_sale_deposit_date || auto.date || '').slice(0, 10);
+  const autoAmount = auto.amount, autoDate = auto.date;
+  if (!amount || !date) return { amount, date, autoAmount, autoDate, hasAmtOverride, yearFraction: 0, interest: 0 };
+  const yearFraction = tpYearFractionRemaining(date);
+  const interest = amount * (tpN(apyPct) / 100) * yearFraction;
+  return { amount, date, autoAmount, autoDate, hasAmtOverride, yearFraction, interest };
+}
+
 function tpProjectedRobinhoodIncome(tp) {
   const checkingBalance = tpN(state.savings?.accounts?.robinhoodChecking) || tpN(state.cashFlow?.robinhoodChecking);
+  const apyPct = tpN(tp.projection_rh_apy);
   const throughMonth = Math.max(0, Math.min(12, Math.round(tpN(tp.projection_rh_interest_through_month))));
   const interestMonthsRemaining = 12 - throughMonth;
-  const checkingFutureInterest = checkingBalance * (tpN(tp.projection_rh_apy) / 100) * (interestMonthsRemaining / 12);
+  const checkingFutureInterest = checkingBalance * (apyPct / 100) * (interestMonthsRemaining / 12);
+  const sale = tpProjectedSaleProceedsInterest(tp, apyPct);
   const projectedInterest = tpN(tp.projection_rh_checking_interest_ytd) +
-    tpN(tp.projection_rh_brokerage_interest_final) + checkingFutureInterest;
-  return { checkingBalance, throughMonth, interestMonthsRemaining, projectedInterest };
+    tpN(tp.projection_rh_brokerage_interest_final) + checkingFutureInterest + sale.interest;
+  return {
+    checkingBalance, throughMonth, interestMonthsRemaining, checkingFutureInterest,
+    saleProceeds: sale.amount, saleDepositDate: sale.date, saleProceedsInterest: sale.interest,
+    saleYearFraction: sale.yearFraction, saleAutoAmount: sale.autoAmount, saleAutoDate: sale.autoDate,
+    saleAmtOverride: sale.hasAmtOverride, projectedInterest
+  };
 }
 
 function tpSyncKnownProjectionInputs(tp, rentalRows) {
@@ -13636,25 +13674,26 @@ function tpYearEndProjection(tp, r, rentalRows) {
   const taxes446Current = tpProjectionCategoryTotal('446BB', 'taxes');
   const taxes446Remaining = Math.max(0, tpN(tp.projection_446_tax_full_year) - taxes446Current);
 
-  const repair6al = tpProjectionCashFlowExpense(name => name.includes('6al') && (name.includes('handyman') || name.includes('repair')));
-  const repair6alRemaining = repair6al && !tpProjectionExpenseRecorded('6AL', repair6al) ? tpN(repair6al.amount) : 0;
-
   const projectedDepreciation = tpProjectionDepreciation(tp, rentalRows);
   const depreciationAgiImpact = r.rentalDepr - projectedDepreciation;
 
   const robinhood = tpProjectedRobinhoodIncome(tp);
-  const { checkingBalance, throughMonth, interestMonthsRemaining } = robinhood;
+  const { checkingBalance, throughMonth, interestMonthsRemaining, checkingFutureInterest,
+    saleProceeds, saleDepositDate, saleProceedsInterest, saleYearFraction,
+    saleAutoAmount, saleAutoDate } = robinhood;
   const projectedRhInterest = robinhood.projectedInterest;
   const rhInterestImpact = projectedRhInterest - tpN(tp.rh_int);
   const rhDividendImpact = tpN(tp.projection_rh_dividends_final) - tpN(tp.rh_div);
+  const rhInterestDetail = saleProceedsInterest > 0.005
+    ? `${fmt(projectedRhInterest)}: ${fmt(tpN(tp.projection_rh_checking_interest_ytd))} YTD + ${fmt(checkingFutureInterest)} on ${fmt(checkingBalance)} balance + ${fmt(saleProceedsInterest)} on ${fmt(saleProceeds)} 6AL proceeds parked from ${saleDepositDate ? fmtDate(saleDepositDate) : '—'} (${Math.round(saleYearFraction * 365)} days)`
+    : `${fmt(projectedRhInterest)} projected from ${fmt(checkingBalance)} checking balance`;
 
   const adjustments = [
     { key: 'fmg', label: 'FMG LLC remaining net profit, after extra ½ SE-tax deduction', amount: fmgAgiImpact, detail: `${fmt(fmgRemaining)} profit remaining` },
     { key: 'rent446', label: `446BB normal months (${normal446.months.length})`, amount: normal446Impact, detail: normal446.months.length ? `${fmt(normal446.monthlyNet)} net per month` : 'All rent months recorded' },
     { key: 'tax446', label: '446BB remaining property tax', amount: -taxes446Remaining, detail: `${fmt(taxes446Current)} recorded of ${fmt(tp.projection_446_tax_full_year)}` },
-    { key: 'repair6al', label: '6AL pending handyman repair', amount: -repair6alRemaining, detail: repair6alRemaining ? 'Linked from Cash Flow until recorded as a rental expense' : 'Already recorded or no Cash Flow item' },
     { key: 'depreciation', label: 'Sale-year depreciation reconciliation', amount: depreciationAgiImpact, detail: `${fmt(r.rentalDepr)} entered → ${fmt(projectedDepreciation)} projected` },
-    { key: 'rhInterest', label: 'Robinhood projected interest', amount: rhInterestImpact, detail: `${fmt(projectedRhInterest)} projected from ${fmt(checkingBalance)} checking balance` },
+    { key: 'rhInterest', label: 'Robinhood projected interest', amount: rhInterestImpact, detail: rhInterestDetail },
     { key: 'rhDividends', label: 'Robinhood projected dividends', amount: rhDividendImpact, detail: `${fmt(tp.projection_rh_dividends_final)} full-year projection` }
   ];
   const adjustmentTotal = adjustments.reduce((sum, item) => sum + item.amount, 0);
@@ -13667,8 +13706,10 @@ function tpYearEndProjection(tp, r, rentalRows) {
   return {
     agi, thresholdGap, minimumReduction, recommendedReduction, surchargeBase, surcharge,
     adjustmentTotal, adjustments, fmgTarget, fmgRemaining, normal446, taxes446Current,
-    repair6alRemaining, projectedDepreciation, checkingBalance, projectedRhInterest,
-    throughMonth, interestMonthsRemaining
+    projectedDepreciation, checkingBalance, projectedRhInterest,
+    throughMonth, interestMonthsRemaining, checkingFutureInterest,
+    saleProceeds, saleDepositDate, saleProceedsInterest, saleYearFraction,
+    saleAutoAmount, saleAutoDate
   };
 }
 
@@ -13678,7 +13719,7 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
   const color = over ? 'var(--danger)' : 'var(--success)';
   const collapsed = tpYearEndProjectionCollapsed();
   const breakdown = p.adjustments
-    .filter(item => Math.abs(item.amount) >= 0.005 || item.key === 'rent446' || item.key === 'repair6al')
+    .filter(item => Math.abs(item.amount) >= 0.005 || item.key === 'rent446')
     .map(item => `<div class="tp-row"><span><span>${escHtml(item.label)}</span><small style="display:block;color:var(--text-muted);font-size:.67rem">${escHtml(item.detail)}</small></span><span style="color:${item.amount > 0 ? 'var(--danger)' : item.amount < 0 ? 'var(--success)' : 'var(--text-muted)'}">${fmtSigned(item.amount)}</span></div>`)
     .join('');
   const assumptionInput = (id, label, value, suffix = '$') => `<label style="display:block;font-size:.67rem;color:var(--text-muted)">${escHtml(label)}<div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem">${suffix === '$' ? '<span>$</span>' : ''}<input id="${id}" type="text" inputmode="decimal" value="${escAttr(moneyInputValue(value))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right">${suffix !== '$' ? `<span>${escHtml(suffix)}</span>` : ''}</div></label>`;
@@ -13712,9 +13753,11 @@ function tpYearEndProjectionHtml(tp, r, rentalRows) {
           ${assumptionInput('tp-proj-rh-dividends-final','RH dividends final',tp.projection_rh_dividends_final)}
           ${assumptionInput('tp-proj-rh-apy','RH checking APY',tp.projection_rh_apy,'%')}
           <label style="display:block;font-size:.67rem;color:var(--text-muted)">Interest actuals through<select id="tp-proj-rh-through-month" onchange="tpChanged()" style="width:100%;margin-top:.15rem">${monthOptions}</select></label>
+          <label style="display:block;font-size:.67rem;color:var(--text-muted)">6AL proceeds parked <span style="opacity:.75">(blank = auto ${fmt(p.saleAutoAmount)})</span><div style="display:flex;align-items:center;gap:.25rem;margin-top:.15rem"><span>$</span><input id="tp-proj-rh-sale-proceeds" type="text" inputmode="decimal" value="${escAttr((tp.projection_rh_sale_proceeds === undefined || tp.projection_rh_sale_proceeds === '' || tp.projection_rh_sale_proceeds === null) ? '' : moneyInputValue(tp.projection_rh_sale_proceeds))}" placeholder="${escAttr(moneyInputValue(p.saleAutoAmount))}" onchange="tpChanged()" onblur="formatMoneyInput(this)" style="width:100%;text-align:right"></div></label>
+          <label style="display:block;font-size:.67rem;color:var(--text-muted)">6AL proceeds deposit date <span style="opacity:.75">(blank = auto ${p.saleAutoDate ? fmtDate(p.saleAutoDate) : '—'})</span><input id="tp-proj-rh-sale-date" type="date" value="${escAttr(tp.projection_rh_sale_deposit_date || '')}" onchange="tpChanged()" style="width:100%;margin-top:.15rem"></label>
         </div>
       </details>
-      <div style="font-size:.65rem;color:var(--text-muted);margin-top:.55rem;line-height:1.4">Automatically refreshes from Tax Planning entries, FMG sync, rental transactions, sale dates, and Cash Flow's Robinhood balance and 6AL repair item. Assumptions above are saved with the ${CURRENT_YEAR} tax plan.</div>
+      <div style="font-size:.65rem;color:var(--text-muted);margin-top:.55rem;line-height:1.4">Automatically refreshes from Tax Planning entries, FMG sync, rental transactions, sale dates, and Cash Flow's Robinhood balance. Checking interest projects the current balance forward at the APY for the remaining months and adds interest on the 6AL sale proceeds from their deposit date through year-end (both auto-derived; override above). Assumptions are saved with the ${CURRENT_YEAR} tax plan.</div>
     </div>`;
 }
 

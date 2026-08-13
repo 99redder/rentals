@@ -7713,6 +7713,16 @@ function _renderMomBudgetHtml() {
       </div>
     </div>
 
+    <details style="margin-bottom:1rem;border:1px solid rgba(16,185,129,.35);border-radius:var(--radius);background:rgba(16,185,129,.08)">
+      <summary style="cursor:pointer;padding:.6rem .9rem;font-size:.8rem;font-weight:700;color:var(--success);list-style:none">💵 Is Mom's Fair Share taxable income to me? — No <span style="font-weight:400;color:var(--text-muted)">(tap for why)</span></summary>
+      <div style="padding:0 .9rem .8rem;font-size:.75rem;color:var(--text-muted);line-height:1.55">
+        <p style="margin:0 0 .5rem">The money Mom pays as <strong>Fair Share</strong> is <strong>expense reimbursement / cost-sharing — not taxable income to you, and it is not reported on your tax return</strong> (no Schedule&nbsp;E rental income, no "other income" on your 1040).</p>
+        <p style="margin:0 0 .5rem">It works this way because her payment is capped at her <strong>proportional share of actual household costs with no markup or profit</strong>. Under <strong>26&nbsp;U.S.C. §280A(d)(2)</strong> and <strong>IRS Pub.&nbsp;527</strong>, a family member occupying the home below fair rental value keeps it your personal residence — there's no rental activity, so no rental income.</p>
+        <p style="margin:0 0 .5rem"><strong>The one condition:</strong> keep it reimbursement, not profit. If you ever charged her <em>more</em> than her genuine share of real costs, the excess could look like reportable rental income. The Fair Share calc is built to stay below that line.</p>
+        <p style="margin:0;font-size:.72rem;font-style:italic">General information, not tax advice — confirm your specific setup with a CPA. Keep the shared bills and allocation method with your records.</p>
+      </div>
+    </details>
+
     <div class="stats-row mb-stats-row mb-stats-primary">
       ${stat('Monthly Income', fmt(c.income), 'var(--success)', `${fmt(c.unallocated)} unallocated`)}
       ${stat('Overall Spending Left', `${spendingRemaining < 0 ? '−' : ''}${fmt(Math.abs(spendingRemaining))}`, spendingRemaining >= 0 ? 'var(--success)' : 'var(--danger)', 'Discretionary, including other overage amounts', 'is-prominent', spendingMonthLabel)}

@@ -11860,6 +11860,7 @@ function healthDefault() {
     profile: {
       heightIn: 65, age: 43, sex: 'male',
       startWeight: 185, goalWeight: 155,
+      startDate: '2026-08-17',   // program begins Monday Aug 17, 2026 (weeks run Mon→Sun)
       activityFactor: 1.375, ratePerWeek: 1,   // light activity (walking); ~1 lb/week
       calorieGoal: null, macros: { protein: null, carbs: null, fat: null }, // null = auto
     },
@@ -12006,8 +12007,11 @@ function healthWeighInFor(mondayIso) {
 async function renderHealth() {
   await loadHealth();
   const today = appTodayIso();
-  if (!_healthDate) _healthDate = today;
-  if (!_healthWeekMon) _healthWeekMon = healthMondayOf(today);
+  const start = state.health.profile.startDate || today;
+  // Before the program starts, land on the start date; once it's underway, land on today.
+  const landing = today >= start ? today : start;
+  if (!_healthDate) _healthDate = landing;
+  if (!_healthWeekMon) _healthWeekMon = healthMondayOf(_healthDate);
   _renderHealthHtml();
 }
 
@@ -12476,6 +12480,7 @@ function healthSetupHtml() {
 
   const goalsCard = healthCard('🎯 Goals & Targets', `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin-bottom:.9rem">
+      <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Program start<input type="date" id="hp-startdate" class="form-input" value="${escAttr(p.startDate || '')}" style="margin-top:.2rem"></label>
       <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Start weight (lb)<input type="number" step="0.1" id="hp-start" class="form-input" value="${p.startWeight}" style="margin-top:.2rem"></label>
       <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Goal weight (lb)<input type="number" step="0.1" id="hp-goal" class="form-input" value="${p.goalWeight}" style="margin-top:.2rem"></label>
       <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Height (in)<input type="number" step="0.5" id="hp-height" class="form-input" value="${p.heightIn}" style="margin-top:.2rem"></label>
@@ -12600,6 +12605,7 @@ async function healthSaveProfile() {
   const p = state.health.profile;
   const num = (id, def) => { const v = parseFloat(document.getElementById(id).value); return isFinite(v) ? v : def; };
   const opt = id => { const v = document.getElementById(id).value.trim(); const n = parseFloat(v); return v === '' || !isFinite(n) || n <= 0 ? null : n; };
+  p.startDate = (document.getElementById('hp-startdate').value || p.startDate);
   p.startWeight = num('hp-start', p.startWeight);
   p.goalWeight = num('hp-goal', p.goalWeight);
   p.heightIn = num('hp-height', p.heightIn);

@@ -60,9 +60,10 @@ A full table of contents is in the `NAVIGATION GUIDE` block comment at the very 
 ```
 Property tabs:  [6AL]  [95EB]  [446BB]  [731WO]  [4781MC]
 View tabs:      [Current Year]  [Tax Summary]  [Investment Return]  [Historical]  [Maintenance]  [Move-In Purchases]  [Later List]  [All Properties]
-Header buttons: [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ Solar]  [Tax Planning]  [💰 Savings]  [Net Worth]  [Cash Flow]
+Header buttons: [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ Solar]  [Tax Planning]  [💰 Savings]  [❤️ Health]  [Net Worth]  [Cash Flow]
 ```
-- Property tabs are hidden for the global header views (`GLOBAL_HEADER_VIEWS`: `tax-planning`, `net-worth`, `budget`, `cash-flow`, `mom-budget`, `solar`, `deductions`, `savings`) and for **All Properties**.
+- The **❤️ Health** header button is deliberately styled **red** (`.tp-header-btn.health-btn`) to stand out from the green tools.
+- Property tabs are hidden for the global header views (`GLOBAL_HEADER_VIEWS`: `tax-planning`, `net-worth`, `budget`, `cash-flow`, `mom-budget`, `solar`, `deductions`, `savings`, `health`) and for **All Properties**.
 - **731WO** and **4781MC** are primary residences — only show Investment Return and Maintenance views (`PRIMARY_PROPERTIES` / `PRIMARY_VIEWS` constants).
 - **Move-In Purchases** and **Later List** are available only on **4781MC** (`MOVE_IN_PURCHASE_PROPERTY` / `LATER_LIST_PROPERTY`).
 - Switching property tabs reloads the current view for the new property.
@@ -85,6 +86,7 @@ Header buttons: [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ So
 | Move-In Purchases | `move-in-purchases` | **4781MC only** — move-in shopping list with per-item categories, price totals, and an edit mode |
 | Later List | `later-list` | **4781MC only** — same setup as Move-In Purchases, for purchases planned *after* move-in; independent KV records |
 | Net Worth | `net-worth` | Assets minus liabilities — linked bank balances, manual items, vehicles, property equity, treasury portfolio; includes the bank-sync warning banner + **Reconnect** flow |
+| Health | `health` | Global workouts / diet / weight-loss / rewards tracker. Four sub-views (Daily · Weekly · History · Setup) selected in-view; state persists in `localStorage` key `rentals_health_view`. See the **Health** section below. |
 
 ### State Model
 ```javascript
@@ -389,6 +391,28 @@ On load, if no obligation has a `kind` field, a one-time migration backfills `ki
 
 ---
 
+### Health View
+
+Global (not per-property) tracker for **workouts, diet/calories, weight loss, and daily rewards**. One KV record `health` via `get_health` / `save_health` (full overwrite, mirroring budget/mom_budget/savings). Frontend state is `state.health`; **every mutation saves the whole record then re-renders**.
+
+**Primary anchors in `index.html`:** section starts at `// ── View: Health`. Seed defaults in `healthDefault()` (calls `healthDefaultMeals(kind)`); normalize/merge in `healthNormalize(raw)`; load/save `loadHealth()` / `saveHealth()`; render dispatch `renderHealth()` → `_renderHealthHtml()`.
+
+**Four sub-views** (segmented control in the header; active view persists in `localStorage` `rentals_health_view`, module var `_healthView`):
+- **Daily** (`healthDailyHtml`) — date nav (`_healthDate`), calorie ring + macro bars, that weekday's **workout** and **meal plan** with check-offs, a **food log** (quick-add chips of most-used foods + manual add with optional "save to database"; per-row edit/delete), a **reward** row, and **Close Day →** (snapshots `day.totals`, sets `closed:true`). Mondays show a **weigh-in** card (required).
+- **Weekly** (`healthWeeklyHtml`) — 7-day Mon–Sun grid (`_healthWeekMon`), weekly averages, and the week's weigh-in with week-over-week delta. Clicking a day jumps to Daily.
+- **History** (`healthHistoryHtml`) — weight-loss progress (start→current→goal) with an inline-SVG trend line (`healthWeightChart`), the full weigh-in log, and the **closed-days** historical table.
+- **Setup** (`healthSetupHtml`) — goals/profile + computed targets, per-weekday workout & meal-plan editors, the reward schedule, and the **food database** manager.
+
+**Targets math** (`healthTargets`, editable overrides): Mifflin-St Jeor (male) BMR → ×`activityFactor` (default 1.375, light/walking) = TDEE → minus `ratePerWeek`×500 = auto calorie goal (floor 1500). Auto macros from current weight: protein ≈ 0.9 g/lb, fat ≈ 25% kcal, carbs = remainder. Current weight = latest weigh-in, else `startWeight`. `profile.calorieGoal` / `profile.macros.{protein,carbs,fat}` are `null` = auto, or a number = manual override. Seed profile: 43M, 5'5" (65 in), 185→155 lb.
+
+**Workout plan** is a Mon–Fri split (Sat/Sun rest via `HEALTH_REST_DAYS`) built for the user's home gym (lat pulldown, chest press machine, ab roller, resistance bands, push-ups + abs, walking-only cardio) and age-conscious recovery. Weekdays are keyed `'1'`–`'5'` (0=Sun … 6=Sat) in `workoutPlan` / `mealPlan` / `rewardSchedule`. Meal plan seeds Factor 75 lunches Mon/Wed/Fri and a post-workout protein shake on training days.
+
+**Dates** use UTC-based helpers (`healthAddDays` / `healthWeekday` / `healthMondayOf`) so calendar math never shifts across time zones. Weigh-ins are stored once per week, dated that week's **Monday**.
+
+**Not on the mobile PWA** yet — desktop `index.html` only (parallel read-only mirror to be added in a later pass if wanted).
+
+---
+
 ### Move-In Purchases View (4781MC only)
 
 Shopping list for the 4781 MC new build — items, estimated prices, notes, product links, purchase status, and a per-item **category**. Gated to `MOVE_IN_PURCHASE_PROPERTY` (`'4781MC'`); `renderMoveInPurchases()` redirects to the property's default view for any other property.
@@ -672,6 +696,12 @@ All of these reject any property other than `4781MC` (`requireLaterListProperty`
 | `get_tax_planning` | `year` (4-digit string) | `{ data: { ... } }` |
 | `save_tax_planning` | `year`, `data: {...}` | `{ success: true }` |
 
+#### Health (global — not per-property)
+| Action | Extra payload | Returns |
+|---|---|---|
+| `get_health` | — | `{ data: {...} }` — the whole health record (empty `{}` on first use → frontend seeds defaults and saves) |
+| `save_health` | `data: {...}` | `{ success: true, data }` — full overwrite; the worker whitelists top-level keys (`profile`, `foods`, `workoutPlan`, `mealPlan`, `rewardSchedule`, `days`, `weighIns`) but keeps nested structure as-is. The frontend owns the shape. |
+
 #### Savings (global — not per-property)
 | Action | Extra payload | Returns |
 |---|---|---|
@@ -715,6 +745,7 @@ solar:summaries            →  { [year]: { ... } }
 deductions                 →  Array of deduction entry objects
 tax_planning:{year}        →  Tax planning inputs for that year
 savings                    →  { accounts: {robinhoodChecking, robinhoodBrokerage}, obligations: [...], payments: { [year]: { [oid]: [bool, ...] } } }
+health                     →  { profile, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[wd]:str}, days:{[YYYY-MM-DD]:{...}}, weighIns:[{date,weight}] }
 net_worth                  →  { manualItems, vehicles, propertyAssets, plaidAccounts, treasuryPortfolio, plaidRefreshedAt, history }
 move_in_purchases:{property}  →  Array of move-in purchase objects (4781MC only)
 move_in_categories:{property} →  Array of category name strings (4781MC only)
@@ -788,6 +819,14 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-08-14 — Health tab (workouts / diet / weight loss / rewards)
+
+- **New global `❤️ Health` view** (red header button so it stands out from the green tools; `.tp-header-btn.health-btn`). Backed by one KV record `health` via new worker actions `get_health` / `save_health` (full overwrite, top-level whitelist). Added to `GLOBAL_HEADER_VIEWS`, `state.health`, `switchView`, and the `renderView` dispatch. **Worker deploy required** (done).
+- **Four sub-views** — Daily, Weekly, History, Setup (see the **Health View** section above). Daily gives a calorie ring + macro bars, the day's workout + meal plan with check-offs, an editable food log with a recallable food database (quick-add chips of most-used items), a daily reward, and a **Close Day** action that snapshots totals into the permanent historical record. Mondays require a weigh-in (one per week, dated the Monday).
+- **Auto calorie/macro targets** from Mifflin-St Jeor (editable overrides): seed profile 43M · 5'5" · 185→155 lb · walking-only cardio → BMR 1661, TDEE 2284, **~1785 kcal/day** target, 167P / 167C / 50F. `healthTargets()` recomputes from the latest weigh-in.
+- **Workout plan** researched for the user's equipment (lat pulldown, chest press machine, ab roller, resistance bands, push-ups + abs) — a Mon–Fri split with age-conscious recovery, **weekends rest**, push-ups featured as the primary lift, and walking as the only cardio. Meal plan seeds Factor 75 lunches (Mon/Wed/Fri) + post-workout protein shakes.
+- Desktop `index.html` only for now — not mirrored into the read-only mobile PWA yet.
 
 ### 2026-08-12 — Tax Planning projection: 6AL sale proceeds interest; repair line removed
 

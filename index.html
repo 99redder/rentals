@@ -11887,12 +11887,14 @@ function healthDefault() {
       { id: 'f-chicken', name: 'Grilled Chicken Breast (6 oz)', calories: 280, protein: 52, carbs: 0, fat: 6, uses: 0 },
     ],
     workoutPlan: {
-      1: [ ex('mo-pu', 'Push-Ups', '4 sets × AMRAP — leave 1–2 in reserve. PRIMARY lift, add reps weekly'),
-           ex('mo-cp', 'Chest Press Machine (flat)', '3 × 8–12'),
+      1: [ ex('mo-pu', 'Push-Ups', '5 sets × AMRAP — hardest work first while you’re fresh. Leave ~1 in reserve; add reps weekly'),
+           ex('mo-cp', 'Chest Press Machine (flat)', '4 × 8–12'),
+           ex('mo-lpd', 'Lat Pull-Down', '4 × 8–12'),
            ex('mo-fly', 'Resistance Band Chest Fly', '3 × 12–15'),
-           ex('mo-roll', 'Ab Roller (kneeling)', '3 × 8–12'),
-           ex('mo-plank', 'Plank', '3 × 30–45 sec'),
-           ex('mo-walk', 'Brisk Walk', '25–30 min') ],
+           ex('mo-roll', 'Ab Roller (kneeling)', '4 × 8–12'),
+           ex('mo-plank', 'Plank', '3 × 45–60 sec'),
+           ex('mo-bike', 'Bicycle Crunch', '3 × 20'),
+           ex('mo-walk', 'Brisk Walk', '35–40 min — burn off the weekend') ],
       2: [ ex('tu-lpd', 'Lat Pull-Down', '4 × 8–12'),
            ex('tu-row', 'Resistance Band Bent-Over Row', '3 × 12–15'),
            ex('tu-curl', 'Resistance Band Biceps Curl', '3 × 12–15'),
@@ -11966,10 +11968,20 @@ function healthNormalize(raw) {
   }
   profile.habits = habits;
   delete profile.habitGoals;
+  const workoutPlan = (h.workoutPlan && Object.keys(h.workoutPlan).length) ? h.workoutPlan : def.workoutPlan;
+  // One-time: front-load Monday (tougher weekend-reset day). Only rewrite it if
+  // Monday is still the *original* default (unmodified), so custom edits are safe.
+  if (!profile.mondayFrontloadedV1) {
+    const mon = workoutPlan['1'];
+    const oldMonIds = ['mo-pu', 'mo-cp', 'mo-fly', 'mo-roll', 'mo-plank', 'mo-walk'];
+    const isOriginal = Array.isArray(mon) && mon.length === oldMonIds.length && mon.every((e, i) => e && e.id === oldMonIds[i]);
+    if (isOriginal) workoutPlan['1'] = def.workoutPlan['1'].map(x => ({ ...x }));
+    profile.mondayFrontloadedV1 = true;
+  }
   return {
     profile,
     foods: Array.isArray(h.foods) && h.foods.length ? h.foods.map(healthNormFood) : def.foods,
-    workoutPlan: (h.workoutPlan && Object.keys(h.workoutPlan).length) ? h.workoutPlan : def.workoutPlan,
+    workoutPlan,
     mealPlan: (h.mealPlan && Object.keys(h.mealPlan).length) ? h.mealPlan : def.mealPlan,
     rewardSchedule: Object.assign({}, def.rewardSchedule, h.rewardSchedule || {}),
     days: (h.days && typeof h.days === 'object') ? h.days : {},
@@ -11983,8 +11995,11 @@ async function loadHealth() {
   const res = await callApi({ action: 'get_health' });
   const raw = res.data || {};
   const seeded = !raw || Object.keys(raw).length === 0;
+  // Persist one-time migrations (e.g. Monday front-load) the first time we see a
+  // record that predates them, so they don't re-run every load.
+  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1);
   state.health = healthNormalize(raw);
-  if (seeded) await saveHealth();
+  if (seeded || needsMigrationSave) await saveHealth();
 }
 async function saveHealth() {
   await callApi({ action: 'save_health', data: state.health });
@@ -12353,9 +12368,12 @@ function healthDailyHtml() {
   // Workout card
   const exercises = isRest ? [] : (state.health.workoutPlan[String(wd)] || []);
   const doneCount = exercises.filter(e => day.workoutsDone[e.id]).length;
+  const mondayNote = (wd === 1 && !isRest)
+    ? `<div style="background:var(--warning-light);border:1px solid var(--warning);border-radius:var(--radius);padding:.5rem .7rem;margin-bottom:.6rem;font-size:.8rem"><strong>💪 Weekend Reset — front-loaded day.</strong> You’re fresh after two rest days, so Monday is the toughest: hit the hard compounds first, then the extra core and a longer walk to offset the weekend. No reward today — earn it back through the week.</div>`
+    : '';
   const workoutInner = isRest
     ? `<div style="text-align:center;padding:1rem;color:var(--text-muted)"><div style="font-size:1.6rem">😌</div><div style="font-weight:700;color:var(--text);margin-top:.3rem">Rest & Recovery Day</div><div style="font-size:.82rem;margin-top:.25rem">No training today. An easy 20–30 min walk is fine if you feel up to it. Recovery is where a 43-year-old body makes its gains.</div></div>`
-    : exercises.map(e => `
+    : mondayNote + exercises.map(e => `
         <div style="padding:.5rem .2rem;border-bottom:1px solid var(--border)">
           <label style="display:flex;align-items:flex-start;gap:.6rem;cursor:pointer;margin:0">
             <input type="checkbox" ${day.workoutsDone[e.id] ? 'checked' : ''} onchange="healthToggleWorkout('${iso}','${e.id}')" style="width:auto;margin-top:.2rem">

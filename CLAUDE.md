@@ -405,7 +405,7 @@ Global (not per-property) tracker for **workouts, diet/calories, weight loss, an
 
 **Targets math** (`healthTargets`, editable overrides): Mifflin-St Jeor (male) BMR → ×`activityFactor` (default 1.375, light/walking) = TDEE → minus `ratePerWeek`×500 = auto calorie goal (floor 1500). Auto macros from current weight: protein ≈ 0.9 g/lb, fat ≈ 25% kcal, carbs = remainder. Current weight = latest weigh-in, else `startWeight`. `profile.calorieGoal` / `profile.macros.{protein,carbs,fat}` are `null` = auto, or a number = manual override. Seed profile: 43M, 5'5" (65 in), 185→155 lb.
 
-**Workout plan** is a Mon–Fri split (Sat/Sun rest via `HEALTH_REST_DAYS`) built for the user's home gym (lat pulldown, chest press machine, ab roller, resistance bands, push-ups + abs, walking-only cardio) and age-conscious recovery. Weekdays are keyed `'1'`–`'5'` (0=Sun … 6=Sat) in `workoutPlan` / `mealPlan` / `rewardSchedule`. Meal plan seeds Factor 75 lunches Mon/Wed/Fri and a post-workout protein shake on training days.
+**Workout plan** is a Mon–Fri split (Sat/Sun rest via `HEALTH_REST_DAYS`). **Monday is deliberately the toughest, front-loaded "weekend reset" day** (hardest compounds first, extra sets + core, longer walk, and no reward) since it follows two rest days — the Daily card shows a 💪 Weekend Reset note when `wd===1`. A one-time `profile.mondayFrontloadedV1` migration in `healthNormalize` rewrites an existing Monday to the tougher default **only if it's still the unmodified original** (matched by exercise ids), so custom edits are never clobbered; `loadHealth` saves once when it first applies. Built for the user's home gym (lat pulldown, chest press machine, ab roller, resistance bands, push-ups + abs, walking-only cardio) and age-conscious recovery. Weekdays are keyed `'1'`–`'5'` (0=Sun … 6=Sat) in `workoutPlan` / `mealPlan` / `rewardSchedule`. Meal plan seeds Factor 75 lunches Mon/Wed/Fri and a post-workout protein shake on training days.
 
 **Dates** use UTC-based helpers (`healthAddDays` / `healthWeekday` / `healthMondayOf`) so calendar math never shifts across time zones. Weigh-ins are stored once per week, dated that week's **Monday**.
 
@@ -827,6 +827,11 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-08-14 — Health: Monday is a front-loaded "weekend reset"
+
+- **Monday's workout is now the toughest, front-loaded day** (coming off the weekend: two days no training + freer eating). Hardest compounds first (5×AMRAP push-ups → chest press → **added lat pull-down** → fly), extra core (**added bicycle crunch**, more ab-roller/plank sets), and a longer 35–40 min walk. Reward already set to none by the user. The Daily card shows a 💪 Weekend Reset note.
+- Applied to existing saved plans via a guarded one-time `profile.mondayFrontloadedV1` migration in `healthNormalize` — rewrites Monday **only if it's still the unmodified original** (by exercise ids), never clobbering custom edits; `loadHealth` persists it on first apply.
 
 ### 2026-08-14 — Health: configurable daily habits (drop steps/sleep)
 

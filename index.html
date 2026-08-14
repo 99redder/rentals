@@ -11818,6 +11818,7 @@ async function savDelete(id) {
 const HEALTH_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const HEALTH_WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const HEALTH_REST_DAYS = new Set([0, 6]); // Sun + Sat
+const HEALTH_REWARD_DAYS = new Set([1, 2, 3, 4, 5]); // rewards only Mon–Fri (AM + PM)
 
 let _healthView = localStorage.getItem('rentals_health_view') || 'daily';
 let _healthDate = null;      // selected calendar day (Daily view)
@@ -11855,6 +11856,10 @@ function healthDefaultMeals(kind) {
   const snack = m('n', 'Snack', 'Fruit or yogurt');
   if (kind === 'factor') return [breakfast, m('l', 'Lunch — Factor 75', 'Factor 75 meal service'), shake, dinner, snack];
   if (kind === 'home') return [breakfast, m('l', 'Lunch — Home', 'Chicken + veg / salad'), shake, dinner, snack];
+  if (kind === 'fasting') return [
+    m('b', 'Breakfast (eat before 10 AM)', 'Protein + healthy fats to start the fast well-fed'),
+    m('cutoff', '⛔ Kitchen closed at 10 AM', 'Fast until tomorrow morning — water, black coffee & sugar-free Red Bull are fine'),
+  ];
   return [breakfast, m('l', 'Lunch', 'Home lunch'), dinner, snack]; // rest day — no post-workout shake
 }
 
@@ -11865,6 +11870,7 @@ function healthDefault() {
       heightIn: 65, age: 43, sex: 'male',
       startWeight: 185, goalWeight: 155,
       startDate: '2026-08-17',   // program begins Monday Aug 17, 2026 (weeks run Mon→Sun)
+      fasting: { weekday: 3, cutoffLabel: '10 AM', waterGoal: 12 },   // Wed = intermittent-fasting day (eat AM, stop by 10, fast to next morning); higher water goal
       activityFactor: 1.375, ratePerWeek: 1,   // light activity (walking); ~1 lb/week
       calorieGoal: null, macros: { protein: null, carbs: null, fat: null }, // null = auto
       habits: [   // configurable daily habits; type 'counter' (has goal/unit) or 'check'
@@ -11922,11 +11928,17 @@ function healthDefault() {
            ex('fr-walk', 'Brisk Walk', '25–30 min') ],
     },
     mealPlan: {
-      1: healthDefaultMeals('factor'), 2: healthDefaultMeals('home'), 3: healthDefaultMeals('factor'),
+      1: healthDefaultMeals('factor'), 2: healthDefaultMeals('home'), 3: healthDefaultMeals('fasting'),
       4: healthDefaultMeals('home'), 5: healthDefaultMeals('factor'),
       0: healthDefaultMeals('rest'), 6: healthDefaultMeals('rest'),
     },
-    rewardSchedule: { 0: 'Fancy coffee', 1: 'Red Bull', 2: 'Dessert', 3: 'Red Bull', 4: 'Dessert', 5: 'Red Bull + movie night', 6: 'Special dessert' },
+    rewardSchedule: {   // Mon–Fri only, two rewards per day (AM + PM)
+      1: { am: '', pm: '' },                                  // Monday: none (front-loaded reset day)
+      2: { am: 'Red Bull', pm: 'Dessert' },
+      3: { am: 'Red Bull (sugar-free)', pm: 'Red Bull (sugar-free)' },   // fasting day → Red Bull (no sugar, doesn't break the fast)
+      4: { am: 'Red Bull', pm: 'Dessert' },
+      5: { am: 'Fancy coffee', pm: 'Dessert + movie night' },
+    },
     days: {},
     weighIns: [],
   };
@@ -11939,6 +11951,19 @@ function healthNormFood(f) {
     calories: +f.calories || 0, protein: +f.protein || 0, carbs: +f.carbs || 0, fat: +f.fat || 0,
     uses: +f.uses || 0,
   };
+}
+
+// Reward schedule: Mon–Fri only, each { am, pm }. Migrates the old single-string
+// per-weekday shape (value → AM) and drops weekend entries.
+function healthNormRewardSchedule(raw, defSched) {
+  const out = {};
+  for (const wd of [1, 2, 3, 4, 5]) {
+    const v = raw && raw[wd];
+    if (v && typeof v === 'object') out[wd] = { am: String(v.am || '').slice(0, 200), pm: String(v.pm || '').slice(0, 200) };
+    else if (typeof v === 'string') out[wd] = { am: v.slice(0, 200), pm: '' };   // migrate old single reward → AM
+    else out[wd] = { ...(defSched[wd] || { am: '', pm: '' }) };
+  }
+  return out;
 }
 
 function healthNormHabit(x) {
@@ -11978,12 +12003,21 @@ function healthNormalize(raw) {
     if (isOriginal) workoutPlan['1'] = def.workoutPlan['1'].map(x => ({ ...x }));
     profile.mondayFrontloadedV1 = true;
   }
+  // One-time: make Wednesday the intermittent-fasting meal plan — only if it's
+  // still the original default Wed plan (breakfast/Factor lunch/shake/dinner/snack).
+  const mealPlan = (h.mealPlan && Object.keys(h.mealPlan).length) ? h.mealPlan : def.mealPlan;
+  if (!profile.wedFastingV1) {
+    const wed = mealPlan['3'];
+    const l = Array.isArray(wed) && wed.find(m => m.id === 'l');
+    if (l && /Factor 75/.test(l.name || '')) mealPlan['3'] = def.mealPlan['3'].map(x => ({ ...x }));
+    profile.wedFastingV1 = true;
+  }
   return {
     profile,
     foods: Array.isArray(h.foods) && h.foods.length ? h.foods.map(healthNormFood) : def.foods,
     workoutPlan,
-    mealPlan: (h.mealPlan && Object.keys(h.mealPlan).length) ? h.mealPlan : def.mealPlan,
-    rewardSchedule: Object.assign({}, def.rewardSchedule, h.rewardSchedule || {}),
+    mealPlan,
+    rewardSchedule: healthNormRewardSchedule(h.rewardSchedule, def.rewardSchedule),
     days: (h.days && typeof h.days === 'object') ? h.days : {},
     weighIns: Array.isArray(h.weighIns) ? h.weighIns : [],
   };
@@ -11997,7 +12031,7 @@ async function loadHealth() {
   const seeded = !raw || Object.keys(raw).length === 0;
   // Persist one-time migrations (e.g. Monday front-load) the first time we see a
   // record that predates them, so they don't re-run every load.
-  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1);
+  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1);
   state.health = healthNormalize(raw);
   if (seeded || needsMigrationSave) await saveHealth();
 }
@@ -12042,11 +12076,16 @@ function healthTargets(h) {
 // ── Per-day accessors ─────────────────────────────────────────────────────────
 function healthEnsureDay(iso) {
   if (!state.health.days[iso]) {
-    state.health.days[iso] = { closed: false, workoutsDone: {}, mealsDone: {}, foodLog: [], rewardEarned: false, rewardText: '', note: '', habits: {} };
+    state.health.days[iso] = { closed: false, workoutsDone: {}, mealsDone: {}, foodLog: [], rewardAm: false, rewardPm: false, rewardTextAm: '', rewardTextPm: '', note: '', habits: {} };
   }
   const d = state.health.days[iso];
   d.workoutsDone = d.workoutsDone || {}; d.mealsDone = d.mealsDone || {}; d.foodLog = d.foodLog || [];
   d.habits = d.habits || {};
+  // Migrate the old single reward (→ AM) to the AM/PM split.
+  if (d.rewardEarned !== undefined) { if (d.rewardAm === undefined) d.rewardAm = !!d.rewardEarned; delete d.rewardEarned; }
+  if (d.rewardText !== undefined) { if (!d.rewardTextAm) d.rewardTextAm = d.rewardText; delete d.rewardText; }
+  if (d.rewardAm === undefined) d.rewardAm = false;
+  if (d.rewardPm === undefined) d.rewardPm = false;
   return d;
 }
 function healthDayTotals(day) {
@@ -12056,6 +12095,13 @@ function healthDayTotals(day) {
 }
 function healthWeighInFor(mondayIso) {
   return (state.health.weighIns || []).find(w => w.date === mondayIso) || null;
+}
+
+// A habit's effective goal for a given weekday — the fasting day bumps water higher.
+function healthHabitGoal(hb, wd) {
+  const f = state.health.profile.fasting;
+  if (f && f.weekday === wd && hb.id === 'water' && f.waterGoal > 0) return f.waterGoal;
+  return hb.goal;
 }
 
 // ── Adherence & streaks ───────────────────────────────────────────────────────
@@ -12074,8 +12120,8 @@ function healthDayAdherence(iso) {
   const calOk = hasFood && totals.calories <= t.calories;
   const dh = (day && day.habits) || {};
   const habitsList = state.health.profile.habits || [];
-  const habitsOk = habitsList.every(hb => hb.type === 'counter' ? (dh[hb.id] || 0) >= hb.goal : (dh[hb.id] || 0) >= 1);
-  const hasData = !!day && (hasFood || wDone > 0 || Object.values(dh).some(v => v) || day.rewardEarned);
+  const habitsOk = habitsList.every(hb => hb.type === 'counter' ? (dh[hb.id] || 0) >= healthHabitGoal(hb, wd) : (dh[hb.id] || 0) >= 1);
+  const hasData = !!day && (hasFood || wDone > 0 || Object.values(dh).some(v => v) || day.rewardAm || day.rewardPm || day.rewardEarned);
   return { isRest, workoutOk, calOk, habitsOk, hasFood, hasData, wDone, wTotal: exs.length, totals, goal: t.calories };
 }
 // Reward "unlocks" when the day's workout + calorie targets are met.
@@ -12278,7 +12324,7 @@ function healthDailyHtml() {
   const today = appTodayIso();
   const wd = healthWeekday(iso);
   const isRest = HEALTH_REST_DAYS.has(wd);
-  const day = state.health.days[iso] || { closed: false, workoutsDone: {}, mealsDone: {}, foodLog: [], rewardEarned: false, rewardText: '' };
+  const day = state.health.days[iso] || { closed: false, workoutsDone: {}, mealsDone: {}, foodLog: [], rewardAm: false, rewardPm: false, rewardTextAm: '', rewardTextPm: '', habits: {} };
   const t = healthTargets(state.health);
   const totals = healthDayTotals(day);
 
@@ -12335,13 +12381,15 @@ function healthDailyHtml() {
   const habitRowHtml = (hb) => {
     const val = dHabits[hb.id] || 0;
     if (hb.type === 'counter') {
-      const met = val >= hb.goal;
+      const goal = healthHabitGoal(hb, wd);
+      const boosted = goal > hb.goal;
+      const met = val >= goal;
       return `<div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap">
         <span style="width:118px;font-weight:600">${hb.icon} ${escHtml(hb.name)}</span>
         <button class="btn btn-ghost btn-sm" onclick="healthBumpHabit('${iso}','${hb.id}',-1)" style="padding:.15rem .55rem">−</button>
         <span style="font-weight:800;font-size:1.15rem;min-width:2.2rem;text-align:center">${val}</span>
         <button class="btn btn-ghost btn-sm" onclick="healthBumpHabit('${iso}','${hb.id}',1)" style="padding:.15rem .55rem">+</button>
-        <span style="font-size:.74rem;color:var(--text-muted)">of ${hb.goal}${hb.unit ? ' ' + escHtml(hb.unit) : ''}</span> ${met ? '<span style="color:var(--success);font-weight:800">✓</span>' : ''}
+        <span style="font-size:.74rem;color:var(--text-muted)">of ${goal}${hb.unit ? ' ' + escHtml(hb.unit) : ''}${boosted ? ' <span style="color:var(--primary);font-weight:700">↑ fasting day</span>' : ''}</span> ${met ? '<span style="color:var(--success);font-weight:800">✓</span>' : ''}
       </div>`;
     }
     const done = val >= 1;
@@ -12390,14 +12438,19 @@ function healthDailyHtml() {
   // Meal plan card
   const meals = state.health.mealPlan[String(wd)] || [];
   const mealsDone = meals.filter(m => day.mealsDone[m.id]).length;
-  const mealInner = meals.length ? meals.map(m => `
+  const fasting = state.health.profile.fasting;
+  const isFastingDay = fasting && fasting.weekday === wd;
+  const fastingNote = isFastingDay
+    ? `<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:var(--radius);padding:.5rem .7rem;margin-bottom:.6rem;font-size:.8rem"><strong>⏳ Intermittent Fasting day.</strong> Eat breakfast, then <strong>stop eating by ${escHtml(fasting.cutoffLabel || '10 AM')}</strong> and fast until tomorrow morning. Water, black coffee, and <strong>sugar-free Red Bull</strong> are fine (no calories) — hence today’s Red Bull reward. Extra water goal today.</div>`
+    : '';
+  const mealInner = fastingNote + (meals.length ? meals.map(m => `
       <label style="display:flex;align-items:flex-start;gap:.6rem;padding:.5rem .2rem;border-bottom:1px solid var(--border);cursor:pointer">
         <input type="checkbox" ${day.mealsDone[m.id] ? 'checked' : ''} onchange="healthToggleMeal('${iso}','${m.id}')" style="width:auto;margin-top:.2rem">
         <span style="flex:1">
           <span style="font-weight:600;${day.mealsDone[m.id] ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(m.name)}</span>
           ${m.note ? `<span style="display:block;font-size:.76rem;color:var(--text-muted)">${escHtml(m.note)}</span>` : ''}
         </span>
-      </label>`).join('') : '<div style="color:var(--text-muted);font-size:.85rem">No meal plan for this day. Edit it under Setup.</div>';
+      </label>`).join('') : '<div style="color:var(--text-muted);font-size:.85rem">No meal plan for this day. Edit it under Setup.</div>');
   const mealCard = healthCard('🍽️ Meal Plan', mealInner, `<span style="font-size:.8rem;color:var(--text-muted)">${mealsDone}/${meals.length} done</span>`);
 
   // Food log card
@@ -12456,21 +12509,33 @@ function healthDailyHtml() {
     </div>`;
   const foodCard = healthCard('📋 Food Log', foodInner);
 
-  // Reward card (optionally gated on hitting workout + calorie targets)
-  const reward = day.rewardText || state.health.rewardSchedule[String(wd)] || '';
-  const gated = state.health.profile.rewardGated;
-  const unlocked = healthRewardUnlocked(iso);
-  const rewardLocked = gated && !unlocked && !day.rewardEarned;
-  const rewardCard = healthCard('🎁 Daily Reward', `
-    <div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">
-      <label style="display:flex;align-items:center;gap:.5rem;cursor:${rewardLocked ? 'not-allowed' : 'pointer'};flex-shrink:0;${rewardLocked ? 'opacity:.55' : ''}">
-        <input type="checkbox" ${day.rewardEarned ? 'checked' : ''} ${rewardLocked ? 'disabled' : ''} onchange="healthToggleReward('${iso}')" style="width:auto;transform:scale(1.3)">
-        <span style="font-weight:700;${day.rewardEarned ? 'color:var(--success)' : ''}">${day.rewardEarned ? 'Earned!' : (rewardLocked ? '🔒 Locked' : 'Mark earned')}</span>
-      </label>
-      <input type="text" class="form-input" value="${escAttr(reward)}" placeholder="Today's reward" onchange="healthSetRewardText('${iso}',this.value)" style="flex:1;min-width:150px">
-    </div>
-    ${gated ? `<div style="font-size:.76rem;margin-top:.5rem;color:${unlocked ? 'var(--success)' : 'var(--text-muted)'}">${unlocked ? '✓ Targets met — reward unlocked.' : '🔒 Complete your workout and stay at/under your calorie goal to unlock today’s reward.'}</div>` : ''}
-    <div style="font-size:.74rem;color:var(--text-muted);margin-top:.4rem">Default for ${HEALTH_WEEKDAYS_LONG[wd]}: ${escHtml(state.health.rewardSchedule[String(wd)] || '—')} · edit the weekly schedule under Setup.</div>`);
+  // Reward card — two rewards per weekday (AM + PM); PM optionally gated on targets.
+  let rewardCard;
+  if (!HEALTH_REWARD_DAYS.has(wd)) {
+    rewardCard = healthCard('🎁 Daily Rewards', `<div style="color:var(--text-muted);font-size:.85rem">Rewards run <strong>Mon–Fri</strong> only — enjoy the weekend off. 😌</div>`);
+  } else {
+    const sched = state.health.rewardSchedule[String(wd)] || { am: '', pm: '' };
+    const gated = state.health.profile.rewardGated;
+    const unlocked = healthRewardUnlocked(iso);
+    const slotRow = (slot, label, text, earned, gate) => {
+      const locked = gate && gated && !unlocked && !earned;
+      return `<div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;padding:.3rem 0">
+        <span style="width:46px;font-weight:800;font-size:.74rem">${label}</span>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:${locked ? 'not-allowed' : 'pointer'};${locked ? 'opacity:.55' : ''}">
+          <input type="checkbox" ${earned ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="healthToggleReward('${iso}','${slot}')" style="width:auto;transform:scale(1.2)">
+          <span style="font-weight:700;font-size:.8rem;${earned ? 'color:var(--success)' : ''}">${earned ? 'Earned!' : (locked ? '🔒 Locked' : 'Mark')}</span>
+        </label>
+        <input type="text" class="form-input" value="${escAttr(text)}" placeholder="${slot === 'am' ? 'Morning' : 'Evening'} reward" onchange="healthSetRewardText('${iso}','${slot}',this.value)" style="flex:1;min-width:130px">
+      </div>`;
+    };
+    const amText = day.rewardTextAm || sched.am || '';
+    const pmText = day.rewardTextPm || sched.pm || '';
+    rewardCard = healthCard('🎁 Daily Rewards', `
+      ${slotRow('am', '☀️ AM', amText, day.rewardAm || false, false)}
+      ${slotRow('pm', '🌙 PM', pmText, day.rewardPm || false, true)}
+      ${gated ? `<div style="font-size:.74rem;margin-top:.4rem;color:${unlocked ? 'var(--success)' : 'var(--text-muted)'}">${unlocked ? '✓ Targets met — PM reward unlocked.' : '🔒 PM reward unlocks after you finish the workout and stay at/under calories. AM is always free.'}</div>` : ''}
+      <div style="font-size:.72rem;color:var(--text-muted);margin-top:.4rem">Defaults for ${HEALTH_WEEKDAYS_LONG[wd]}: AM ${escHtml(sched.am || '—')} · PM ${escHtml(sched.pm || '—')} · edit under Setup.</div>`);
+  }
 
   return `${nav}${weighCard}${streakStrip}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 1rem;align-items:start">
@@ -12500,11 +12565,13 @@ async function healthToggleMeal(iso, mealId) {
   const d = healthEnsureDay(iso); d.mealsDone[mealId] = !d.mealsDone[mealId];
   await saveHealth(); _renderHealthHtml();
 }
-async function healthToggleReward(iso) {
+async function healthToggleReward(iso, slot) {
   const d = healthEnsureDay(iso);
-  // If reward-gating is on, don't allow marking earned until targets are met.
-  if (!d.rewardEarned && state.health.profile.rewardGated && !healthRewardUnlocked(iso)) return;
-  d.rewardEarned = !d.rewardEarned;
+  const key = slot === 'pm' ? 'rewardPm' : 'rewardAm';
+  const willEarn = !d[key];
+  // PM reward is gated on hitting targets (when gating is on); AM is always free.
+  if (willEarn && slot === 'pm' && state.health.profile.rewardGated && !healthRewardUnlocked(iso)) return;
+  d[key] = willEarn;
   await saveHealth(); _renderHealthHtml();
 }
 async function healthBumpHabit(iso, id, delta) {
@@ -12517,8 +12584,9 @@ async function healthToggleHabitCheck(iso, id) {
   d.habits[id] = (d.habits[id] || 0) >= 1 ? 0 : 1;
   await saveHealth(); _renderHealthHtml();
 }
-async function healthSetRewardText(iso, val) {
-  const d = healthEnsureDay(iso); d.rewardText = String(val || '').slice(0, 200);
+async function healthSetRewardText(iso, slot, val) {
+  const d = healthEnsureDay(iso);
+  d[slot === 'pm' ? 'rewardTextPm' : 'rewardTextAm'] = String(val || '').slice(0, 200);
   await saveHealth();
 }
 function healthFoodNameChanged() {
@@ -12626,7 +12694,7 @@ function healthWeeklyHtml() {
     const wDone = day ? exs.filter(e => day.workoutsDone[e.id]).length : 0;
     if (!isRest) { workoutsTotal += exs.length; workoutsDone += wDone; }
     if (day && totals.calories > 0) { sumCals += totals.calories; calDays++; }
-    if (day && day.rewardEarned) rewardsEarned++;
+    if (day && HEALTH_REWARD_DAYS.has(wd)) { if (day.rewardAm) rewardsEarned++; if (day.rewardPm) rewardsEarned++; }
     if (iso <= today) { applicableDays++; const ad = healthDayAdherence(iso); if (ad.workoutOk && ad.calOk) onPlanDays++; }
     const overGoal = totals.calories > t.calories;
     const calColor = totals.calories === 0 ? 'var(--text-muted)' : (overGoal ? 'var(--danger)' : 'var(--success)');
@@ -12644,7 +12712,7 @@ function healthWeeklyHtml() {
       <div style="font-size:.72rem;color:var(--text-muted)">${isRest ? '😌 Rest' : `🏋️ ${wDone}/${exs.length}`}</div>
       <div style="font-size:.9rem;font-weight:700;color:${calColor}">${totals.calories ? Math.round(totals.calories) + ' kcal' : '—'}</div>
       ${hasHabits ? `<div style="font-size:.66rem;color:var(--text-muted)">${habitBits}</div>` : ''}
-      <div style="font-size:.72rem">${day && day.rewardEarned ? '🎁 earned' : '<span style="color:var(--text-muted)">🎁 —</span>'}</div>
+      ${HEALTH_REWARD_DAYS.has(wd) ? `<div style="font-size:.72rem">🎁 <span title="AM">${day && day.rewardAm ? '☀️' : '·'}</span> <span title="PM">${day && day.rewardPm ? '🌙' : '·'}</span></div>` : ''}
     </button>`;
   }).join('');
 
@@ -12654,7 +12722,7 @@ function healthWeeklyHtml() {
       <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">On-Plan Days</div><div style="font-size:1.3rem;font-weight:750;color:${onPlanPct >= 70 ? 'var(--success)' : (onPlanPct >= 40 ? 'var(--warning)' : 'var(--text)')}">${onPlanPct}%<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> · ${onPlanDays}/${applicableDays}</span></div></div>
       <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Avg Calories</div><div style="font-size:1.3rem;font-weight:750">${avgCals || '—'}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / ${t.calories}</span></div></div>
       <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Workout Sets Done</div><div style="font-size:1.3rem;font-weight:750">${workoutsDone}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / ${workoutsTotal}</span></div></div>
-      <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Rewards Earned</div><div style="font-size:1.3rem;font-weight:750">${rewardsEarned}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / 7</span></div></div>
+      <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Rewards Earned</div><div style="font-size:1.3rem;font-weight:750">${rewardsEarned}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / 10</span></div></div>
     </div>`;
 
   const startMon = healthMondayOf(state.health.profile.startDate || mon);
@@ -12752,7 +12820,7 @@ function healthHistoryHtml() {
       <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border);text-align:right;font-weight:600;color:${over ? 'var(--danger)' : 'var(--text)'}">${Math.round(totals.calories)}</td>
       <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(totals.protein)}/${Math.round(totals.carbs)}/${Math.round(totals.fat)}</td>
       <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${HEALTH_REST_DAYS.has(wd) ? 'rest' : wDone + '/' + exs.length}</td>
-      <td style="padding:.4rem .6rem;border-bottom:1px solid var(--border);text-align:center">${d.rewardEarned ? '🎁' : '—'}</td>
+      <td style="padding:.4rem .6rem;border-bottom:1px solid var(--border);text-align:center">${(d.rewardAm || d.rewardPm) ? `🎁${d.rewardAm ? '☀️' : ''}${d.rewardPm ? '🌙' : ''}` : '—'}</td>
     </tr>`;
   }).join('');
   const daysTable = healthCard('📚 Closed Days (Historical Record)', `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.85rem">
@@ -12866,11 +12934,16 @@ function healthSetupHtml() {
   }).join('');
   const mealEditor = healthCard('🍽️ Meal Plan', mealCards);
 
-  const rewardEditor = healthCard('🎁 Reward Schedule', order.map(wd => `
-      <div style="display:flex;align-items:center;gap:.6rem;padding:.3rem 0">
-        <span style="width:100px;font-weight:600;font-size:.84rem">${HEALTH_WEEKDAYS_LONG[wd]}</span>
-        <input type="text" class="form-input" value="${escAttr(state.health.rewardSchedule[String(wd)] || '')}" onchange="healthSetRewardSched(${wd},this.value)" style="flex:1">
-      </div>`).join(''));
+  const rewardEditor = healthCard('🎁 Reward Schedule', `
+    <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.5rem">Two rewards per weekday — an ☀️ AM and a 🌙 PM. Weekends have no rewards. Leave a slot blank for none.</div>
+    ${[1, 2, 3, 4, 5].map(wd => {
+      const s = state.health.rewardSchedule[String(wd)] || { am: '', pm: '' };
+      return `<div style="display:flex;align-items:center;gap:.5rem;padding:.3rem 0;flex-wrap:wrap">
+        <span style="width:92px;font-weight:600;font-size:.84rem">${HEALTH_WEEKDAYS_LONG[wd]}</span>
+        <input type="text" class="form-input" value="${escAttr(s.am)}" placeholder="☀️ AM reward" onchange="healthSetRewardSched(${wd},'am',this.value)" style="flex:1;min-width:120px;font-size:.85rem">
+        <input type="text" class="form-input" value="${escAttr(s.pm)}" placeholder="🌙 PM reward" onchange="healthSetRewardSched(${wd},'pm',this.value)" style="flex:1;min-width:120px;font-size:.85rem">
+      </div>`;
+    }).join('')}`);
 
   // Food database
   const foods = [...state.health.foods].sort((a, b) => a.name.localeCompare(b.name));
@@ -12990,8 +13063,11 @@ async function healthDeleteMeal(wd, id) {
   state.health.mealPlan[key] = (state.health.mealPlan[key] || []).filter(m => m.id !== id);
   await saveHealth(); _renderHealthHtml();
 }
-async function healthSetRewardSched(wd, val) {
-  state.health.rewardSchedule[String(wd)] = String(val || '').slice(0, 200);
+async function healthSetRewardSched(wd, slot, val) {
+  const key = String(wd);
+  const cur = state.health.rewardSchedule[key];
+  if (!cur || typeof cur !== 'object') state.health.rewardSchedule[key] = { am: '', pm: '' };
+  state.health.rewardSchedule[key][slot === 'pm' ? 'pm' : 'am'] = String(val || '').slice(0, 200);
   await saveHealth();
 }
 async function healthAddDbFood() {

@@ -753,7 +753,7 @@ solar:summaries            →  { [year]: { ... } }
 deductions                 →  Array of deduction entry objects
 tax_planning:{year}        →  Tax planning inputs for that year
 savings                    →  { accounts: {robinhoodChecking, robinhoodBrokerage}, obligations: [...], payments: { [year]: { [oid]: [bool, ...] } } }
-health                     →  { profile:{startDate,startWeight,goalWeight,habits:[{id,name,icon,type:'counter'|'check',goal,unit}],rewardGated,…}, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[wd]:str}, days:{[YYYY-MM-DD]:{workoutsDone,mealsDone,foodLog,habits:{[habitId]:number},rewardEarned,closed,…}}, weighIns:[{date,weight}] }
+health                     →  { profile:{startDate,startWeight,goalWeight,habits:[{id,name,icon,type:'counter'|'check',goal,unit}],rewardGated,fasting:{weekday,cutoffLabel,waterGoal},…}, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[1-5]:{am,pm}}, days:{[YYYY-MM-DD]:{workoutsDone,mealsDone,foodLog,habits:{[habitId]:number},rewardAm,rewardPm,rewardTextAm,rewardTextPm,closed,…}}, weighIns:[{date,weight}] }
 net_worth                  →  { manualItems, vehicles, propertyAssets, plaidAccounts, treasuryPortfolio, plaidRefreshedAt, history }
 move_in_purchases:{property}  →  Array of move-in purchase objects (4781MC only)
 move_in_categories:{property} →  Array of category name strings (4781MC only)
@@ -827,6 +827,11 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-08-14 — Health: AM/PM rewards (Mon–Fri) + Wednesday IF day
+
+- **Two rewards per day (☀️ AM + 🌙 PM), Mon–Fri only** — weekends have none. `rewardSchedule[1-5] = {am,pm}`; day-level `rewardAm`/`rewardPm` (+ `rewardTextAm`/`rewardTextPm` overrides). Reward-gating (`rewardGated`) now applies to **PM only** (AM is always free). Setup editor has AM+PM inputs per weekday; weekly "Rewards Earned" is out of 10; weekly cells show `🎁 ☀️/· 🌙/·`. `healthNormRewardSchedule` migrates the old single-string-per-weekday shape (value→AM) and drops weekend entries; the day-level `rewardEarned`/`rewardText` migrate to the AM slot in `healthEnsureDay`.
+- **Wednesday is the intermittent-fasting day** (`profile.fasting = {weekday:3, cutoffLabel:'10 AM', waterGoal:12}`): eat breakfast, stop by 10 AM, fast to next morning. Its meal plan is the new `healthDefaultMeals('fasting')` (breakfast + "⛔ Kitchen closed at 10 AM"); the Daily meal card shows an ⏳ IF banner. **Higher water goal on Wed** via `healthHabitGoal(hb,wd)` (used in the habits card + adherence; shows "↑ fasting day"). Wednesday's reward is **Red Bull (sugar-free)** — no calories, doesn't break the fast. A guarded one-time `profile.wedFastingV1` migration swaps an unmodified default Wednesday meal plan to the fasting one.
 
 ### 2026-08-14 — Health: Monday is a front-loaded "weekend reset"
 

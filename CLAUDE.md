@@ -60,7 +60,7 @@ A full table of contents is in the `NAVIGATION GUIDE` block comment at the very 
 ```
 Property tabs:  [6AL]  [95EB]  [446BB]  [731WO]  [4781MC]
 View tabs:      [Current Year]  [Tax Summary]  [Investment Return]  [Historical]  [Maintenance]  [Move-In Purchases]  [Later List]  [All Properties]
-Header buttons: [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ Solar]  [Tax Planning]  [💰 Savings]  [❤️ Health]  [Net Worth]  [Cash Flow]
+Header buttons: [❤️ Health]  [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ Solar]  [Tax Planning]  [💰 Savings]  [Net Worth]  [Cash Flow]
 ```
 - The **❤️ Health** header button is deliberately styled **red** (`.tp-header-btn.health-btn`) to stand out from the green tools.
 - Property tabs are hidden for the global header views (`GLOBAL_HEADER_VIEWS`: `tax-planning`, `net-worth`, `budget`, `cash-flow`, `mom-budget`, `solar`, `deductions`, `savings`, `health`) and for **All Properties**.

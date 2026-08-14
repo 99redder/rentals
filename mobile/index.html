@@ -92,13 +92,30 @@
     .property-strip::-webkit-scrollbar{display:none}
     .property-chip{flex:0 0 auto;border:1px solid var(--line);background:var(--card);color:var(--muted);padding:10px 15px;border-radius:999px;font-weight:800}
     .property-chip.active{background:var(--green);border-color:var(--green);color:white}
-    .nav{position:fixed;z-index:20;left:0;right:0;bottom:0;background:rgba(15,25,43,.95);border-top:1px solid var(--line);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:7px 5px max(7px,env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(7,1fr)}
+    .nav{position:fixed;z-index:20;left:0;right:0;bottom:0;background:rgba(15,25,43,.95);border-top:1px solid var(--line);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:7px 3px max(7px,env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(8,1fr)}
     .nav-btn{border:0;background:transparent;color:var(--muted);padding:5px 0 3px;font-size:.53rem;font-weight:750;min-width:0}
     .nav-icon{display:block;font-size:1.25rem;line-height:1.3;filter:grayscale(1);opacity:.7}
     .nav-btn.active{color:var(--green)}.nav-btn.active .nav-icon{filter:none;opacity:1}
     .loading{padding:80px 20px;text-align:center;color:var(--muted);font-weight:700}
     .spinner{width:30px;height:30px;border:3px solid var(--line);border-top-color:var(--green2);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}@keyframes spin{to{transform:rotate(360deg)}}
     .banner{border-radius:15px;padding:12px 14px;margin-bottom:12px;background:#3a2d16;color:#f4cf83;font-size:.78rem;font-weight:650;line-height:1.4}
+    .h-banner{border-radius:15px;padding:12px 14px;margin-bottom:12px;background:var(--mint);color:var(--good);font-size:.78rem;font-weight:700;line-height:1.4}
+    .h-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;padding:12px 0;border-top:1px solid var(--line);align-items:center;margin:0}
+    .h-row:first-child{border-top:0}
+    .h-check{width:26px;height:26px;min-height:0;flex:0 0 auto;accent-color:var(--green2);margin:0;padding:0;border-radius:7px}
+    .h-name{font-size:.9rem;font-weight:750;overflow-wrap:anywhere}
+    .h-done .h-name{color:var(--muted);text-decoration:line-through}
+    .h-sub{font-size:.72rem;color:var(--muted);font-weight:500;margin-top:3px}
+    .h-step{width:42px;height:42px;min-height:0;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);font-size:1.3rem;font-weight:800;display:grid;place-items:center;padding:0}
+    .h-count{min-width:40px;text-align:center;font-weight:850;font-size:1.15rem;font-variant-numeric:tabular-nums}
+    .h-chips{display:flex;flex-wrap:wrap;padding:2px 17px 10px}
+    .h-chip{border:1px solid var(--line);background:#101c2f;color:var(--ink);padding:9px 13px;border-radius:999px;font-weight:750;font-size:.78rem;margin:0 7px 7px 0}
+    .h-form{padding:12px 17px 16px;border-top:1px solid var(--line)}
+    .h-form input{min-height:46px;margin-bottom:8px}
+    .h-nums{display:flex;gap:8px}
+    .h-nums input{margin-bottom:0;text-align:center;padding:0 6px}
+    .h-mini{min-height:46px;padding:0 16px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);font-weight:800;flex:0 0 auto}
+    .h-del{border:0;background:transparent;color:var(--muted);font-size:1.05rem;padding:8px 6px;min-height:0}
     @media (min-width:500px){main{padding-left:22px;padding-right:22px}.grid{grid-template-columns:repeat(3,1fr)}}
   </style>
 </head>
@@ -118,7 +135,7 @@
   <div id="app" class="shell hidden">
     <header class="top">
       <div class="top-row">
-        <div><div class="eyebrow">Read only</div><div class="page-title" id="page-title">Monthly Budget</div></div>
+        <div><div class="eyebrow" id="eyebrow">Read only</div><div class="page-title" id="page-title">Monthly Budget</div></div>
         <div class="top-actions"><button class="icon-btn" id="lock" aria-label="Lock and sign out" title="Lock">⌾</button><button class="icon-btn" id="refresh" aria-label="Refresh">↻</button></div>
       </div>
       <div class="sync" id="sync-status">Loading current data…</div>
@@ -132,6 +149,7 @@
       <button class="nav-btn" data-view="networth"><span class="nav-icon">◎</span>Net Worth</button>
       <button class="nav-btn" data-view="mom"><span class="nav-icon">♡</span>Mom</button>
       <button class="nav-btn" data-view="properties"><span class="nav-icon">⌂</span>Properties</button>
+      <button class="nav-btn" data-view="health"><span class="nav-icon">❤</span>Health</button>
     </nav>
   </div>
 
@@ -145,7 +163,7 @@
   const CASH_FLOW_AUTO_PROPS = ['6AL','95EB','731WO'];
   const CF_COMBINED_SALE_TAX_PROPS = ['6AL','95EB'];  // netted into one Fed + State line
   const EXPENSE_CATS = ['Weekly Spending','Retirement Savings','School Savings','Investments','Misc Savings','Utilities','Services','Mortgage','Cars','Insurance','Travel'];
-  const TITLES = {budget:'Monthly Budget',cashflow:'2026 Cash Flow',tax:'Tax Planning',savings:'Savings',networth:'Net Worth',mom:'Mom Budget',properties:'Properties'};
+  const TITLES = {budget:'Monthly Budget',cashflow:'2026 Cash Flow',tax:'Tax Planning',savings:'Savings',networth:'Net Worth',mom:'Mom Budget',properties:'Properties',health:'Health'};
   const CAT_NAMES = {rent:'Rent Received',deposit:'Security Deposit',late_fee:'Late Fees',other_income:'Other Income',taxes:'Property Taxes',insurance:'Insurance',repairs:'Repairs & Maintenance',improvements:'Improvements',utilities:'Utilities',hoa:'HOA Fees',management:'Property Management',auto:'Auto',legal:'Legal & Professional',marketing:'Advertising',other_expense:'Other Expenses'};
   const state = {view:'budget',property:'6AL',momMonth:'',data:{},loading:false,robinhoodLoading:false,lastSync:null};
   const $ = s => document.querySelector(s);
@@ -215,6 +233,7 @@
       }
       if(state.view==='savings' && (force||!state.data.robinhood)){state.robinhoodLoading=true;pullRobinhood=true;}
       if(state.view==='mom' && (force||!state.data.mom)) state.data.mom=(await api({action:'get_mom_budget'})).data||{};
+      if(state.view==='health' && (force||!state.data.health)) state.data.health=(await api({action:'get_health'})).data||{};
       if((state.view==='cashflow'||state.view==='properties'||state.view==='tax') && (force||!state.data.transactions)){
         const results=await Promise.all(PROPERTIES.map(property=>api({action:'get_transactions',property})));
         state.data.transactions=Object.fromEntries(PROPERTIES.map((p,i)=>[p,results[i].transactions||[]]));
@@ -474,9 +493,143 @@
       ${card('Recent transactions',recent.map(t=>row(t.description||CAT_NAMES[t.category]||t.category,`${t.type==='expense'?'−':'+'}${fullMoney(t.amount)}`,t.date,t.type==='expense'?'bad':'good')).join(''))}`;
   }
 
+  // ── Health (daily · editable) ─────────────────────────────────────────────
+  // Read-write mirror of the desktop Health tab, today only. The desktop owns
+  // setup/normalization; this reads the `health` record, lets you check off the
+  // workout, add/edit/delete food, view weight, and mark rewards/habits, then
+  // saves the whole record back via save_health.
+  const H_WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const H_WD_LONG=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const M_ABBR=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  let healthEditFoodId=null;
+  const hid=()=>crypto.randomUUID?crypto.randomUUID():'h_'+Math.random().toString(36).slice(2);
+  const healthTodayISO=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date());
+  function healthWeekday(iso){const [y,m,d]=String(iso).split('-').map(Number);return new Date(Date.UTC(y,m-1,d)).getUTCDay();}
+  function fmtDay(iso){const [,m,d]=String(iso).split('-');return `${M_ABBR[+m-1]||''} ${+d}`;}
+  function healthDay(h,iso){
+    h.days=h.days||{};
+    if(!h.days[iso])h.days[iso]={closed:false,workoutsDone:{},foodLog:[],rewardAm:false,rewardPm:false,habits:{}};
+    const d=h.days[iso];d.workoutsDone=d.workoutsDone||{};d.foodLog=d.foodLog||[];d.habits=d.habits||{};
+    if(d.rewardAm===undefined)d.rewardAm=!!d.rewardEarned;if(d.rewardPm===undefined)d.rewardPm=false;
+    return d;
+  }
+  function healthTargets(h){
+    const p=h.profile||{},w=(h.weighIns||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const wLb=w.length?n(w[0].weight):(n(p.startWeight)||185),kg=wLb/2.2046226,cm=(n(p.heightIn)||65)*2.54;
+    const bmr=10*kg+6.25*cm-5*(n(p.age)||43)+5,tdee=bmr*(n(p.activityFactor)||1.375);
+    const autoCals=Math.max(1500,Math.round((tdee-(n(p.ratePerWeek)||1)*500)/5)*5);
+    const cals=n(p.calorieGoal)>0?n(p.calorieGoal):autoCals;
+    const m=p.macros||{},protein=n(m.protein)>0?n(m.protein):Math.round(wLb*0.9);
+    return {calories:cals,protein,weight:wLb};
+  }
+  function healthHabitGoal(h,hb,wd){const f=h.profile&&h.profile.fasting;if(f&&f.weekday===wd&&hb.id==='water'&&n(f.waterGoal)>0)return n(f.waterGoal);return n(hb.goal)||1;}
+  function hUnlocked(h,iso){
+    const wd=healthWeekday(iso),d=healthDay(h,iso),exs=(h.workoutPlan&&h.workoutPlan[wd])||[],isRest=wd===0||wd===6;
+    const wDone=exs.filter(e=>d.workoutsDone[e.id]).length,workoutOk=isRest?true:(exs.length>0&&wDone===exs.length);
+    const consumed=sum(d.foodLog,x=>n(x.calories));return workoutOk&&consumed>0&&consumed<=healthTargets(h).calories;
+  }
+  async function healthMutate(fn){
+    const h=state.data.health;if(!h)return;fn(h);render();
+    try{await api({action:'save_health',data:h});state.lastSync=new Date();updateSync();}
+    catch(err){try{state.data.health=(await api({action:'get_health'})).data||{};}catch{}render();}
+  }
+  function hToggleWorkout(exId){healthMutate(h=>{const d=healthDay(h,healthTodayISO());d.workoutsDone[exId]=!d.workoutsDone[exId];});}
+  function hToggleReward(slot){healthMutate(h=>{const iso=healthTodayISO(),d=healthDay(h,iso),key=slot==='pm'?'rewardPm':'rewardAm';
+    if(!d[key]&&slot==='pm'&&h.profile&&h.profile.rewardGated&&!hUnlocked(h,iso))return;d[key]=!d[key];});}
+  function hBumpHabit(id,delta){healthMutate(h=>{const d=healthDay(h,healthTodayISO());d.habits[id]=Math.max(0,n(d.habits[id])+delta);});}
+  function hToggleHabit(id){healthMutate(h=>{const d=healthDay(h,healthTodayISO());d.habits[id]=n(d.habits[id])>=1?0:1;});}
+  function hDeleteFood(logId){healthMutate(h=>{const d=healthDay(h,healthTodayISO());d.foodLog=d.foodLog.filter(f=>f.id!==logId);});}
+  function hQuickFood(foodId){healthMutate(h=>{const food=(h.foods||[]).find(f=>f.id===foodId);if(!food)return;const d=healthDay(h,healthTodayISO());
+    d.foodLog.push({id:hid(),name:food.name,calories:n(food.calories),protein:n(food.protein),carbs:n(food.carbs),fat:n(food.fat),foodId:food.id});food.uses=n(food.uses)+1;});}
+  function hAddFood(){
+    const name=($('#h-food-name').value||'').trim();if(!name)return;
+    const cal=n($('#h-food-cal').value),p=n($('#h-food-p').value),c=n($('#h-food-c').value),f=n($('#h-food-f').value),save=$('#h-food-save').checked;
+    healthMutate(h=>{const d=healthDay(h,healthTodayISO());d.foodLog.push({id:hid(),name,calories:cal,protein:p,carbs:c,fat:f});
+      if(save){h.foods=h.foods||[];const ex=h.foods.find(x=>String(x.name).toLowerCase()===name.toLowerCase());
+        if(ex){ex.calories=cal;ex.protein=p;ex.carbs=c;ex.fat=f;ex.uses=n(ex.uses)+1;}else h.foods.push({id:hid(),name,calories:cal,protein:p,carbs:c,fat:f,uses:1});}});
+  }
+  function hEditFood(logId){healthEditFoodId=logId;render();}
+  function hCancelFood(){healthEditFoodId=null;render();}
+  function hSaveFood(logId){
+    const name=($('#h-ef-name').value||'').trim(),cal=n($('#h-ef-cal').value),p=n($('#h-ef-p').value),c=n($('#h-ef-c').value),f=n($('#h-ef-f').value);
+    healthEditFoodId=null;
+    healthMutate(h=>{const d=healthDay(h,healthTodayISO());const it=d.foodLog.find(x=>x.id===logId);if(it){it.name=name||it.name;it.calories=cal;it.protein=p;it.carbs=c;it.fat=f;}});
+  }
+  function healthWeightChart(weighIns,goal){
+    const rows=(weighIns||[]).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    if(rows.length<2)return '<div class="empty">Two weekly weigh-ins needed for a trend line.</div>';
+    const vals=rows.map(r=>n(r.weight)),g=n(goal),min=Math.min(...vals,g)-2,max=Math.max(...vals,g)+2,range=max-min||1;
+    const X=i=>30+i*(740/(vals.length-1)),Y=v=>25+(max-v)*(155/range),gy=Y(g).toFixed(1);
+    const pts=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+    return `<svg class="nw-chart" viewBox="0 0 800 215" role="img" aria-label="Weight trend"><line x1="30" y1="${gy}" x2="770" y2="${gy}" stroke="var(--good)" stroke-dasharray="6 6"/><text x="766" y="${(+gy-6)}" text-anchor="end" fill="var(--good)" font-size="12">Goal ${esc(g)}</text><polyline points="${pts}" fill="none" stroke="var(--green2)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><text x="34" y="20" fill="var(--muted)" font-size="12">${esc(max.toFixed(0))}</text><text x="34" y="205" fill="var(--muted)" font-size="12">${esc(min.toFixed(0))}</text></svg>`;
+  }
+  function renderHealth(){
+    const h=state.data.health;
+    if(!h||(!h.workoutPlan&&!h.profile))return `<div class="h-banner">Open the Health tab on the desktop app once to set up your plan — then your daily workout, food log, weight, rewards, and habits show up here.</div>`;
+    const iso=healthTodayISO(),wd=healthWeekday(iso),day=healthDay(h,iso),t=healthTargets(h);
+    const consumed=sum(day.foodLog,f=>n(f.calories)),proteinC=sum(day.foodLog,f=>n(f.protein)),remaining=t.calories-consumed,over=consumed>t.calories;
+
+    const isRest=wd===0||wd===6,exs=(h.workoutPlan&&h.workoutPlan[wd])||[],wDone=exs.filter(e=>day.workoutsDone[e.id]).length;
+    const workoutRows=isRest?`<div class="empty">😌 Rest & recovery day. An easy walk is fine.</div>`
+      :(exs.length?exs.map(e=>`<label class="h-row ${day.workoutsDone[e.id]?'h-done':''}"><input type="checkbox" class="h-check" ${day.workoutsDone[e.id]?'checked':''} onchange="hToggleWorkout('${e.id}')"><div><div class="h-name">${esc(e.name)}</div>${e.detail?`<div class="h-sub">${esc(e.detail)}</div>`:''}</div><span></span></label>`).join(''):'<div class="empty">No workout set for today.</div>');
+    const workoutCard=`<section class="card"><div class="card-head"><div class="card-title">🏋️ Workout · ${H_WD[wd]}</div>${isRest?'':`<span class="pill">${wDone}/${exs.length} done</span>`}</div><div class="rows">${workoutRows}</div></section>`;
+
+    const topFoods=(h.foods||[]).slice().sort((a,b)=>n(b.uses)-n(a.uses)||String(a.name).localeCompare(String(b.name))).slice(0,6);
+    const chips=topFoods.map(f=>`<button class="h-chip" onclick="hQuickFood('${f.id}')">+ ${esc(f.name)}</button>`).join('');
+    const foodRows=day.foodLog.map(f=>{
+      if(healthEditFoodId===f.id)return `<div class="h-row"><span></span><div style="width:100%">
+        <input id="h-ef-name" value="${esc(f.name)}" placeholder="Food">
+        <div class="h-nums" style="margin-top:8px"><input id="h-ef-cal" type="number" inputmode="numeric" value="${n(f.calories)}" placeholder="Cal"><input id="h-ef-p" type="number" value="${n(f.protein)}" placeholder="P"><input id="h-ef-c" type="number" value="${n(f.carbs)}" placeholder="C"><input id="h-ef-f" type="number" value="${n(f.fat)}" placeholder="F"></div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="primary" style="margin:0;flex:1" onclick="hSaveFood('${f.id}')">Save</button><button class="h-mini" onclick="hCancelFood()">Cancel</button></div>
+      </div><span></span></div>`;
+      return `<div class="h-row"><span></span><div><div class="h-name">${esc(f.name)}</div><div class="h-sub">${Math.round(n(f.calories))} cal · ${Math.round(n(f.protein))}p ${Math.round(n(f.carbs))}c ${Math.round(n(f.fat))}f</div></div><div style="display:flex;gap:2px"><button class="h-del" onclick="hEditFood('${f.id}')">✎</button><button class="h-del" onclick="hDeleteFood('${f.id}')">✕</button></div></div>`;
+    }).join('');
+    const foodCard=`<section class="card"><div class="card-head"><div class="card-title">📋 Food Log</div><span class="pill">${Math.round(consumed)} cal</span></div>
+      ${chips?`<div class="h-chips">${chips}</div>`:''}
+      <div class="rows">${foodRows||'<div class="empty">Nothing logged yet.</div>'}</div>
+      <div class="h-form">
+        <input id="h-food-name" placeholder="Food name">
+        <div class="h-nums"><input id="h-food-cal" type="number" inputmode="numeric" placeholder="Cal"><input id="h-food-p" type="number" placeholder="P"><input id="h-food-c" type="number" placeholder="C"><input id="h-food-f" type="number" placeholder="F"></div>
+        <label style="display:flex;align-items:center;gap:9px;margin:12px 0 12px;text-transform:none;letter-spacing:0;font-weight:600;color:var(--muted)"><input type="checkbox" id="h-food-save" class="h-check" checked style="width:22px;height:22px">Save to my food list</label>
+        <button class="primary" style="margin:0" onclick="hAddFood()">Add food</button>
+      </div></section>`;
+
+    const goal=n(h.profile&&h.profile.goalWeight)||155,weighIns=(h.weighIns||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const weightRows=weighIns.slice(0,6).map((w,i)=>{const next=weighIns[i+1],chg=next?n(w.weight)-n(next.weight):null;return row(fmtDay(w.date),`${n(w.weight)} lb`,chg==null?'':`${chg<=0?'▼':'▲'} ${Math.abs(chg).toFixed(1)} lb`,chg==null?'':(chg<=0?'good':'bad'));}).join('');
+    const weightCard=`<section class="card"><div class="card-head"><div class="card-title">⚖️ Weight</div><span class="pill">Goal ${goal}</span></div><div style="padding:8px 12px 0">${healthWeightChart(h.weighIns,goal)}</div><div class="rows">${weightRows||'<div class="empty">No weigh-ins yet.</div>'}</div></section>`;
+
+    let rewardCard;
+    if(!(wd>=1&&wd<=5))rewardCard=`<section class="card"><div class="card-head"><div class="card-title">🎁 Rewards</div></div><div class="rows"><div class="empty">Mon–Fri only — enjoy the weekend. 😌</div></div></section>`;
+    else{
+      const sched=(h.rewardSchedule&&h.rewardSchedule[wd])||{am:'',pm:''},gated=h.profile&&h.profile.rewardGated,unlocked=hUnlocked(h,iso);
+      const amText=day.rewardTextAm||sched.am||'Morning reward',pmText=day.rewardTextPm||sched.pm||'Evening reward',pmLocked=gated&&!unlocked&&!day.rewardPm;
+      rewardCard=`<section class="card"><div class="card-head"><div class="card-title">🎁 Rewards</div></div><div class="rows">
+        <label class="h-row ${day.rewardAm?'h-done':''}"><input type="checkbox" class="h-check" ${day.rewardAm?'checked':''} onchange="hToggleReward('am')"><div><div class="h-name">☀️ AM — ${esc(amText)}</div></div><span></span></label>
+        <label class="h-row ${day.rewardPm?'h-done':''}" style="${pmLocked?'opacity:.55':''}"><input type="checkbox" class="h-check" ${day.rewardPm?'checked':''} ${pmLocked?'disabled':''} onchange="hToggleReward('pm')"><div><div class="h-name">🌙 PM — ${esc(pmText)}${pmLocked?' 🔒':''}</div>${gated&&!unlocked?'<div class="h-sub">Unlocks after workout + calories</div>':''}</div><span></span></label>
+      </div></section>`;
+    }
+
+    const habits=(h.profile&&h.profile.habits)||[];
+    const habitRows=habits.map(hb=>{
+      const v=n(day.habits[hb.id]);
+      if(hb.type==='counter'){const g=healthHabitGoal(h,hb,wd),met=v>=g;
+        return `<div class="h-row"><span style="font-size:1.2rem">${esc(hb.icon)}</span><div><div class="h-name">${esc(hb.name)} ${met?'<span class="good">✓</span>':''}</div><div class="h-sub">${v} of ${g}${hb.unit?' '+esc(hb.unit):''}</div></div><div style="display:flex;gap:8px;align-items:center"><button class="h-step" onclick="hBumpHabit('${hb.id}',-1)">−</button><span class="h-count">${v}</span><button class="h-step" onclick="hBumpHabit('${hb.id}',1)">+</button></div></div>`;}
+      const done=v>=1;
+      return `<label class="h-row ${done?'h-done':''}"><input type="checkbox" class="h-check" ${done?'checked':''} onchange="hToggleHabit('${hb.id}')"><div><div class="h-name">${esc(hb.icon)} ${esc(hb.name)}</div>${hb.note?`<div class="h-sub">${esc(hb.note)}</div>`:''}</div><span></span></label>`;
+    }).join('');
+    const habitsCard=habits.length?`<section class="card"><div class="card-head"><div class="card-title">✅ Daily Habits</div></div><div class="rows">${habitRows}</div></section>`:'';
+
+    const fasting=h.profile&&h.profile.fasting&&h.profile.fasting.weekday===wd;
+    const fastBanner=fasting?`<div class="h-banner">⏳ Intermittent fasting day — eat breakfast, stop by ${esc(h.profile.fasting.cutoffLabel||'10 AM')}, fast until tomorrow morning. Water, black coffee &amp; sugar-free Red Bull are fine.</div>`:'';
+
+    return `<div class="hero"><div class="hero-label">${H_WD_LONG[wd]} · ${over?'Over by':'Calories left'}</div><div class="hero-value">${over?'−':''}${Math.abs(Math.round(remaining))}</div><div class="hero-note">${Math.round(consumed)} eaten of ${t.calories} kcal · ${Math.round(proteinC)}/${t.protein}g protein</div></div>
+      ${fastBanner}${workoutCard}${foodCard}${weightCard}${rewardCard}${habitsCard}`;
+  }
+
   function render(){
     $('#page-title').textContent=TITLES[state.view];
-    const fn={budget:renderBudget,cashflow:renderCashFlow,tax:renderTax,savings:renderSavings,networth:renderNetWorth,mom:renderMom,properties:renderProperties}[state.view];
+    $('#eyebrow').textContent=state.view==='health'?'Daily · editable':'Read only';
+    const fn={budget:renderBudget,cashflow:renderCashFlow,tax:renderTax,savings:renderSavings,networth:renderNetWorth,mom:renderMom,properties:renderProperties,health:renderHealth}[state.view];
     $('#content').innerHTML=fn();
     document.querySelectorAll('[data-property]').forEach(btn=>btn.addEventListener('click',()=>{state.property=btn.dataset.property;render()}));
     document.querySelectorAll('[data-mom-month]').forEach(btn=>btn.addEventListener('click',()=>{if(btn.dataset.momMonth){state.momMonth=btn.dataset.momMonth;render()}}));

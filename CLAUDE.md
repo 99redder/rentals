@@ -343,14 +343,16 @@ The service worker is intentionally network-first and calls `registration.update
 
 ### Mobile Snapshot PWA (`mobile/index.html`)
 
-Separate **authenticated, read-only** phone PWA ("Red's Stuff Snapshot") — distinct from the public Mom Budget phone page. It logs in with the same password/session as the desktop app and shows read-only versions of **Budget, Cash Flow, Tax, Savings, Net Worth, Mom, and Properties** in a bottom-tab layout.
+Separate **authenticated** phone PWA ("Red's Stuff Snapshot") — distinct from the public Mom Budget phone page. It logs in with the same password/session as the desktop app and shows **Budget, Cash Flow, Tax, Savings, Net Worth, Mom, Properties** (all read-only) plus **Health** (read-**write** — the one exception) in a bottom-tab layout (8 tabs, `grid-template-columns:repeat(8,1fr)`).
+
+**Health tab (read-write, daily-only)** — `renderHealth` + `h*` helpers (`hToggleWorkout`/`hToggleReward`/`hBumpHabit`/`hToggleHabit`/`hAddFood`/`hEditFood`/`hSaveFood`/`hDeleteFood`/`hQuickFood`), all routed through `healthMutate(fn)` which mutates `state.data.health`, re-renders optimistically, then persists the whole record via **`save_health`** (reloading on failure). Loads `get_health`. Shows **today only** (ET via `healthTodayISO`): the day's workout (checkable), an editable food log (quick-add chips from `foods` + add/edit/delete, calorie/protein target from a mirrored `healthTargets`), a view-only **weight** card (`healthWeightChart` + weigh-in log), AM/PM **rewards** (Mon–Fri, PM gated via `hUnlocked`), and **daily habits** (counter steppers / checkboxes, Wed water bumped via `healthHabitGoal`). Deliberately **omits** Setup, Weekly, and History — the desktop owns setup/normalization; this is a thin client that relies on the record already being populated/normalized (shows a "set up on desktop" banner if empty). Like the other mobile views it **mirrors desktop logic and can go stale** — keep `healthTargets`/`healthHabitGoal`/reward+habit shapes in sync with `index.html`.
 
 **It reimplements the desktop view math in its own `<script>`** (`renderCashFlow`, `renderNetWorth`, `mobileTaxCalc`, `momMonth`, etc.) reading the same Worker actions. **This is a parallel implementation that silently goes stale when desktop logic changes** — when you change a calculation in `index.html` (cash-flow derivations, net-worth asset building, tax brackets, Mom Budget math), mirror it here or the PWA shows different numbers. Known mirrors already in place:
 - **Cash Flow "4781MC Move In Stuff"** derives from the 4781MC Move-In Purchases total (`cfExpenseAmount` / `CF_MOVE_IN_STUFF_LABEL`); the cashflow load path fetches `get_move_in_purchases`.
 - **Cash Flow auto-expenses** (`cfAutoExpenses` → `cfSaleTaxItems` + `cfCriticalSavingsItem`) mirror desktop's `cfAutoExpenseItems`: per-property Federal/State sale-tax reserves for finalized sales (NIIT/MD-surcharge gated by an AGI snapshot from `cfTaxSnapshot`/`mobileTaxCalc`) plus a rolled-up "Critical Savings Objectives" line. The cashflow load fetches `get_tax_planning` and `get_investment` for `CASH_FLOW_AUTO_PROPS`; `dismissedAuto` ids are respected.
 - **Sold properties** are dropped from Cash Flow auto-income (filtered to those still present in `propertyAssets`) and from Net Worth (relies on the desktop rebuilding+saving `net_worth.propertyAssets`, which excludes closed sales).
 
-It only reads; it never calls `refresh_net_worth_plaid` or any save/editing action. Network-first SW (`mobile/sw.js`) with `reg.update()` on launch — **bump `CACHE_NAME` on any `mobile/` change** so installed apps pull the new page.
+Apart from the Health tab it only reads; it never calls `refresh_net_worth_plaid` or any other save/editing action. Network-first SW (`mobile/sw.js`) with `reg.update()` on launch — **bump `CACHE_NAME` on any `mobile/` change** so installed apps pull the new page.
 
 ### Savings View
 
@@ -827,6 +829,10 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-08-14 — Health tab added to the mobile PWA (read-write, daily)
+
+- **`mobile/index.html` gains a Health tab** (8th nav button) — the **first read-write** view in the otherwise read-only Snapshot PWA. Daily-only: today's workout (check off), editable **food log** (quick-add chips + add/edit/delete), view-only **weight** (line chart + weigh-in log), AM/PM **rewards** (Mon–Fri, PM gating), and **daily habits** (counters/checkboxes, Wed fasting water bump). All edits go through `healthMutate` → `save_health` (optimistic render, reload on failure). No Setup/Weekly/History — desktop owns those; empty record → "set up on desktop" banner. Nav grid 7→8 cols; `CACHE_NAME` → `v21`. It re-mirrors desktop `healthTargets`/`healthHabitGoal`/reward+habit shapes, so keep them in sync.
 
 ### 2026-08-14 — Health: AM/PM rewards (Mon–Fri) + Wednesday IF day
 

@@ -12358,7 +12358,7 @@ function healthDailyHtml() {
   const weighIn = healthWeighInFor(monday);
   let weighCard = '';
   if (wd === 1) {
-    weighCard = `<div class="card" style="margin-bottom:1rem;border:1px solid ${weighIn ? 'var(--border)' : 'var(--warning)'};${weighIn ? '' : 'background:var(--warning-light)'}">
+    weighCard = `<div class="card" style="margin-bottom:1rem;border:1px solid ${weighIn ? 'var(--border)' : 'var(--warning)'};${weighIn ? '' : 'background:rgba(245,158,11,.14)'}">
       <div style="padding:.85rem 1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">
         <div style="font-size:1.4rem">⚖️</div>
         <div style="flex:1;min-width:150px">
@@ -12425,7 +12425,7 @@ function healthDailyHtml() {
   const exercises = isRest ? [] : (state.health.workoutPlan[String(wd)] || []);
   const doneCount = exercises.filter(e => day.workoutsDone[e.id]).length;
   const mondayNote = (wd === 1 && !isRest)
-    ? `<div style="background:var(--warning-light);border:1px solid var(--warning);border-radius:var(--radius);padding:.5rem .7rem;margin-bottom:.6rem;font-size:.8rem"><strong>💪 Weekend Reset — front-loaded day.</strong> You’re fresh after two rest days, so Monday is the toughest: hit the hard compounds first, then the extra core and a longer walk to offset the weekend. No reward today — earn it back through the week.</div>`
+    ? `<div style="background:rgba(245,158,11,.14);border:1px solid var(--warning);border-radius:var(--radius);padding:.5rem .7rem;margin-bottom:.6rem;font-size:.8rem"><strong>💪 Weekend Reset — front-loaded day.</strong> You’re fresh after two rest days, so Monday is the toughest: hit the hard compounds first, then the extra core and a longer walk to offset the weekend. No reward today — earn it back through the week.</div>`
     : '';
   const workoutInner = isRest
     ? `<div style="text-align:center;padding:1rem;color:var(--text-muted)"><div style="font-size:1.6rem">😌</div><div style="font-weight:700;color:var(--text);margin-top:.3rem">Rest & Recovery Day</div><div style="font-size:.82rem;margin-top:.25rem">No training today. An easy 20–30 min walk is fine if you feel up to it. Recovery is where a 43-year-old body makes its gains.</div></div>`

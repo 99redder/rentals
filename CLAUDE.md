@@ -413,7 +413,7 @@ Global (not per-property) tracker for **workouts, diet/calories, weight loss, an
 
 **Streaks & adherence** (`healthDayAdherence` / `healthStreak` / `healthRewardUnlocked`): a day is "on plan" when its workout is fully done (rest days auto-pass), calories are logged and at/under goal, and habit goals are met. Daily shows 🔥 on-plan / 🏋️ workout / 🍽️ on-calorie **streak** tiles (an in-progress today with no data doesn't break a streak); Weekly shows an **On-Plan %** tile. **Reward gating** (`profile.rewardGated`, off by default): when on, the daily reward checkbox stays 🔒 locked until the day's workout + calorie targets are met.
 
-**Daily habits** (`day.habits` = `{water,steps,sleep}`, goals in `profile.habitGoals`): a Daily Habits card (water stepper, steps, sleep) with per-goal ✓; habits surface compactly in the Weekly grid cells and feed adherence.
+**Daily habits** — a **configurable list** `profile.habits` (each `{id,name,icon,type,goal,unit}`; `type:'counter'` renders a −/+ stepper toward `goal`, `type:'check'` renders a checkbox). Per-day values in `day.habits` keyed by habit id (counter = count, check = 0/1). Default seed: **Water** (counter, 8 glasses), **Stretch / mobility** (check), **Supplements** (check). Edited in the Setup **Daily Habits** card (`healthAddHabit`/`healthDeleteHabit`/`healthUpdateHabit`); logged via `healthBumpHabit`/`healthToggleHabitCheck`. All habits meeting their goal is part of `habitsOk` in adherence; they surface compactly (icon+value / icon+✓) in the Weekly grid cells. `healthNormHabit` normalizes; `mbNormalize`… n/a — a one-time migration in `healthNormalize` converts the old `profile.habitGoals` (water/steps/sleep) to the list, preserving a custom water goal and dropping steps/sleep.
 
 **Band exercise demos** (`healthExerciseDemoHtml` / `HEALTH_BAND_DEMOS` / `healthBandDemo`): every resistance-band exercise (detected via `/band/i` on the name) gets a collapsible **"🔍 Show me how"** panel under it in the Daily workout list — minimized by default, open state tracked in `_healthDemoOpen` (UI-only, via `<details ontoggle>`). Each shows a **looping animated demonstration GIF** at `health-demos/{img}.gif` (a Start↔Finish morph built with ImageMagick from `{img}-1.jpg`/`-2.jpg`; the jpgs are kept as source/fallback) — same-origin so the strict CSP `img-src 'self'` allows it (external hosts blocked; `data:` also allowed). `loading="lazy"` defers the load until the panel opens. Below the GIF: numbered band-setup cues and a **"More photos & videos ↗"** web-image link. Add a move by pushing to `HEALTH_BAND_DEMOS` (`{ test:/regex/, img:'basename', label, steps:[…] }`) and dropping `basename-1/2.jpg` + a generated `basename.gif` into `health-demos/` (regen command in that folder's README); order matters (specific before generic `row`/`curl`/`press`). Images are openly-licensed (Everkinetic via free-exercise-db, CC BY-SA 3.0) — see `health-demos/README.md`; some moves use the closest equivalent (dumbbell/cable) equipment. The old inline-SVG schematic (`healthDemoSvg`/`hArrow`/`hLine`/`hHand`) remains only as the generic fallback for an unmatched band exercise.
 
@@ -753,7 +753,7 @@ solar:summaries            →  { [year]: { ... } }
 deductions                 →  Array of deduction entry objects
 tax_planning:{year}        →  Tax planning inputs for that year
 savings                    →  { accounts: {robinhoodChecking, robinhoodBrokerage}, obligations: [...], payments: { [year]: { [oid]: [bool, ...] } } }
-health                     →  { profile:{startDate,startWeight,goalWeight,habitGoals:{water,steps,sleep},rewardGated,…}, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[wd]:str}, days:{[YYYY-MM-DD]:{workoutsDone,mealsDone,foodLog,habits:{water,steps,sleep},rewardEarned,closed,…}}, weighIns:[{date,weight}] }
+health                     →  { profile:{startDate,startWeight,goalWeight,habits:[{id,name,icon,type:'counter'|'check',goal,unit}],rewardGated,…}, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[wd]:str}, days:{[YYYY-MM-DD]:{workoutsDone,mealsDone,foodLog,habits:{[habitId]:number},rewardEarned,closed,…}}, weighIns:[{date,weight}] }
 net_worth                  →  { manualItems, vehicles, propertyAssets, plaidAccounts, treasuryPortfolio, plaidRefreshedAt, history }
 move_in_purchases:{property}  →  Array of move-in purchase objects (4781MC only)
 move_in_categories:{property} →  Array of category name strings (4781MC only)
@@ -827,6 +827,11 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-08-14 — Health: configurable daily habits (drop steps/sleep)
+
+- **Daily habits are now a configurable list** (`profile.habits`, each `{id,name,icon,type,goal,unit}`) instead of the hardcoded water/steps/sleep. `type:'counter'` = −/+ stepper toward a goal; `type:'check'` = checkbox. Per-day values live in `day.habits` keyed by habit id. Editable in the Setup **Daily Habits** card (add/delete/rename/goal). `healthNormalize` migrates old `habitGoals` records (keeps a custom water goal, drops steps/sleep).
+- **Removed Steps** (covered by the walking cardio) and **Sleep** (not fully controllable with a toddler). **Default seed:** Water (8 glasses), Stretch / mobility (✓), Supplements (✓). All still feed streaks/adherence and show in the weekly grid.
 
 ### 2026-08-14 — Health: start-date locking, streaks/adherence, daily habits
 

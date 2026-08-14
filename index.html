@@ -11963,6 +11963,13 @@ function healthCurrentWeight(h) {
   const w = [...(h.weighIns || [])].sort((a, b) => b.date.localeCompare(a.date));
   return w.length ? w[0].weight : (h.profile.startWeight || 185);
 }
+// Start weight is the first weigh-in on/after the program start date (the Monday
+// Aug 17 weigh-in), falling back to the manual profile.startWeight before one exists.
+function healthStartWeight(h) {
+  const start = h.profile.startDate;
+  const ins = [...(h.weighIns || [])].filter(w => !start || w.date >= start).sort((a, b) => a.date.localeCompare(b.date));
+  return ins.length ? ins[0].weight : (h.profile.startWeight || 185);
+}
 function healthTargets(h) {
   const p = h.profile;
   const wLb = healthCurrentWeight(h);
@@ -12093,12 +12100,16 @@ function healthDailyHtml() {
   const totals = healthDayTotals(day);
 
   // Date navigation
+  const startDate = state.health.profile.startDate || iso;
+  const atStart = iso <= startDate;
+  const todayAllowed = today >= startDate;
+  const dis = 'disabled style="opacity:.4;cursor:not-allowed"';
   const nav = `
     <div class="card" style="margin-bottom:1rem"><div style="padding:.7rem 1rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="healthShiftDay(-1)">◀</button>
-      <input type="date" class="form-input" value="${iso}" onchange="healthSetDate(this.value)" style="width:auto">
+      <button class="btn btn-ghost btn-sm" onclick="healthShiftDay(-1)" ${atStart ? dis : ''} title="${atStart ? 'Program starts ' + fmtDate(startDate) : 'Previous day'}">◀</button>
+      <input type="date" class="form-input" value="${iso}" min="${startDate}" onchange="healthSetDate(this.value)" style="width:auto">
       <button class="btn btn-ghost btn-sm" onclick="healthShiftDay(1)">▶</button>
-      <button class="btn btn-ghost btn-sm" onclick="healthSetDate('${today}')">Today</button>
+      <button class="btn btn-ghost btn-sm" onclick="healthSetDate('${today}')" ${todayAllowed ? '' : dis} title="${todayAllowed ? 'Jump to today' : 'Program starts ' + fmtDate(startDate)}">Today</button>
       <div style="flex:1;min-width:120px;font-weight:700">${HEALTH_WEEKDAYS_LONG[wd]}, ${fmtDate(iso)}</div>
       ${day.closed ? '<span style="background:var(--success-light);color:var(--success);border:1px solid var(--success);border-radius:999px;padding:.15rem .6rem;font-size:.72rem;font-weight:700">✓ Closed</span>' : ''}
       ${day.closed
@@ -12239,8 +12250,18 @@ function healthDailyHtml() {
 }
 
 // Daily mutators
-function healthSetDate(iso) { if (iso) { _healthDate = iso; _healthEditFoodId = null; _renderHealthHtml(); } }
-function healthShiftDay(n) { _healthDate = healthAddDays(_healthDate, n); _healthEditFoodId = null; _renderHealthHtml(); }
+function healthSetDate(iso) {
+  if (!iso) return;
+  const start = state.health.profile.startDate;
+  if (start && iso < start) iso = start;   // never before the program start
+  _healthDate = iso; _healthEditFoodId = null; _renderHealthHtml();
+}
+function healthShiftDay(n) {
+  const start = state.health.profile.startDate;
+  let d = healthAddDays(_healthDate, n);
+  if (start && d < start) d = start;
+  _healthDate = d; _healthEditFoodId = null; _renderHealthHtml();
+}
 async function healthToggleWorkout(iso, exId) {
   const d = healthEnsureDay(iso); d.workoutsDone[exId] = !d.workoutsDone[exId];
   await saveHealth(); _renderHealthHtml();
@@ -12326,6 +12347,8 @@ async function healthSaveWeighIn(mondayIso) {
   const list = state.health.weighIns;
   const existing = list.find(w => w.date === mondayIso);
   if (existing) existing.weight = v; else list.push({ date: mondayIso, weight: v });
+  // Keep the recorded start weight tied to the first program weigh-in.
+  state.health.profile.startWeight = healthStartWeight(state.health);
   await saveHealth(); _renderHealthHtml();
 }
 
@@ -12380,8 +12403,11 @@ function healthWeeklyHtml() {
       <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Rewards Earned</div><div style="font-size:1.3rem;font-weight:750">${rewardsEarned}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / 7</span></div></div>
     </div>`;
 
+  const startMon = healthMondayOf(state.health.profile.startDate || mon);
+  const atStartWeek = mon <= startMon;
+  const disW = 'disabled style="opacity:.4;cursor:not-allowed"';
   const nav = `<div class="card" style="margin-bottom:1rem"><div style="padding:.7rem 1rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="healthShiftWeek(-1)">◀ Prev</button>
+      <button class="btn btn-ghost btn-sm" onclick="healthShiftWeek(-1)" ${atStartWeek ? disW : ''} title="${atStartWeek ? 'First week of the program' : 'Previous week'}">◀ Prev</button>
       <div style="flex:1;min-width:120px;font-weight:700;text-align:center">Week of ${fmtDate(mon)}</div>
       <button class="btn btn-ghost btn-sm" onclick="healthShiftWeek(1)">Next ▶</button>
       <button class="btn btn-ghost btn-sm" onclick="healthThisWeek()">This Week</button>
@@ -12391,8 +12417,18 @@ function healthWeeklyHtml() {
     <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:.5rem" class="health-week-grid">${cells}</div>
     <style>@media(max-width:720px){.health-week-grid{grid-template-columns:repeat(2,1fr)!important}}</style>`;
 }
-function healthShiftWeek(n) { _healthWeekMon = healthAddDays(_healthWeekMon, n * 7); _renderHealthHtml(); }
-function healthThisWeek() { _healthWeekMon = healthMondayOf(appTodayIso()); _renderHealthHtml(); }
+function healthShiftWeek(n) {
+  const startMon = healthMondayOf(state.health.profile.startDate || _healthWeekMon);
+  let m = healthAddDays(_healthWeekMon, n * 7);
+  if (m < startMon) m = startMon;
+  _healthWeekMon = m; _renderHealthHtml();
+}
+function healthThisWeek() {
+  const startMon = healthMondayOf(state.health.profile.startDate || appTodayIso());
+  let m = healthMondayOf(appTodayIso());
+  if (m < startMon) m = startMon;   // before the program starts, show its first week
+  _healthWeekMon = m; _renderHealthHtml();
+}
 
 // ── History view ──────────────────────────────────────────────────────────────
 function healthWeightChart(weighIns) {
@@ -12417,7 +12453,7 @@ function healthWeightChart(weighIns) {
 function healthHistoryHtml() {
   const h = state.health;
   const weighIns = [...h.weighIns].sort((a, b) => b.date.localeCompare(a.date));
-  const start = h.profile.startWeight, goal = h.profile.goalWeight;
+  const start = healthStartWeight(h), goal = h.profile.goalWeight;
   const current = healthCurrentWeight(h);
   const lostTotal = start - current, toGo = current - goal;
   const totalToLose = start - goal;
@@ -12501,6 +12537,7 @@ function healthSetupHtml() {
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .9rem;margin-bottom:.9rem;font-size:.82rem">
       <div style="font-weight:700;margin-bottom:.3rem">Computed from current weight (${t.weight} lb): BMR ${t.bmr} · TDEE ${t.tdee} kcal</div>
       <div style="color:var(--text-muted)">Auto calorie target: <strong style="color:var(--text)">${t.autoCals} kcal/day</strong> · protein ${Math.round(t.weight * 0.9)}g · leave overrides blank to track this automatically.</div>
+      <div style="color:var(--text-muted);margin-top:.3rem">Start weight auto-updates from your first weigh-in on ${fmtDate(p.startDate)} — the field above is just a placeholder until then.</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.7rem;margin-bottom:.9rem">
       <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Calorie goal override<input type="number" id="hp-cals" class="form-input" placeholder="auto (${t.autoCals})" value="${p.calorieGoal ?? ''}" style="margin-top:.2rem"></label>

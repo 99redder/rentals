@@ -830,6 +830,10 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 
 ## Recent Updates
 
+### 2026-08-14 — Health: completion celebration (confetti + toast + haptic)
+
+- Checking off a **workout item** or **daily habit** (or a counter habit reaching its goal) fires a satisfying burst: a Web-Animations-API **confetti** spray from the tapped control + an encouragement **toast** (random `HEALTH_CHEERS`, or a bigger "🎉 Workout complete!" / "🌟 All habits done!" when it's the last one) + a `navigator.vibrate` haptic on mobile. Only on marking **done**, never on un-checking. Elements live in a fixed `#h-fx-layer` overlay so the view re-render doesn't kill them; they self-remove on animation finish. Honors `prefers-reduced-motion` (skips confetti, keeps a fade-only toast). Desktop (`index.html`: `healthCelebrate`/`healthConfettiBurst`/`healthToast`, event threaded through the toggle handlers) and mobile (`mobile/index.html`: `hCelebrate`, `sw` → `v22`) both implement it; no external libs (CSP-safe).
+
 ### 2026-08-14 — Health tab added to the mobile PWA (read-write, daily)
 
 - **`mobile/index.html` gains a Health tab** (8th nav button) — the **first read-write** view in the otherwise read-only Snapshot PWA. Daily-only: today's workout (check off), editable **food log** (quick-add chips + add/edit/delete), view-only **weight** (line chart + weigh-in log), AM/PM **rewards** (Mon–Fri, PM gating), and **daily habits** (counters/checkboxes, Wed fasting water bump). All edits go through `healthMutate` → `save_health` (optimistic render, reload on failure). No Setup/Weekly/History — desktop owns those; empty record → "set up on desktop" banner. Nav grid 7→8 cols; `CACHE_NAME` → `v21`. It re-mirrors desktop `healthTargets`/`healthHabitGoal`/reward+habit shapes, so keep them in sync.

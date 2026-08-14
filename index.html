@@ -12396,13 +12396,13 @@ function healthDailyHtml() {
         <span style="width:118px;font-weight:600">${hb.icon} ${escHtml(hb.name)}${noteHtml}</span>
         <button class="btn btn-ghost btn-sm" onclick="healthBumpHabit('${iso}','${hb.id}',-1)" style="padding:.15rem .55rem">−</button>
         <span style="font-weight:800;font-size:1.15rem;min-width:2.2rem;text-align:center">${val}</span>
-        <button class="btn btn-ghost btn-sm" onclick="healthBumpHabit('${iso}','${hb.id}',1)" style="padding:.15rem .55rem">+</button>
+        <button class="btn btn-ghost btn-sm" onclick="healthBumpHabit('${iso}','${hb.id}',1,event)" style="padding:.15rem .55rem">+</button>
         <span style="font-size:.74rem;color:var(--text-muted)">of ${goal}${hb.unit ? ' ' + escHtml(hb.unit) : ''}${boosted ? ' <span style="color:var(--primary);font-weight:700">↑ fasting day</span>' : ''}</span> ${met ? '<span style="color:var(--success);font-weight:800">✓</span>' : ''}
       </div>`;
     }
     const done = val >= 1;
     return `<label style="display:flex;align-items:flex-start;gap:.6rem;cursor:pointer">
-        <input type="checkbox" ${done ? 'checked' : ''} onchange="healthToggleHabitCheck('${iso}','${hb.id}')" style="width:auto;transform:scale(1.25);margin-top:.15rem">
+        <input type="checkbox" ${done ? 'checked' : ''} onchange="healthToggleHabitCheck('${iso}','${hb.id}',event)" style="width:auto;transform:scale(1.25);margin-top:.15rem">
         <span style="flex:1"><span style="font-weight:600;${done ? 'color:var(--success)' : ''}">${hb.icon} ${escHtml(hb.name)}</span>${noteHtml}</span>
       </label>`;
   };
@@ -12432,7 +12432,7 @@ function healthDailyHtml() {
     : mondayNote + exercises.map(e => `
         <div style="padding:.5rem .2rem;border-bottom:1px solid var(--border)">
           <label style="display:flex;align-items:flex-start;gap:.6rem;cursor:pointer;margin:0">
-            <input type="checkbox" ${day.workoutsDone[e.id] ? 'checked' : ''} onchange="healthToggleWorkout('${iso}','${e.id}')" style="width:auto;margin-top:.2rem">
+            <input type="checkbox" ${day.workoutsDone[e.id] ? 'checked' : ''} onchange="healthToggleWorkout('${iso}','${e.id}',event)" style="width:auto;margin-top:.2rem">
             <span style="flex:1">
               <span style="font-weight:600;${day.workoutsDone[e.id] ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(e.name)}</span>
               <span style="display:block;font-size:.76rem;color:var(--text-muted)">${escHtml(e.detail || '')}</span>
@@ -12552,6 +12552,52 @@ function healthDailyHtml() {
     </div>`;
 }
 
+// ── Celebration FX (workout/habit completion) ────────────────────────────────
+const HEALTH_CHEERS = ['💪 Nice work!', '🔥 Crushing it!', '✅ Done!', '👏 Keep it up!', '⚡ Boom!', '🙌 Yes!', '🌱 Progress!', '🚀 Let’s go!'];
+function healthCheer() { return HEALTH_CHEERS[Math.floor(Math.random() * HEALTH_CHEERS.length)]; }
+function healthAllHabitsMet(iso) { try { return healthDayAdherence(iso).habitsOk; } catch (e) { return false; } }
+function healthFxLayer() {
+  let l = document.getElementById('h-fx-layer');
+  if (!l) { l = document.createElement('div'); l.id = 'h-fx-layer'; l.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999;overflow:hidden'; document.body.appendChild(l); }
+  return l;
+}
+function healthCelebrate(ev, opts) {
+  opts = opts || {}; const big = !!opts.big;
+  if (navigator.vibrate) { try { navigator.vibrate(big ? [15, 45, 20] : 14); } catch (e) {} }
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let x = window.innerWidth / 2, y = window.innerHeight * 0.35;
+  const el = ev && (ev.currentTarget || ev.target);
+  if (el && el.getBoundingClientRect) { const r = el.getBoundingClientRect(); if (r.width || r.height) { x = r.left + r.width / 2; y = r.top + r.height / 2; } }
+  if (!reduce) healthConfettiBurst(x, y, big ? 38 : 18);
+  healthToast(opts.message || healthCheer(), big, reduce);
+}
+function healthConfettiBurst(x, y, count) {
+  const layer = healthFxLayer();
+  const colors = ['#16a34a', '#22c55e', '#2563eb', '#f59e0b', '#a855f7', '#ef4444', '#ec4899'];
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div');
+    const size = 6 + Math.random() * 7, ang = Math.random() * Math.PI * 2, dist = 50 + Math.random() * 105;
+    const dx = Math.cos(ang) * dist, dy = Math.sin(ang) * dist - (50 + Math.random() * 75), fall = 140 + Math.random() * 150;
+    p.style.cssText = 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + size.toFixed(1) + 'px;height:' + (size * 0.6).toFixed(1) + 'px;background:' + colors[i % colors.length] + ';border-radius:2px;transform:translate(-50%,-50%)';
+    layer.appendChild(p);
+    p.animate([
+      { transform: 'translate(-50%,-50%) translate(0,0) rotate(0deg)', opacity: 1 },
+      { transform: 'translate(-50%,-50%) translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px) rotate(' + (180 + Math.random() * 180).toFixed(0) + 'deg)', opacity: 1, offset: 0.35 },
+      { transform: 'translate(-50%,-50%) translate(' + (dx * 1.15).toFixed(1) + 'px,' + (dy + fall).toFixed(1) + 'px) rotate(' + (360 + Math.random() * 360).toFixed(0) + 'deg)', opacity: 0 }
+    ], { duration: 950 + Math.random() * 550, easing: 'cubic-bezier(.2,.7,.3,1)' }).onfinish = function () { p.remove(); };
+  }
+}
+function healthToast(message, big, reduce) {
+  const t = document.createElement('div');
+  t.textContent = message;
+  t.style.cssText = 'position:fixed;left:50%;top:' + (big ? '40%' : '44%') + ';z-index:10000;background:var(--success);color:#fff;font-weight:800;padding:' + (big ? '.7rem 1.3rem' : '.5rem 1rem') + ';border-radius:999px;box-shadow:0 10px 30px rgba(22,163,74,.45);font-size:' + (big ? '1.1rem' : '.92rem') + ';pointer-events:none;white-space:nowrap;transform:translate(-50%,-50%)';
+  document.body.appendChild(t);
+  const frames = reduce
+    ? [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: 0.75 }, { opacity: 0 }]
+    : [{ opacity: 0, transform: 'translate(-50%,-50%) scale(.7)' }, { opacity: 1, transform: 'translate(-50%,-50%) scale(1.06)', offset: 0.2 }, { opacity: 1, transform: 'translate(-50%,-50%) scale(1)', offset: 0.7 }, { opacity: 0, transform: 'translate(-50%,-50%) scale(.95) translateY(-16px)' }];
+  t.animate(frames, { duration: big ? 1600 : 1150, easing: 'ease-out' }).onfinish = function () { t.remove(); };
+}
+
 // Daily mutators
 function healthSetDate(iso) {
   if (!iso) return;
@@ -12565,8 +12611,16 @@ function healthShiftDay(n) {
   if (start && d < start) d = start;
   _healthDate = d; _healthEditFoodId = null; _renderHealthHtml();
 }
-async function healthToggleWorkout(iso, exId) {
-  const d = healthEnsureDay(iso); d.workoutsDone[exId] = !d.workoutsDone[exId];
+async function healthToggleWorkout(iso, exId, ev) {
+  const d = healthEnsureDay(iso);
+  const nowDone = !d.workoutsDone[exId];
+  d.workoutsDone[exId] = nowDone;
+  if (nowDone) {
+    const wd = healthWeekday(iso);
+    const exs = state.health.workoutPlan[String(wd)] || [];
+    const allDone = exs.length > 0 && exs.every(e => d.workoutsDone[e.id]);
+    healthCelebrate(ev, { message: allDone ? '🎉 Workout complete!' : healthCheer(), big: allDone });
+  }
   await saveHealth(); _renderHealthHtml();
 }
 async function healthToggleMeal(iso, mealId) {
@@ -12582,14 +12636,28 @@ async function healthToggleReward(iso, slot) {
   d[key] = willEarn;
   await saveHealth(); _renderHealthHtml();
 }
-async function healthBumpHabit(iso, id, delta) {
+async function healthBumpHabit(iso, id, delta, ev) {
   const d = healthEnsureDay(iso);
-  d.habits[id] = Math.max(0, (d.habits[id] || 0) + delta);
+  const before = d.habits[id] || 0;
+  d.habits[id] = Math.max(0, before + delta);
+  if (delta > 0) {
+    const hb = (state.health.profile.habits || []).find(x => x.id === id);
+    const goal = hb ? healthHabitGoal(hb, healthWeekday(iso)) : Infinity;
+    if (before < goal && d.habits[id] >= goal) {   // just reached the goal
+      const big = healthAllHabitsMet(iso);
+      healthCelebrate(ev, { message: big ? '🌟 All habits done!' : healthCheer(), big });
+    }
+  }
   await saveHealth(); _renderHealthHtml();
 }
-async function healthToggleHabitCheck(iso, id) {
+async function healthToggleHabitCheck(iso, id, ev) {
   const d = healthEnsureDay(iso);
-  d.habits[id] = (d.habits[id] || 0) >= 1 ? 0 : 1;
+  const nowDone = (d.habits[id] || 0) < 1;
+  d.habits[id] = nowDone ? 1 : 0;
+  if (nowDone) {
+    const big = healthAllHabitsMet(iso);
+    healthCelebrate(ev, { message: big ? '🌟 All habits done!' : healthCheer(), big });
+  }
   await saveHealth(); _renderHealthHtml();
 }
 async function healthSetRewardText(iso, slot, val) {

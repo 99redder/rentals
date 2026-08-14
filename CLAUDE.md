@@ -753,7 +753,7 @@ solar:summaries            →  { [year]: { ... } }
 deductions                 →  Array of deduction entry objects
 tax_planning:{year}        →  Tax planning inputs for that year
 savings                    →  { accounts: {robinhoodChecking, robinhoodBrokerage}, obligations: [...], payments: { [year]: { [oid]: [bool, ...] } } }
-health                     →  { profile:{startDate,startWeight,goalWeight,habits:[{id,name,icon,type:'counter'|'check',goal,unit}],rewardGated,fasting:{weekday,cutoffLabel,waterGoal},…}, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[1-5]:{am,pm}}, days:{[YYYY-MM-DD]:{workoutsDone,mealsDone,foodLog,habits:{[habitId]:number},rewardAm,rewardPm,rewardTextAm,rewardTextPm,closed,…}}, weighIns:[{date,weight}] }
+health                     →  { profile:{startDate,startWeight,goalWeight,habits:[{id,name,icon,type:'counter'|'check',goal,unit,note}],rewardGated,fasting:{weekday,cutoffLabel,waterGoal},…}, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[1-5]:{am,pm}}, days:{[YYYY-MM-DD]:{workoutsDone,mealsDone,foodLog,habits:{[habitId]:number},rewardAm,rewardPm,rewardTextAm,rewardTextPm,closed,…}}, weighIns:[{date,weight}] }
 net_worth                  →  { manualItems, vehicles, propertyAssets, plaidAccounts, treasuryPortfolio, plaidRefreshedAt, history }
 move_in_purchases:{property}  →  Array of move-in purchase objects (4781MC only)
 move_in_categories:{property} →  Array of category name strings (4781MC only)

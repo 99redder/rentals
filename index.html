@@ -12218,14 +12218,8 @@ function healthExerciseDemoHtml(e) {
   const demo = healthBandDemo(e.name);
   const open = _healthDemoOpen.has(e.id);
   const q = encodeURIComponent(e.name + ' exercise how to');
-  const frames = ['Start', 'Finish'];
   const visual = demo.img
-    ? `<div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center">
-        ${[1, 2].map((n, i) => `<figure style="margin:0;flex:1 1 140px;max-width:210px">
-          <img src="health-demos/${demo.img}-${n}.jpg" alt="${escAttr(e.name)} ${frames[i].toLowerCase()} position" loading="lazy" style="width:100%;height:auto;border:1px solid var(--border);border-radius:6px;display:block">
-          <figcaption style="font-size:.66rem;color:var(--text-muted);text-align:center;margin-top:.2rem;font-weight:600">${frames[i]}</figcaption>
-        </figure>`).join('')}
-      </div>`
+    ? `<img src="health-demos/${demo.img}.gif" alt="${escAttr(e.name)} demonstration (animated)" loading="lazy" style="width:100%;max-width:300px;height:auto;border:1px solid var(--border);border-radius:6px;display:block;margin:0 auto">`
     : healthDemoSvg(`${hLine(110, 50, 80, 55)}${hLine(110, 50, 140, 55)}${hHand(80, 55)}${hHand(140, 55)}`);
   return `<details class="health-demo" ${open ? 'open' : ''} ontoggle="healthDemoToggle('${e.id}',this.open)" style="margin:.35rem 0 0 1.85rem">
     <summary style="cursor:pointer;font-size:.74rem;color:var(--primary);user-select:none">🔍 <span style="text-decoration:underline">Show me how</span></summary>

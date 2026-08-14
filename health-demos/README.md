@@ -4,7 +4,16 @@ Demonstration photos shown in the **Health** tab's "Show me how" panels for
 resistance-band exercises. Kept as same-origin files so the app's strict
 Content-Security-Policy (`img-src 'self'`) allows them.
 
-Each movement has two frames: `-1.jpg` (start) and `-2.jpg` (finish).
+Each movement is displayed in-app as a looping animated **`{name}.gif`** — a
+Start↔Finish loop morphed (ImageMagick) from two source frames, `-1.jpg` (start)
+and `-2.jpg` (finish), which are kept as the source/fallback.
+
+Regenerate a GIF from its frames:
+
+```
+magick NAME-1.jpg NAME-2.jpg -resize 300x -morph 5 \( -clone -2-1 \) -loop 0 \
+  -set delay '%[fx:(t==0||t==6)?85:7]' -layers optimize NAME.gif
+```
 
 | File prefix | Movement | Source exercise |
 |---|---|---|

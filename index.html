@@ -759,6 +759,9 @@
     .tp-header-btn.health-btn { background: linear-gradient(135deg, #ef4444, #dc2626); box-shadow: 0 2px 8px rgba(220,38,38,0.38); }
     .tp-header-btn.health-btn:hover { background: #b91c1c; box-shadow: 0 4px 12px rgba(220,38,38,0.5); }
     .tp-header-btn.health-btn.active { background: #b91c1c; outline: 2px solid rgba(220,38,38,0.4); }
+    /* Health exercise demo toggle — hide the native disclosure triangle */
+    details.health-demo > summary { list-style: none; }
+    details.health-demo > summary::-webkit-details-marker { display: none; }
     .header-tools-menu {
       position: relative;
       flex-shrink: 0;
@@ -11821,6 +11824,7 @@ let _healthDate = null;      // selected calendar day (Daily view)
 let _healthWeekMon = null;   // Monday of the week shown in Weekly view
 let _healthEditFoodId = null;
 let _healthEditDbId = null;
+let _healthDemoOpen = new Set();   // exercise ids whose demo panel is expanded (UI-only)
 
 function hid() {
   return crypto.randomUUID ? crypto.randomUUID() : 'h_' + Math.random().toString(36).slice(2);
@@ -12135,6 +12139,126 @@ function healthMacroBar(label, val, goal, color) {
   </div>`;
 }
 
+// ── Exercise demos (resistance-band moves) ───────────────────────────────────
+// Self-contained inline-SVG schematics (theme-aware, no external images / CSP
+// issues) + numbered form cues, shown in a collapsible "Show me how" panel under
+// each band exercise. A "See real photos" link opens live web images on demand.
+function healthIsBandExercise(name) { return /band/i.test(name || ''); }
+function healthDemoToggle(id, open) { if (open) _healthDemoOpen.add(id); else _healthDemoOpen.delete(id); }
+
+const HD_BODY = 'var(--text)', HD_GHOST = '#94a3b8', HD_BAND = '#dc2626', HD_ARROW = '#2563eb';
+function hArrow(x1, y1, x2, y2, color = HD_ARROW) {
+  const a = Math.atan2(y2 - y1, x2 - x1), s = 7;
+  const p1 = [x2 - s * Math.cos(a - 0.45), y2 - s * Math.sin(a - 0.45)];
+  const p2 = [x2 - s * Math.cos(a + 0.45), y2 - s * Math.sin(a + 0.45)];
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/><polygon points="${x2},${y2} ${p1[0].toFixed(1)},${p1[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}" fill="${color}"/>`;
+}
+function hLine(x1, y1, x2, y2, color = HD_BODY, dash = false) {
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="3" stroke-linecap="round"${dash ? ' stroke-dasharray="4 3"' : ''}/>`;
+}
+function hHand(x, y) { return `<circle cx="${x}" cy="${y}" r="3.2" fill="${HD_BODY}"/>`; }
+function healthDemoSvg(extra) {
+  return `<svg viewBox="0 0 220 150" style="width:100%;max-width:280px;height:auto;display:block;margin:0 auto">
+    <circle cx="110" cy="26" r="11" fill="none" stroke="${HD_BODY}" stroke-width="3"/>
+    ${hLine(110, 37, 110, 92)}${hLine(110, 92, 96, 128)}${hLine(110, 92, 124, 128)}
+    ${extra}
+  </svg>`;
+}
+
+const HEALTH_BAND_DEMOS = [
+  { test: /chest fly/i, label: 'band anchored behind your back',
+    svg: () => healthDemoSvg(
+      `<path d="M60 50 Q110 12 160 50" fill="none" stroke="${HD_BAND}" stroke-width="2.5" stroke-dasharray="5 4"/>
+       ${hLine(110, 50, 60, 50, HD_GHOST, true)}${hLine(110, 50, 160, 50, HD_GHOST, true)}${hHand(60, 50)}${hHand(160, 50)}
+       ${hLine(102, 50, 110, 80)}${hLine(118, 50, 110, 80)}${hHand(110, 80)}
+       ${hArrow(72, 52, 104, 76)}${hArrow(148, 52, 116, 76)}`),
+    steps: ['Anchor the band behind your back (or around a post at chest height) and hold an end in each hand.',
+      'Start with your arms out wide to the sides, elbows slightly bent.',
+      'Squeeze your chest to bring both hands together in front of you — like wrapping someone in a big hug.',
+      'Open back out to the wide start position slowly, feeling the stretch across your chest.'] },
+  { test: /face pull/i, label: 'band anchored in front at head height',
+    svg: () => healthDemoSvg(
+      `${hLine(110, 50, 110, 22, HD_GHOST, true)}<circle cx="110" cy="16" r="3.5" fill="${HD_BAND}"/>
+       <path d="M92 40 L110 22 M128 40 L110 22" stroke="${HD_BAND}" stroke-width="2.5" stroke-dasharray="5 4" fill="none"/>
+       ${hLine(110, 50, 92, 40)}${hLine(110, 50, 128, 40)}${hHand(92, 40)}${hHand(128, 40)}
+       ${hArrow(110, 26, 100, 40)}${hArrow(110, 26, 120, 40)}`),
+    steps: ['Anchor the band at about head height in front of you.',
+      'Hold an end in each hand with your arms extended toward the anchor.',
+      'Pull the band toward your face, driving your elbows high and out to the sides.',
+      'Pause when your hands reach your ears, then extend slowly back out.'] },
+  { test: /pull-?apart/i, label: 'hold the band in front with both hands',
+    svg: () => healthDemoSvg(
+      `${hLine(110, 50, 60, 52, HD_GHOST, true)}${hLine(110, 50, 160, 52, HD_GHOST, true)}${hHand(60, 52)}${hHand(160, 52)}
+       <line x1="98" y1="58" x2="122" y2="58" stroke="${HD_BAND}" stroke-width="2.5"/>${hHand(98, 58)}${hHand(122, 58)}
+       ${hArrow(92, 58, 66, 54)}${hArrow(128, 58, 154, 54)}`),
+    steps: ['Hold the band with both hands, arms straight out in front at shoulder height.',
+      'Keeping your arms straight, pull the band apart by moving your hands out to your sides.',
+      'Squeeze your shoulder blades together as the band comes toward your chest.',
+      'Return slowly to the start with control.'] },
+  { test: /row/i, label: 'band anchored low in front (or step on it)',
+    svg: () => healthDemoSvg(
+      `${hLine(96, 128, 96, 118, HD_BAND)}${hLine(124, 128, 124, 118, HD_BAND)}
+       <path d="M96 118 L95 110 M124 118 L125 110" stroke="${HD_BAND}" stroke-width="2.5" stroke-dasharray="5 4"/>
+       ${hLine(110, 50, 95, 108, HD_GHOST, true)}${hLine(110, 50, 125, 108, HD_GHOST, true)}
+       ${hLine(110, 50, 100, 66)}${hLine(110, 50, 120, 66)}${hHand(100, 66)}${hHand(120, 66)}
+       ${hArrow(96, 100, 101, 70)}${hArrow(124, 100, 119, 70)}`),
+    steps: ['Anchor the band low in front of you, or stand on it.',
+      'Hinge forward slightly with your arms extended toward the anchor.',
+      'Pull your elbows straight back toward your ribs, squeezing your shoulder blades together.',
+      'Straighten your arms back out under control.'] },
+  { test: /curl/i, label: 'stand on the middle of the band',
+    svg: () => healthDemoSvg(
+      `${hLine(100, 128, 100, 92, HD_BAND)}${hLine(120, 128, 120, 92, HD_BAND)}
+       ${hLine(110, 50, 100, 92, HD_GHOST, true)}${hLine(110, 50, 120, 92, HD_GHOST, true)}${hHand(100, 92)}${hHand(120, 92)}
+       ${hLine(110, 50, 100, 56)}${hLine(100, 56, 102, 40)}${hLine(110, 50, 120, 56)}${hLine(120, 56, 118, 40)}${hHand(102, 40)}${hHand(118, 40)}
+       ${hArrow(100, 84, 102, 46)}${hArrow(120, 84, 118, 46)}`),
+    steps: ['Stand on the middle of the band with an end in each hand, palms facing forward.',
+      'Pin your elbows to your sides.',
+      'Curl your hands up toward your shoulders.',
+      'Lower slowly until your arms are straight again.'] },
+  { test: /triceps|push-?down/i, label: 'band anchored overhead',
+    svg: () => healthDemoSvg(
+      `<circle cx="110" cy="14" r="3.5" fill="${HD_BAND}"/>${hLine(100, 62, 100, 20, HD_BAND)}${hLine(120, 62, 120, 20, HD_BAND)}
+       ${hLine(110, 50, 100, 62)}${hLine(110, 50, 120, 62)}${hHand(100, 62)}${hHand(120, 62)}
+       ${hLine(100, 62, 100, 96, HD_GHOST, true)}${hLine(120, 62, 120, 96, HD_GHOST, true)}${hHand(100, 96)}${hHand(120, 96)}
+       ${hArrow(100, 70, 100, 92)}${hArrow(120, 70, 120, 92)}`),
+    steps: ['Anchor the band overhead — the top of a door works well.',
+      'Grip an end in each hand with your elbows tucked at your sides, forearms up.',
+      'Keeping your elbows pinned, straighten your arms down until fully extended.',
+      'Let your forearms rise back up slowly.'] },
+  { test: /overhead press|press/i, label: 'stand on the band',
+    svg: () => healthDemoSvg(
+      `${hLine(96, 128, 96, 54, HD_BAND)}${hLine(124, 128, 124, 54, HD_BAND)}
+       ${hLine(110, 50, 96, 54, HD_GHOST, true)}${hLine(110, 50, 124, 54, HD_GHOST, true)}${hHand(96, 54)}${hHand(124, 54)}
+       ${hLine(110, 50, 102, 16)}${hLine(110, 50, 118, 16)}${hHand(102, 16)}${hHand(118, 16)}
+       ${hArrow(99, 46, 103, 22)}${hArrow(121, 46, 117, 22)}`),
+    steps: ['Stand on the band with an end in each hand at shoulder height.',
+      'Brace your core.',
+      'Press both hands straight up overhead until your arms are extended.',
+      'Lower back to your shoulders with control.'] },
+];
+function healthBandDemo(name) {
+  return HEALTH_BAND_DEMOS.find(d => d.test.test(name)) || {
+    label: 'resistance-band movement', svg: () => healthDemoSvg(`${hLine(110, 50, 80, 55)}${hLine(110, 50, 140, 55)}${hHand(80, 55)}${hHand(140, 55)}`),
+    steps: ['Set the band tension so the last 2–3 reps are challenging with good form.', 'Move slowly and control the return — that half is where the work is.'],
+  };
+}
+function healthExerciseDemoHtml(e) {
+  if (!healthIsBandExercise(e.name)) return '';
+  const demo = healthBandDemo(e.name);
+  const open = _healthDemoOpen.has(e.id);
+  const q = encodeURIComponent(e.name + ' exercise how to');
+  return `<details class="health-demo" ${open ? 'open' : ''} ontoggle="healthDemoToggle('${e.id}',this.open)" style="margin:.35rem 0 0 1.85rem">
+    <summary style="cursor:pointer;font-size:.74rem;color:var(--primary);user-select:none">🔍 <span style="text-decoration:underline">Show me how</span></summary>
+    <div style="margin-top:.5rem;padding:.7rem;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">
+      ${demo.svg()}
+      <div style="font-size:.62rem;color:var(--text-muted);text-align:center;margin-top:.25rem">Schematic — ${escHtml(demo.label)}</div>
+      <ol style="margin:.55rem 0 .4rem 1.1rem;padding:0;font-size:.79rem;line-height:1.45">${demo.steps.map(s => `<li style="margin-bottom:.15rem">${escHtml(s)}</li>`).join('')}</ol>
+      <a href="https://www.google.com/search?tbm=isch&q=${q}" target="_blank" rel="noopener noreferrer" style="font-size:.74rem">See real photos ↗</a>
+    </div>
+  </details>`;
+}
+
 // ── Daily view ────────────────────────────────────────────────────────────────
 function healthDailyHtml() {
   const iso = _healthDate;
@@ -12234,13 +12358,16 @@ function healthDailyHtml() {
   const workoutInner = isRest
     ? `<div style="text-align:center;padding:1rem;color:var(--text-muted)"><div style="font-size:1.6rem">😌</div><div style="font-weight:700;color:var(--text);margin-top:.3rem">Rest & Recovery Day</div><div style="font-size:.82rem;margin-top:.25rem">No training today. An easy 20–30 min walk is fine if you feel up to it. Recovery is where a 43-year-old body makes its gains.</div></div>`
     : exercises.map(e => `
-        <label style="display:flex;align-items:flex-start;gap:.6rem;padding:.5rem .2rem;border-bottom:1px solid var(--border);cursor:pointer">
-          <input type="checkbox" ${day.workoutsDone[e.id] ? 'checked' : ''} onchange="healthToggleWorkout('${iso}','${e.id}')" style="width:auto;margin-top:.2rem">
-          <span style="flex:1">
-            <span style="font-weight:600;${day.workoutsDone[e.id] ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(e.name)}</span>
-            <span style="display:block;font-size:.76rem;color:var(--text-muted)">${escHtml(e.detail || '')}</span>
-          </span>
-        </label>`).join('');
+        <div style="padding:.5rem .2rem;border-bottom:1px solid var(--border)">
+          <label style="display:flex;align-items:flex-start;gap:.6rem;cursor:pointer;margin:0">
+            <input type="checkbox" ${day.workoutsDone[e.id] ? 'checked' : ''} onchange="healthToggleWorkout('${iso}','${e.id}')" style="width:auto;margin-top:.2rem">
+            <span style="flex:1">
+              <span style="font-weight:600;${day.workoutsDone[e.id] ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(e.name)}</span>
+              <span style="display:block;font-size:.76rem;color:var(--text-muted)">${escHtml(e.detail || '')}</span>
+            </span>
+          </label>
+          ${healthExerciseDemoHtml(e)}
+        </div>`).join('');
   const workoutHeader = isRest ? '' : `<span style="font-size:.8rem;color:var(--text-muted)">${doneCount}/${exercises.length} done</span>`;
   const workoutCard = healthCard(`🏋️ Workout · ${HEALTH_WEEKDAYS[wd]}`, workoutInner, workoutHeader);
 

@@ -415,6 +415,8 @@ Global (not per-property) tracker for **workouts, diet/calories, weight loss, an
 
 **Daily habits** (`day.habits` = `{water,steps,sleep}`, goals in `profile.habitGoals`): a Daily Habits card (water stepper, steps, sleep) with per-goal ✓; habits surface compactly in the Weekly grid cells and feed adherence.
 
+**Band exercise demos** (`healthExerciseDemoHtml` / `HEALTH_BAND_DEMOS` / `healthBandDemo`): every resistance-band exercise (detected via `/band/i` on the name) gets a collapsible **"🔍 Show me how"** panel under it in the Daily workout list — minimized by default, open state tracked in `_healthDemoOpen` (UI-only, via `<details ontoggle>`). Each shows a **self-contained inline-SVG schematic** (drawn by `healthDemoSvg` + `hArrow`/`hLine`/`hHand` helpers; theme-aware, no external images so no CSP/hotlink/copyright issues) with band (red), start (grey dashed), end (solid), and motion arrows (blue), plus numbered form cues and a **"See real photos ↗"** link to a live web image search. Add a new move by pushing to `HEALTH_BAND_DEMOS` (`{ test:/regex/, label, svg:()=>…, steps:[…] }`); order matters (specific before generic `row`/`curl`/`press`).
+
 **Not on the mobile PWA** yet — desktop `index.html` only (parallel read-only mirror to be added in a later pass if wanted).
 
 ---

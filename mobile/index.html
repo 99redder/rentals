@@ -502,6 +502,9 @@
   let healthEditFoodId=null;
   const hid=()=>crypto.randomUUID?crypto.randomUUID():'h_'+Math.random().toString(36).slice(2);
   const healthTodayISO=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date());
+  // Mirror desktop: before the program starts, land on the start date (a Monday); once underway, use today.
+  const HEALTH_DEFAULT_START='2026-08-17';
+  function healthActiveISO(h){const t=healthTodayISO(),s=(h&&h.profile&&h.profile.startDate)||HEALTH_DEFAULT_START;return t>=s?t:s;}
   function healthWeekday(iso){const [y,m,d]=String(iso).split('-').map(Number);return new Date(Date.UTC(y,m-1,d)).getUTCDay();}
   function fmtDay(iso){const [,m,d]=String(iso).split('-');return `${M_ABBR[+m-1]||''} ${+d}`;}
   function healthDay(h,iso){
@@ -550,21 +553,21 @@
     const frames=reduce?[{opacity:0},{opacity:1,offset:.15},{opacity:1,offset:.75},{opacity:0}]:[{opacity:0,transform:'translate(-50%,-50%) scale(.7)'},{opacity:1,transform:'translate(-50%,-50%) scale(1.06)',offset:.2},{opacity:1,transform:'translate(-50%,-50%) scale(1)',offset:.7},{opacity:0,transform:'translate(-50%,-50%) scale(.95) translateY(-16px)'}];
     t.animate(frames,{duration:big?1600:1150,easing:'ease-out'}).onfinish=function(){t.remove();};
   }
-  function hToggleWorkout(exId,ev){healthMutate(h=>{const iso=healthTodayISO(),d=healthDay(h,iso),nowDone=!d.workoutsDone[exId];d.workoutsDone[exId]=nowDone;
+  function hToggleWorkout(exId,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),nowDone=!d.workoutsDone[exId];d.workoutsDone[exId]=nowDone;
     if(nowDone){const exs=(h.workoutPlan&&h.workoutPlan[healthWeekday(iso)])||[],all=exs.length>0&&exs.every(e=>d.workoutsDone[e.id]);hCelebrate(ev,all?'🎉 Workout complete!':hCheer(),all);}});}
-  function hToggleReward(slot){healthMutate(h=>{const iso=healthTodayISO(),d=healthDay(h,iso),key=slot==='pm'?'rewardPm':'rewardAm';
+  function hToggleReward(slot){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),key=slot==='pm'?'rewardPm':'rewardAm';
     if(!d[key]&&slot==='pm'&&h.profile&&h.profile.rewardGated&&!hUnlocked(h,iso))return;d[key]=!d[key];});}
-  function hBumpHabit(id,delta,ev){healthMutate(h=>{const iso=healthTodayISO(),d=healthDay(h,iso),before=n(d.habits[id]);d.habits[id]=Math.max(0,before+delta);
+  function hBumpHabit(id,delta,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),before=n(d.habits[id]);d.habits[id]=Math.max(0,before+delta);
     if(delta>0){const hb=((h.profile&&h.profile.habits)||[]).find(x=>x.id===id),g=hb?healthHabitGoal(h,hb,healthWeekday(iso)):Infinity;if(before<g&&d.habits[id]>=g){const all=hAllHabits(h,iso);hCelebrate(ev,all?'🌟 All habits done!':hCheer(),all);}}});}
-  function hToggleHabit(id,ev){healthMutate(h=>{const iso=healthTodayISO(),d=healthDay(h,iso),nowDone=n(d.habits[id])<1;d.habits[id]=nowDone?1:0;
+  function hToggleHabit(id,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),nowDone=n(d.habits[id])<1;d.habits[id]=nowDone?1:0;
     if(nowDone){const all=hAllHabits(h,iso);hCelebrate(ev,all?'🌟 All habits done!':hCheer(),all);}});}
-  function hDeleteFood(logId){healthMutate(h=>{const d=healthDay(h,healthTodayISO());d.foodLog=d.foodLog.filter(f=>f.id!==logId);});}
-  function hQuickFood(foodId){healthMutate(h=>{const food=(h.foods||[]).find(f=>f.id===foodId);if(!food)return;const d=healthDay(h,healthTodayISO());
+  function hDeleteFood(logId){healthMutate(h=>{const d=healthDay(h,healthActiveISO(h));d.foodLog=d.foodLog.filter(f=>f.id!==logId);});}
+  function hQuickFood(foodId){healthMutate(h=>{const food=(h.foods||[]).find(f=>f.id===foodId);if(!food)return;const d=healthDay(h,healthActiveISO(h));
     d.foodLog.push({id:hid(),name:food.name,calories:n(food.calories),protein:n(food.protein),carbs:n(food.carbs),fat:n(food.fat),foodId:food.id});food.uses=n(food.uses)+1;});}
   function hAddFood(){
     const name=($('#h-food-name').value||'').trim();if(!name)return;
     const cal=n($('#h-food-cal').value),p=n($('#h-food-p').value),c=n($('#h-food-c').value),f=n($('#h-food-f').value),save=$('#h-food-save').checked;
-    healthMutate(h=>{const d=healthDay(h,healthTodayISO());d.foodLog.push({id:hid(),name,calories:cal,protein:p,carbs:c,fat:f});
+    healthMutate(h=>{const d=healthDay(h,healthActiveISO(h));d.foodLog.push({id:hid(),name,calories:cal,protein:p,carbs:c,fat:f});
       if(save){h.foods=h.foods||[];const ex=h.foods.find(x=>String(x.name).toLowerCase()===name.toLowerCase());
         if(ex){ex.calories=cal;ex.protein=p;ex.carbs=c;ex.fat=f;ex.uses=n(ex.uses)+1;}else h.foods.push({id:hid(),name,calories:cal,protein:p,carbs:c,fat:f,uses:1});}});
   }
@@ -573,7 +576,7 @@
   function hSaveFood(logId){
     const name=($('#h-ef-name').value||'').trim(),cal=n($('#h-ef-cal').value),p=n($('#h-ef-p').value),c=n($('#h-ef-c').value),f=n($('#h-ef-f').value);
     healthEditFoodId=null;
-    healthMutate(h=>{const d=healthDay(h,healthTodayISO());const it=d.foodLog.find(x=>x.id===logId);if(it){it.name=name||it.name;it.calories=cal;it.protein=p;it.carbs=c;it.fat=f;}});
+    healthMutate(h=>{const d=healthDay(h,healthActiveISO(h));const it=d.foodLog.find(x=>x.id===logId);if(it){it.name=name||it.name;it.calories=cal;it.protein=p;it.carbs=c;it.fat=f;}});
   }
   function healthWeightChart(weighIns,goal){
     const rows=(weighIns||[]).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));
@@ -586,7 +589,9 @@
   function renderHealth(){
     const h=state.data.health;
     if(!h||(!h.workoutPlan&&!h.profile))return `<div class="h-banner">Open the Health tab on the desktop app once to set up your plan — then your daily workout, food log, weight, rewards, and habits show up here.</div>`;
-    const iso=healthTodayISO(),wd=healthWeekday(iso),day=healthDay(h,iso),t=healthTargets(h);
+    const iso=healthActiveISO(h),wd=healthWeekday(iso),day=healthDay(h,iso),t=healthTargets(h);
+    const notStarted=iso>healthTodayISO();
+    const startBanner=notStarted?`<div class="h-banner">🗓️ Your program starts ${H_WD_LONG[wd]}, ${fmtDay(iso)} — showing your first day.</div>`:'';
     const consumed=sum(day.foodLog,f=>n(f.calories)),proteinC=sum(day.foodLog,f=>n(f.protein)),remaining=t.calories-consumed,over=consumed>t.calories;
 
     const isRest=wd===0||wd===6,exs=(h.workoutPlan&&h.workoutPlan[wd])||[],wDone=exs.filter(e=>day.workoutsDone[e.id]).length;
@@ -643,7 +648,7 @@
     const fastBanner=fasting?`<div class="h-banner">⏳ Intermittent fasting day — eat breakfast, stop by ${esc(h.profile.fasting.cutoffLabel||'10 AM')}, fast until tomorrow morning. Water, black coffee &amp; sugar-free Red Bull are fine.</div>`:'';
 
     return `<div class="hero"><div class="hero-label">${H_WD_LONG[wd]} · ${over?'Over by':'Calories left'}</div><div class="hero-value">${over?'−':''}${Math.abs(Math.round(remaining))}</div><div class="hero-note">${Math.round(consumed)} eaten of ${t.calories} kcal · ${Math.round(proteinC)}/${t.protein}g protein</div></div>
-      ${fastBanner}${workoutCard}${foodCard}${weightCard}${rewardCard}${habitsCard}`;
+      ${startBanner}${fastBanner}${workoutCard}${foodCard}${weightCard}${rewardCard}${habitsCard}`;
   }
 
   function render(){

@@ -409,6 +409,12 @@ Global (not per-property) tracker for **workouts, diet/calories, weight loss, an
 
 **Dates** use UTC-based helpers (`healthAddDays` / `healthWeekday` / `healthMondayOf`) so calendar math never shifts across time zones. Weigh-ins are stored once per week, dated that week's **Monday**.
 
+**Program start date** (`profile.startDate`, default `2026-08-17`, a Monday): the view lands there until the program begins, and **navigation is clamped** so you can't view dates before it (Daily ◀/date-`min`/Today and Weekly ◀ Prev are disabled; `healthSetDate`/`healthShiftDay`/`healthShiftWeek`/`healthThisWeek` hard-clamp). **Start weight** ties to the first weigh-in on/after the start date (`healthStartWeight`) — the Aug 17 weigh-in auto-becomes `profile.startWeight`.
+
+**Streaks & adherence** (`healthDayAdherence` / `healthStreak` / `healthRewardUnlocked`): a day is "on plan" when its workout is fully done (rest days auto-pass), calories are logged and at/under goal, and habit goals are met. Daily shows 🔥 on-plan / 🏋️ workout / 🍽️ on-calorie **streak** tiles (an in-progress today with no data doesn't break a streak); Weekly shows an **On-Plan %** tile. **Reward gating** (`profile.rewardGated`, off by default): when on, the daily reward checkbox stays 🔒 locked until the day's workout + calorie targets are met.
+
+**Daily habits** (`day.habits` = `{water,steps,sleep}`, goals in `profile.habitGoals`): a Daily Habits card (water stepper, steps, sleep) with per-goal ✓; habits surface compactly in the Weekly grid cells and feed adherence.
+
 **Not on the mobile PWA** yet — desktop `index.html` only (parallel read-only mirror to be added in a later pass if wanted).
 
 ---
@@ -745,7 +751,7 @@ solar:summaries            →  { [year]: { ... } }
 deductions                 →  Array of deduction entry objects
 tax_planning:{year}        →  Tax planning inputs for that year
 savings                    →  { accounts: {robinhoodChecking, robinhoodBrokerage}, obligations: [...], payments: { [year]: { [oid]: [bool, ...] } } }
-health                     →  { profile, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[wd]:str}, days:{[YYYY-MM-DD]:{...}}, weighIns:[{date,weight}] }
+health                     →  { profile:{startDate,startWeight,goalWeight,habitGoals:{water,steps,sleep},rewardGated,…}, foods:[...], workoutPlan:{[wd]:[...]}, mealPlan:{[wd]:[...]}, rewardSchedule:{[wd]:str}, days:{[YYYY-MM-DD]:{workoutsDone,mealsDone,foodLog,habits:{water,steps,sleep},rewardEarned,closed,…}}, weighIns:[{date,weight}] }
 net_worth                  →  { manualItems, vehicles, propertyAssets, plaidAccounts, treasuryPortfolio, plaidRefreshedAt, history }
 move_in_purchases:{property}  →  Array of move-in purchase objects (4781MC only)
 move_in_categories:{property} →  Array of category name strings (4781MC only)
@@ -819,6 +825,13 @@ Entries through April 2026 have been pre-loaded. Historical annual summaries (20
 ---
 
 ## Recent Updates
+
+### 2026-08-14 — Health: start-date locking, streaks/adherence, daily habits
+
+- **Program start date** `profile.startDate = 2026-08-17` (a Monday; weeks already run Mon→Sun). The view lands there until the program starts, and **navigation before it is blocked** — Daily ◀/date-`min`/Today and Weekly ◀ Prev disable at the boundary, and all four nav mutators hard-clamp.
+- **Start weight ties to the first weigh-in** on/after the start date (`healthStartWeight`); logging the Aug 17 weigh-in auto-sets `profile.startWeight`, and History measures progress from it.
+- **Streaks & adherence** — `healthDayAdherence` defines "on plan" (workout fully done / calories at-or-under goal / habit goals met); `healthStreak` powers 🔥/🏋️/🍽️ streak tiles on Daily (an untouched today doesn't break a streak) and an **On-Plan %** tile on Weekly. Optional **reward gating** (`profile.rewardGated`) locks the daily reward until workout + calorie targets are met (`healthRewardUnlocked`, enforced in UI + `healthToggleReward`).
+- **Daily habit trackers** — `day.habits = {water,steps,sleep}` with goals in `profile.habitGoals` (default 8 glasses / 8000 steps / 7 hrs). Daily Habits card (water stepper, steps, sleep) with per-goal ✓; habits show compactly in Weekly cells and count toward adherence. Habit goals + gating are editable in Setup.
 
 ### 2026-08-14 — Health tab (workouts / diet / weight loss / rewards)
 

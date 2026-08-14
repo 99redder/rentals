@@ -11863,6 +11863,8 @@ function healthDefault() {
       startDate: '2026-08-17',   // program begins Monday Aug 17, 2026 (weeks run Mon→Sun)
       activityFactor: 1.375, ratePerWeek: 1,   // light activity (walking); ~1 lb/week
       calorieGoal: null, macros: { protein: null, carbs: null, fat: null }, // null = auto
+      habitGoals: { water: 8, steps: 8000, sleep: 7 },   // water = 8oz glasses/day
+      rewardGated: false,   // when true, the daily reward unlocks only after hitting workout + calorie targets
     },
     foods: [
       { id: 'f-shake-water', name: 'Protein Shake (whey + water)', calories: 130, protein: 25, carbs: 3, fat: 2, uses: 0 },
@@ -11934,6 +11936,7 @@ function healthNormalize(raw) {
   const h = (raw && typeof raw === 'object') ? raw : {};
   const profile = Object.assign({}, def.profile, h.profile || {});
   profile.macros = Object.assign({}, def.profile.macros, (h.profile && h.profile.macros) || {});
+  profile.habitGoals = Object.assign({}, def.profile.habitGoals, (h.profile && h.profile.habitGoals) || {});
   return {
     profile,
     foods: Array.isArray(h.foods) && h.foods.length ? h.foods.map(healthNormFood) : def.foods,
@@ -11995,10 +11998,11 @@ function healthTargets(h) {
 // ── Per-day accessors ─────────────────────────────────────────────────────────
 function healthEnsureDay(iso) {
   if (!state.health.days[iso]) {
-    state.health.days[iso] = { closed: false, workoutsDone: {}, mealsDone: {}, foodLog: [], rewardEarned: false, rewardText: '', note: '' };
+    state.health.days[iso] = { closed: false, workoutsDone: {}, mealsDone: {}, foodLog: [], rewardEarned: false, rewardText: '', note: '', habits: { water: 0, steps: 0, sleep: 0 } };
   }
   const d = state.health.days[iso];
   d.workoutsDone = d.workoutsDone || {}; d.mealsDone = d.mealsDone || {}; d.foodLog = d.foodLog || [];
+  d.habits = d.habits || { water: 0, steps: 0, sleep: 0 };
   return d;
 }
 function healthDayTotals(day) {
@@ -12008,6 +12012,48 @@ function healthDayTotals(day) {
 }
 function healthWeighInFor(mondayIso) {
   return (state.health.weighIns || []).find(w => w.date === mondayIso) || null;
+}
+
+// ── Adherence & streaks ───────────────────────────────────────────────────────
+// What "on plan" means for one day: all of that day's workout done (rest days
+// auto-pass), calories logged and at/under goal, and every habit goal met.
+function healthDayAdherence(iso) {
+  const wd = healthWeekday(iso);
+  const isRest = HEALTH_REST_DAYS.has(wd);
+  const day = state.health.days[iso];
+  const t = healthTargets(state.health);
+  const totals = day ? healthDayTotals(day) : { calories: 0 };
+  const exs = isRest ? [] : (state.health.workoutPlan[String(wd)] || []);
+  const wDone = day ? exs.filter(e => day.workoutsDone && day.workoutsDone[e.id]).length : 0;
+  const workoutOk = isRest ? true : (exs.length > 0 && wDone === exs.length);
+  const hasFood = totals.calories > 0;
+  const calOk = hasFood && totals.calories <= t.calories;
+  const habits = (day && day.habits) || {};
+  const hg = state.health.profile.habitGoals || {};
+  const habitsOk = (habits.water || 0) >= (hg.water || 0) && (habits.steps || 0) >= (hg.steps || 0) && (habits.sleep || 0) >= (hg.sleep || 0);
+  const hasData = !!day && (hasFood || wDone > 0 || (habits.water || habits.steps || habits.sleep) || day.rewardEarned);
+  return { isRest, workoutOk, calOk, habitsOk, hasFood, hasData, wDone, wTotal: exs.length, totals, goal: t.calories };
+}
+// Reward "unlocks" when the day's workout + calorie targets are met.
+function healthRewardUnlocked(iso) {
+  const a = healthDayAdherence(iso);
+  return a.workoutOk && a.calOk;
+}
+// Consecutive days (ending today) where metricFn passes. An in-progress today
+// with no data yet is skipped rather than breaking the streak.
+function healthStreak(metricFn) {
+  const start = state.health.profile.startDate;
+  let d = appTodayIso(), streak = 0, first = true;
+  for (let i = 0; i < 400; i++) {
+    if (start && d < start) break;
+    const a = healthDayAdherence(d);
+    if (metricFn(a)) streak++;
+    else if (first && !a.hasData) { /* today not started — don't break */ }
+    else break;
+    first = false;
+    d = healthAddDays(d, -1);
+  }
+  return streak;
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -12134,6 +12180,43 @@ function healthDailyHtml() {
       </div></div>`;
   }
 
+  // Streak strip
+  const streakTile = (emoji, label, val) => `<div style="flex:1;min-width:100px;padding:.6rem .7rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);text-align:center">
+      <div style="font-size:1.25rem;line-height:1">${emoji}</div>
+      <div style="font-size:1.45rem;font-weight:800;line-height:1.15">${val}<span style="font-size:.7rem;font-weight:600;color:var(--text-muted)"> d</span></div>
+      <div style="font-size:.64rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">${label}</div>
+    </div>`;
+  const streakStrip = `<div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem">
+      ${streakTile('🔥', 'On-plan streak', healthStreak(a => a.workoutOk && a.calOk))}
+      ${streakTile('🏋️', 'Workout streak', healthStreak(a => a.workoutOk))}
+      ${streakTile('🍽️', 'On-calorie streak', healthStreak(a => a.calOk))}
+    </div>`;
+
+  // Habits card
+  const habits = day.habits || { water: 0, steps: 0, sleep: 0 };
+  const hg = state.health.profile.habitGoals || {};
+  const habitCheck = (v, g) => (g > 0 && (v || 0) >= g) ? '<span style="color:var(--success);font-weight:800">✓</span>' : '';
+  const habitsCard = healthCard('💧 Daily Habits', `
+    <div style="display:flex;flex-direction:column;gap:.75rem">
+      <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap">
+        <span style="width:74px;font-weight:600">💧 Water</span>
+        <button class="btn btn-ghost btn-sm" onclick="healthBumpWater('${iso}',-1)" style="padding:.15rem .55rem">−</button>
+        <span style="font-weight:800;font-size:1.15rem;min-width:2.2rem;text-align:center">${habits.water || 0}</span>
+        <button class="btn btn-ghost btn-sm" onclick="healthBumpWater('${iso}',1)" style="padding:.15rem .55rem">+</button>
+        <span style="font-size:.74rem;color:var(--text-muted)">of ${hg.water || 0} glasses (8 oz)</span> ${habitCheck(habits.water, hg.water)}
+      </div>
+      <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap">
+        <span style="width:74px;font-weight:600">👟 Steps</span>
+        <input type="number" class="form-input" value="${habits.steps || ''}" placeholder="0" onchange="healthSetHabit('${iso}','steps',this.value)" style="width:110px">
+        <span style="font-size:.74rem;color:var(--text-muted)">goal ${(hg.steps || 0).toLocaleString()}</span> ${habitCheck(habits.steps, hg.steps)}
+      </div>
+      <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap">
+        <span style="width:74px;font-weight:600">😴 Sleep</span>
+        <input type="number" step="0.5" class="form-input" value="${habits.sleep || ''}" placeholder="0" onchange="healthSetHabit('${iso}','sleep',this.value)" style="width:110px">
+        <span style="font-size:.74rem;color:var(--text-muted)">goal ${hg.sleep || 0} hrs</span> ${habitCheck(habits.sleep, hg.sleep)}
+      </div>
+    </div>`);
+
   // Calories card
   const calCard = healthCard('Calories & Macros', `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.2rem;align-items:center">
@@ -12230,21 +12313,25 @@ function healthDailyHtml() {
     </div>`;
   const foodCard = healthCard('📋 Food Log', foodInner);
 
-  // Reward card
+  // Reward card (optionally gated on hitting workout + calorie targets)
   const reward = day.rewardText || state.health.rewardSchedule[String(wd)] || '';
+  const gated = state.health.profile.rewardGated;
+  const unlocked = healthRewardUnlocked(iso);
+  const rewardLocked = gated && !unlocked && !day.rewardEarned;
   const rewardCard = healthCard('🎁 Daily Reward', `
     <div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">
-      <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;flex-shrink:0">
-        <input type="checkbox" ${day.rewardEarned ? 'checked' : ''} onchange="healthToggleReward('${iso}')" style="width:auto;transform:scale(1.3)">
-        <span style="font-weight:700;${day.rewardEarned ? 'color:var(--success)' : ''}">${day.rewardEarned ? 'Earned!' : 'Mark earned'}</span>
+      <label style="display:flex;align-items:center;gap:.5rem;cursor:${rewardLocked ? 'not-allowed' : 'pointer'};flex-shrink:0;${rewardLocked ? 'opacity:.55' : ''}">
+        <input type="checkbox" ${day.rewardEarned ? 'checked' : ''} ${rewardLocked ? 'disabled' : ''} onchange="healthToggleReward('${iso}')" style="width:auto;transform:scale(1.3)">
+        <span style="font-weight:700;${day.rewardEarned ? 'color:var(--success)' : ''}">${day.rewardEarned ? 'Earned!' : (rewardLocked ? '🔒 Locked' : 'Mark earned')}</span>
       </label>
       <input type="text" class="form-input" value="${escAttr(reward)}" placeholder="Today's reward" onchange="healthSetRewardText('${iso}',this.value)" style="flex:1;min-width:150px">
     </div>
+    ${gated ? `<div style="font-size:.76rem;margin-top:.5rem;color:${unlocked ? 'var(--success)' : 'var(--text-muted)'}">${unlocked ? '✓ Targets met — reward unlocked.' : '🔒 Complete your workout and stay at/under your calorie goal to unlock today’s reward.'}</div>` : ''}
     <div style="font-size:.74rem;color:var(--text-muted);margin-top:.4rem">Default for ${HEALTH_WEEKDAYS_LONG[wd]}: ${escHtml(state.health.rewardSchedule[String(wd)] || '—')} · edit the weekly schedule under Setup.</div>`);
 
-  return `${nav}${weighCard}
+  return `${nav}${weighCard}${streakStrip}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 1rem;align-items:start">
-      <div>${calCard}${workoutCard}</div>
+      <div>${calCard}${workoutCard}${habitsCard}</div>
       <div>${mealCard}${foodCard}${rewardCard}</div>
     </div>`;
 }
@@ -12271,7 +12358,20 @@ async function healthToggleMeal(iso, mealId) {
   await saveHealth(); _renderHealthHtml();
 }
 async function healthToggleReward(iso) {
-  const d = healthEnsureDay(iso); d.rewardEarned = !d.rewardEarned;
+  const d = healthEnsureDay(iso);
+  // If reward-gating is on, don't allow marking earned until targets are met.
+  if (!d.rewardEarned && state.health.profile.rewardGated && !healthRewardUnlocked(iso)) return;
+  d.rewardEarned = !d.rewardEarned;
+  await saveHealth(); _renderHealthHtml();
+}
+async function healthSetHabit(iso, key, val) {
+  const d = healthEnsureDay(iso);
+  d.habits[key] = Math.max(0, parseFloat(val) || 0);
+  await saveHealth(); _renderHealthHtml();
+}
+async function healthBumpWater(iso, delta) {
+  const d = healthEnsureDay(iso);
+  d.habits.water = Math.max(0, (d.habits.water || 0) + delta);
   await saveHealth(); _renderHealthHtml();
 }
 async function healthSetRewardText(iso, val) {
@@ -12373,7 +12473,7 @@ function healthWeeklyHtml() {
       <button class="btn btn-primary btn-sm" onclick="healthSaveWeighIn('${mon}')">${weighIn ? 'Update' : 'Save'}</button>
     </div></div>`;
 
-  let sumCals = 0, calDays = 0, workoutsDone = 0, workoutsTotal = 0, rewardsEarned = 0;
+  let sumCals = 0, calDays = 0, workoutsDone = 0, workoutsTotal = 0, rewardsEarned = 0, onPlanDays = 0, applicableDays = 0;
   const cells = days.map(iso => {
     const wd = healthWeekday(iso);
     const isRest = HEALTH_REST_DAYS.has(wd);
@@ -12384,20 +12484,27 @@ function healthWeeklyHtml() {
     if (!isRest) { workoutsTotal += exs.length; workoutsDone += wDone; }
     if (day && totals.calories > 0) { sumCals += totals.calories; calDays++; }
     if (day && day.rewardEarned) rewardsEarned++;
+    if (iso <= today) { applicableDays++; const ad = healthDayAdherence(iso); if (ad.workoutOk && ad.calOk) onPlanDays++; }
     const overGoal = totals.calories > t.calories;
     const calColor = totals.calories === 0 ? 'var(--text-muted)' : (overGoal ? 'var(--danger)' : 'var(--success)');
     const isToday = iso === today;
+    const hb = day && day.habits ? day.habits : null;
+    const hasHabits = hb && ((hb.water || 0) || (hb.steps || 0) || (hb.sleep || 0));
+    const stepsShort = hb && hb.steps ? (hb.steps >= 1000 ? (hb.steps / 1000).toFixed(hb.steps % 1000 ? 1 : 0) + 'k' : hb.steps) : 0;
     return `<button type="button" onclick="healthSetView('daily');healthSetDate('${iso}')" style="text-align:left;cursor:pointer;background:${isToday ? 'var(--primary-light)' : 'var(--surface)'};border:1px solid ${isToday ? 'var(--primary)' : 'var(--border)'};border-radius:var(--radius);padding:.6rem;display:flex;flex-direction:column;gap:.3rem;min-height:118px">
       <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-weight:700;font-size:.82rem">${HEALTH_WEEKDAYS[wd]}</span><span style="font-size:.68rem;color:var(--text-muted)">${iso.slice(5)}</span></div>
       ${day && day.closed ? '<span style="font-size:.62rem;color:var(--success);font-weight:700">✓ closed</span>' : ''}
       <div style="font-size:.72rem;color:var(--text-muted)">${isRest ? '😌 Rest' : `🏋️ ${wDone}/${exs.length}`}</div>
       <div style="font-size:.9rem;font-weight:700;color:${calColor}">${totals.calories ? Math.round(totals.calories) + ' kcal' : '—'}</div>
+      ${hasHabits ? `<div style="font-size:.66rem;color:var(--text-muted)">💧${hb.water || 0} 👟${stepsShort} 😴${hb.sleep || 0}</div>` : ''}
       <div style="font-size:.72rem">${day && day.rewardEarned ? '🎁 earned' : '<span style="color:var(--text-muted)">🎁 —</span>'}</div>
     </button>`;
   }).join('');
 
   const avgCals = calDays ? Math.round(sumCals / calDays) : 0;
+  const onPlanPct = applicableDays ? Math.round((onPlanDays / applicableDays) * 100) : 0;
   const summary = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;margin-bottom:1rem">
+      <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">On-Plan Days</div><div style="font-size:1.3rem;font-weight:750;color:${onPlanPct >= 70 ? 'var(--success)' : (onPlanPct >= 40 ? 'var(--warning)' : 'var(--text)')}">${onPlanPct}%<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> · ${onPlanDays}/${applicableDays}</span></div></div>
       <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Avg Calories</div><div style="font-size:1.3rem;font-weight:750">${avgCals || '—'}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / ${t.calories}</span></div></div>
       <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Workout Sets Done</div><div style="font-size:1.3rem;font-weight:750">${workoutsDone}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / ${workoutsTotal}</span></div></div>
       <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Rewards Earned</div><div style="font-size:1.3rem;font-weight:750">${rewardsEarned}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / 7</span></div></div>
@@ -12513,6 +12620,7 @@ function healthHistoryHtml() {
 // ── Setup view ────────────────────────────────────────────────────────────────
 function healthSetupHtml() {
   const h = state.health, p = h.profile, t = healthTargets(h);
+  const hg = p.habitGoals || {};
 
   const goalsCard = healthCard('🎯 Goals & Targets', `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin-bottom:.9rem">
@@ -12544,6 +12652,15 @@ function healthSetupHtml() {
       <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Protein g<input type="number" id="hp-mp" class="form-input" placeholder="auto" value="${p.macros.protein ?? ''}" style="margin-top:.2rem"></label>
       <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Carbs g<input type="number" id="hp-mc" class="form-input" placeholder="auto" value="${p.macros.carbs ?? ''}" style="margin-top:.2rem"></label>
       <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Fat g<input type="number" id="hp-mf" class="form-input" placeholder="auto" value="${p.macros.fat ?? ''}" style="margin-top:.2rem"></label>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:.85rem;margin-bottom:.9rem">
+      <div style="font-weight:700;font-size:.85rem;margin-bottom:.55rem">Habit goals &amp; rewards</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.7rem;margin-bottom:.75rem">
+        <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Water (glasses)<input type="number" id="hp-hab-water" class="form-input" value="${hg.water ?? 8}" style="margin-top:.2rem"></label>
+        <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Steps<input type="number" id="hp-hab-steps" class="form-input" value="${hg.steps ?? 8000}" style="margin-top:.2rem"></label>
+        <label style="font-size:.78rem;font-weight:600;color:var(--text-muted)">Sleep (hrs)<input type="number" step="0.5" id="hp-hab-sleep" class="form-input" value="${hg.sleep ?? 7}" style="margin-top:.2rem"></label>
+      </div>
+      <label style="display:flex;align-items:flex-start;gap:.5rem;font-size:.82rem;cursor:pointer"><input type="checkbox" id="hp-reward-gated" ${p.rewardGated ? 'checked' : ''} style="width:auto;margin-top:.15rem"><span>Only unlock the daily reward after I complete the workout and stay at/under my calorie goal</span></label>
     </div>
     <button class="btn btn-primary btn-sm" onclick="healthSaveProfile()">Save Goals</button>`);
 
@@ -12651,6 +12768,12 @@ async function healthSaveProfile() {
   p.ratePerWeek = parseFloat(document.getElementById('hp-rate').value) || 1;
   p.calorieGoal = opt('hp-cals');
   p.macros = { protein: opt('hp-mp'), carbs: opt('hp-mc'), fat: opt('hp-mf') };
+  p.habitGoals = {
+    water: Math.max(0, Math.round(num('hp-hab-water', p.habitGoals.water))),
+    steps: Math.max(0, Math.round(num('hp-hab-steps', p.habitGoals.steps))),
+    sleep: Math.max(0, num('hp-hab-sleep', p.habitGoals.sleep)),
+  };
+  p.rewardGated = document.getElementById('hp-reward-gated').checked;
   await saveHealth(); _renderHealthHtml();
 }
 async function healthAddExercise(wd) {

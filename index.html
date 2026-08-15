@@ -10186,14 +10186,19 @@ function efRenderRow(row) {
     : `<span style="color:${tag.color};font-style:italic;font-size:1.05rem">${escHtml(String(row.value))}</span>`;
   const bg = isVerify ? 'background:color-mix(in srgb, var(--ef-verify) 14%, transparent);'
     : isReconcile ? 'background:color-mix(in srgb, var(--ef-reconcile) 14%, transparent);' : '';
-  return `<label class="ef-row${done ? ' ef-done' : ''}" style="display:flex;gap:.75rem;align-items:flex-start;padding:.9rem .85rem;border-bottom:1px solid var(--border);cursor:pointer;${bg}">
+  // Reconcile/verify rows carry a full spelled-out instruction in row.note —
+  // show that as the primary guidance instead of the generic tag label.
+  const tagLine = (isReconcile || isVerify) && row.note
+    ? `${tag.icon} ${escHtml(row.note)}`
+    : `${tag.icon} ${escHtml(tag.label)}${row.note ? ' · ' + escHtml(row.note) : ''}`;
+  return `<label class="ef-row${done ? ' ef-done' : ''}" style="display:flex;gap:.75rem;align-items:flex-start;padding:.9rem .85rem;border-bottom:1px solid var(--border);cursor:pointer;text-transform:none;letter-spacing:normal;${bg}">
     <input type="checkbox" ${done ? 'checked' : ''} onchange="efToggleStep('${row.id}',this)" style="margin-top:.15rem;width:26px;height:26px;flex-shrink:0;accent-color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--success)'}">
     <span style="flex:1;min-width:0">
       <span style="display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap;align-items:baseline">
-        <span style="flex:1;min-width:140px"><strong style="font-size:.9rem;color:var(--text-muted)">${escHtml(row.form)}${row.line ? ' · Line ' + escHtml(row.line) : ''}</strong><br><span style="color:var(--text);font-size:1.1rem;${isVerify || isReconcile ? 'font-weight:600' : ''}">${escHtml(row.label)}</span></span>
+        <span style="flex:1;min-width:140px"><strong style="font-size:.9rem;color:var(--text-muted);font-weight:700">${escHtml(row.form)}${row.line ? ' · Line ' + escHtml(row.line) : ''}</strong><br><span style="color:var(--text);font-size:1.1rem;${isVerify || isReconcile ? 'font-weight:600' : 'font-weight:400'}">${escHtml(row.label)}</span></span>
         <span style="text-align:right;white-space:nowrap">${valHtml}</span>
       </span>
-      <span style="display:block;font-size:.85rem;color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--text-muted)'};margin-top:.3rem;font-weight:600">${tag.icon} ${escHtml(tag.label)}${row.note ? ' · ' + escHtml(row.note) : ''}</span>
+      <span style="display:block;font-size:.9rem;color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--text-muted)'};margin-top:.35rem;font-weight:600;line-height:1.5">${tagLine}</span>
     </span>
   </label>`;
 }
@@ -10222,57 +10227,57 @@ function efBuildSteps(tp, r, rentalRows) {
   // Wages & pension
   steps.push({ key: 'validate-wages', title: 'Validate — Wages & Pension', subtitle: 'W-2 and 1099-R.',
     rows: [
-      efC('rec-w2-wages', 'W-2 box 1 (spouse)', 'Wages the app has', tpN(tp.wife_gross), 'Must equal W-2 box 1'),
-      efC('rec-w2-fed', 'W-2 box 2 (spouse)', 'Federal withholding the app has', tpN(tp.wife_fed), 'Must equal W-2 box 2'),
-      efC('rec-1099r-tax', '1099-R (military pension)', 'Taxable pension the app has', tpN(tp.navy_gross), 'Must equal 1099-R box 2a'),
-      efC('rec-1099r-fed', '1099-R box 4', 'Pension withholding the app has', tpN(tp.navy_fed), 'Must equal 1099-R box 4'),
+      efC('rec-w2-wages', "Spouse's W-2", 'Wages the app has', tpN(tp.wife_gross), `Look at your spouse's W-2. Find Box 1 ("Wages, tips, other compensation"). It should say ${fmt(tpN(tp.wife_gross))}.`),
+      efC('rec-w2-fed', "Spouse's W-2", 'Federal tax withheld the app has', tpN(tp.wife_fed), `On the same W-2, find Box 2 ("Federal income tax withheld"). It should say ${fmt(tpN(tp.wife_fed))}.`),
+      efC('rec-1099r-tax', 'Military pension 1099-R', 'Taxable pension the app has', tpN(tp.navy_gross), `Look at your military pension 1099-R. Find Box 2a ("Taxable amount"). It should say ${fmt(tpN(tp.navy_gross))}. (If Box 2a is blank, use Box 1.)`),
+      efC('rec-1099r-fed', 'Military pension 1099-R', 'Pension tax withheld the app has', tpN(tp.navy_fed), `On the same 1099-R, find Box 4 ("Federal income tax withheld"). It should say ${fmt(tpN(tp.navy_fed))}.`),
     ]});
 
   // Interest (1099-INT) — only nonzero payers
   const intRows = [];
-  if (tpN(tp.treasury_int)) intRows.push(efC('rec-int-treasury', '1099-INT — U.S. Treasury', 'Interest the app has', tpN(tp.treasury_int), 'Match box 1 / box 3'));
-  if (tpN(tp.ally_int)) intRows.push(efC('rec-int-ally', '1099-INT — Ally', 'Interest the app has', tpN(tp.ally_int), 'Match box 1'));
-  if (tpN(tp.rh_int)) intRows.push(efC('rec-int-rh', '1099-INT — Robinhood', 'Interest the app has', tpN(tp.rh_int), 'Match box 1'));
-  if (tpN(tp.ibkr_int)) intRows.push(efC('rec-int-ibkr', '1099-INT — IBKR', 'Interest the app has', tpN(tp.ibkr_int), 'Match box 1'));
-  intRows.push(efV('rec-int-total', 'Interest total', '', 'Sum should equal Schedule B / 1040 line 2b', r.interest, 'App total of all interest above'));
+  if (tpN(tp.treasury_int)) intRows.push(efC('rec-int-treasury', 'U.S. Treasury 1099-INT', 'Treasury interest the app has', tpN(tp.treasury_int), `Look at your TreasuryDirect 1099-INT. Find Box 3 ("Interest on U.S. Savings Bonds and Treasury obligations"), plus Box 1 if it has any. They should total ${fmt(tpN(tp.treasury_int))}.`));
+  if (tpN(tp.ally_int)) intRows.push(efC('rec-int-ally', 'Ally 1099-INT', 'Ally interest the app has', tpN(tp.ally_int), `Look at your Ally Bank 1099-INT. Find Box 1 ("Interest income"). It should say ${fmt(tpN(tp.ally_int))}.`));
+  if (tpN(tp.rh_int)) intRows.push(efC('rec-int-rh', 'Robinhood 1099', 'Robinhood interest the app has', tpN(tp.rh_int), `On your Robinhood Consolidated 1099, find the 1099-INT section, Box 1. It should say ${fmt(tpN(tp.rh_int))}.`));
+  if (tpN(tp.ibkr_int)) intRows.push(efC('rec-int-ibkr', 'IBKR 1099', 'IBKR interest the app has', tpN(tp.ibkr_int), `On your Interactive Brokers 1099, find the 1099-INT section, Box 1. It should say ${fmt(tpN(tp.ibkr_int))}.`));
+  intRows.push(efV('rec-int-total', 'Interest total', '', 'Total interest the app has', r.interest, `When you type these into FFFF later, Schedule B and Form 1040 line 2b must total ${fmt(r.interest)}.`));
   steps.push({ key: 'validate-interest', title: 'Validate — Interest (1099-INT)', subtitle: 'Match each payer\'s 1099-INT.', rows: intRows });
 
   // Dividends & capital gains
   const invRows = [];
-  if (tpN(tp.rh_div)) invRows.push(efC('rec-div-rh', '1099-DIV — Robinhood', 'Ordinary dividends the app has', tpN(tp.rh_div), 'Match box 1a'));
-  if (tpN(tp.ibkr_div)) invRows.push(efC('rec-div-ibkr', '1099-DIV — IBKR', 'Ordinary dividends the app has', tpN(tp.ibkr_div), 'Match box 1a'));
+  if (tpN(tp.rh_div)) invRows.push(efC('rec-div-rh', 'Robinhood 1099-DIV', 'Ordinary dividends the app has', tpN(tp.rh_div), `On your Robinhood Consolidated 1099, find the 1099-DIV section, Box 1a ("Total ordinary dividends"). It should say ${fmt(tpN(tp.rh_div))}.`));
+  if (tpN(tp.ibkr_div)) invRows.push(efC('rec-div-ibkr', 'IBKR 1099-DIV', 'Ordinary dividends the app has', tpN(tp.ibkr_div), `On your IBKR 1099, find the 1099-DIV section, Box 1a ("Total ordinary dividends"). It should say ${fmt(tpN(tp.ibkr_div))}.`));
   // ST and LT are separate tasks — never add them together (avoids math errors).
-  if (tpN(tp.rh_st)) invRows.push(efC('rec-b-rh-st', '1099-B — Robinhood', 'SHORT-TERM gain/loss the app has', tpN(tp.rh_st), 'Match the short-term total ONLY'));
-  if (tpN(tp.rh_lt)) invRows.push(efC('rec-b-rh-lt', '1099-B — Robinhood', 'LONG-TERM gain/loss the app has', tpN(tp.rh_lt), 'Match the long-term total ONLY'));
-  if (tpN(tp.megan_rh_st)) invRows.push(efC('rec-b-megan-st', '1099-B — Robinhood (Megan)', 'SHORT-TERM gain/loss the app has', tpN(tp.megan_rh_st), 'Match the short-term total ONLY'));
-  if (tpN(tp.ibkr_st)) invRows.push(efC('rec-b-ibkr-st', '1099-B — IBKR', 'SHORT-TERM gain/loss the app has', tpN(tp.ibkr_st), 'Match the short-term total ONLY'));
-  if (tpN(tp.ibkr_lt)) invRows.push(efC('rec-b-ibkr-lt', '1099-B — IBKR', 'LONG-TERM gain/loss the app has', tpN(tp.ibkr_lt), 'Match the long-term total ONLY'));
-  if (tpN(tp.crypto_st)) invRows.push(efC('rec-crypto-st', 'Crypto 1099 / ledger', 'SHORT-TERM crypto gain/loss the app has', tpN(tp.crypto_st), 'Match the short-term total ONLY'));
-  if (tpN(tp.crypto_lt)) invRows.push(efC('rec-crypto-lt', 'Crypto 1099 / ledger', 'LONG-TERM crypto gain/loss the app has', tpN(tp.crypto_lt), 'Match the long-term total ONLY'));
-  if (tpN(tp.crypto_income)) invRows.push(efC('rec-crypto-inc', 'Crypto 1099 / ledger', 'Crypto ordinary income the app has', tpN(tp.crypto_income), 'Match staking/reward income'));
-  if (invRows.length === 0) invRows.push(efR('rec-inv-none', 'Dividends & capital gains', '', 'No dividend/capital-gain amounts in the app', 'confirm none on your 1099-DIV / 1099-B', 'supply'));
+  if (tpN(tp.rh_st)) invRows.push(efC('rec-b-rh-st', 'Robinhood 1099-B', 'SHORT-TERM gain/loss the app has', tpN(tp.rh_st), `On your Robinhood 1099-B summary, find the SHORT-TERM total gain/loss (the short-term line only — do NOT add long-term). It should say ${fmt(tpN(tp.rh_st))}. A negative number is a loss.`));
+  if (tpN(tp.rh_lt)) invRows.push(efC('rec-b-rh-lt', 'Robinhood 1099-B', 'LONG-TERM gain/loss the app has', tpN(tp.rh_lt), `On your Robinhood 1099-B summary, find the LONG-TERM total gain/loss (the long-term line only). It should say ${fmt(tpN(tp.rh_lt))}. A negative number is a loss.`));
+  if (tpN(tp.megan_rh_st)) invRows.push(efC('rec-b-megan-st', "Megan's Robinhood 1099-B", 'SHORT-TERM gain/loss the app has', tpN(tp.megan_rh_st), `On Megan's Robinhood 1099-B summary, find the SHORT-TERM total gain/loss only. It should say ${fmt(tpN(tp.megan_rh_st))}.`));
+  if (tpN(tp.ibkr_st)) invRows.push(efC('rec-b-ibkr-st', 'IBKR 1099-B', 'SHORT-TERM gain/loss the app has', tpN(tp.ibkr_st), `On your IBKR 1099-B summary, find the SHORT-TERM total gain/loss only. It should say ${fmt(tpN(tp.ibkr_st))}.`));
+  if (tpN(tp.ibkr_lt)) invRows.push(efC('rec-b-ibkr-lt', 'IBKR 1099-B', 'LONG-TERM gain/loss the app has', tpN(tp.ibkr_lt), `On your IBKR 1099-B summary, find the LONG-TERM total gain/loss only. It should say ${fmt(tpN(tp.ibkr_lt))}.`));
+  if (tpN(tp.crypto_st)) invRows.push(efC('rec-crypto-st', 'Crypto 1099 / ledger', 'SHORT-TERM crypto gain/loss the app has', tpN(tp.crypto_st), `On your crypto exchange 1099 (or your own ledger), find the SHORT-TERM total gain/loss only. It should say ${fmt(tpN(tp.crypto_st))}.`));
+  if (tpN(tp.crypto_lt)) invRows.push(efC('rec-crypto-lt', 'Crypto 1099 / ledger', 'LONG-TERM crypto gain/loss the app has', tpN(tp.crypto_lt), `On your crypto exchange 1099 (or your own ledger), find the LONG-TERM total gain/loss only. It should say ${fmt(tpN(tp.crypto_lt))}.`));
+  if (tpN(tp.crypto_income)) invRows.push(efC('rec-crypto-inc', 'Crypto 1099 / ledger', 'Crypto ordinary income the app has', tpN(tp.crypto_income), `Find your crypto ordinary income (staking / rewards / interest). It should total ${fmt(tpN(tp.crypto_income))}.`));
+  if (invRows.length === 0) invRows.push(efR('rec-inv-none', 'Dividends & capital gains', '', 'No dividend/capital-gain amounts in the app', 'Confirm your 1099-DIV / 1099-B show nothing to report.', 'supply'));
   steps.push({ key: 'validate-invest', title: 'Validate — Dividends & Capital Gains', subtitle: 'Match 1099-DIV and 1099-B.', rows: invRows });
 
   // Business income (Schedule C) — books, not always a 1099
   const bizRows = [];
-  if (tpN(tp.fmg) || tpN(tp.fmg_sp)) bizRows.push(efC('rec-biz-fmg', 'FMG year-end books', 'Net profit the app has', tpN(tp.fmg) + tpN(tp.fmg_sp), 'Match FMG P&L / 1099-NEC/K'));
-  if (tpN(tp.esai)) bizRows.push(efC('rec-biz-esai', 'Eastern Shore AI books', 'Net profit the app has', tpN(tp.esai), 'Match ESAI P&L / 1099-NEC/K'));
+  if (tpN(tp.fmg) || tpN(tp.fmg_sp)) bizRows.push(efC('rec-biz-fmg', 'FMG year-end books', 'FMG net profit the app has', tpN(tp.fmg) + tpN(tp.fmg_sp), `Open Florence Mae Gifts' year-end Profit & Loss statement. The net profit (income minus expenses, plus any 1099-NEC or 1099-K it received) should be ${fmt(tpN(tp.fmg) + tpN(tp.fmg_sp))}.`));
+  if (tpN(tp.esai)) bizRows.push(efC('rec-biz-esai', 'Eastern Shore AI books', 'ESAI net profit the app has', tpN(tp.esai), `Open Eastern Shore AI's year-end Profit & Loss statement. The net profit should be ${fmt(tpN(tp.esai))}.`));
   if (bizRows.length) steps.push({ key: 'validate-business', title: 'Validate — Business Income', subtitle: 'Match each Schedule C net to year-end books.', rows: bizRows });
 
   // Rental income & expenses (confirm everything is logged) + depreciation
   const rentRows = [];
   for (const row of rentalRows) {
-    rentRows.push(efC(`rec-rent-${row.prop}`, `Rental — ${row.prop}`, 'All 2026 rent & expenses logged?', row.net, `App: rents ${fmt(row.income)} − expenses ${fmt(row.expenses)}. Confirm every month is entered.`));
-    if (row.deprAmt) rentRows.push(efC(`rec-depr-${row.prop}`, `Depreciation — ${row.prop}`, 'Depreciation the app computed', row.deprAmt, 'Confirm against your depreciation schedule'));
+    rentRows.push(efC(`rec-rent-${row.prop}`, `Rental — ${row.prop}`, 'Net rental the app has', row.net, `Open the ${row.prop} "Current Year" tab. Confirm all 12 months of rent AND every expense receipt are entered. The app shows rents ${fmt(row.income)} minus expenses ${fmt(row.expenses)} = net ${fmt(row.net)}. If anything is missing, add it on that tab first.`));
+    if (row.deprAmt) rentRows.push(efC(`rec-depr-${row.prop}`, `Depreciation — ${row.prop}`, 'Depreciation the app computed', row.deprAmt, `Pull last year's tax return for ${row.prop} and find its depreciation amount. This year should be the same: ${fmt(row.deprAmt)}.`));
   }
   if (rentRows.length) steps.push({ key: 'validate-rental', title: 'Validate — Rental Income & Depreciation', subtitle: 'Confirm every rental figure is complete.', rows: rentRows });
 
   // Estimated tax payments actually made
   steps.push({ key: 'validate-payments', title: 'Validate — Estimated Payments & Withholding', subtitle: 'Confirm what you actually paid.',
     rows: [
-      efC('rec-est', 'IRS account / bank records', 'Federal estimated payments the app has', r.estPmts, 'Confirm against your IRS online account'),
-      efC('rec-wh', 'W-2 + 1099-R', 'Total federal withholding the app has', r.fedWithheld, 'Sum of W-2 box 2 + 1099-R box 4'),
-      efR('validate-done', 'Validation complete', '', 'All figures reconciled to documents — ready to file', 'proceed to Phase 2', 'records'),
+      efC('rec-est', 'IRS online account', 'Estimated payments the app has', r.estPmts, `Log in at irs.gov/account and open "Payment Activity." Your ${CURRENT_YEAR} estimated tax payments should total ${fmt(r.estPmts)}.`),
+      efC('rec-wh', 'W-2 + 1099-R', 'Total federal withholding the app has', r.fedWithheld, `Add your spouse's W-2 Box 2 plus your 1099-R Box 4. Together they should total ${fmt(r.fedWithheld)}.`),
+      efR('validate-done', 'Validation complete', '', 'All figures reconciled to your documents — ready to file', 'Continue to Phase 2 to enter them in FFFF.', 'records'),
     ]});
 
   // ═══ PHASE 2: FILL FREE FILE FILLABLE FORMS ═════════════════════════════════

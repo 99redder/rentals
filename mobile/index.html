@@ -127,6 +127,8 @@
       <p>A private, read-only view of your properties and financial plans.</p>
       <label for="password">Rental Manager Password</label>
       <input id="password" type="password" autocomplete="current-password" required>
+      <label for="totp" style="margin-top:16px">Authenticator Code</label>
+      <input id="totp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="123456">
       <button class="primary" id="login-button" type="submit">Open dashboard</button>
       <div class="login-error" id="login-error" role="alert"></div>
     </form>
@@ -188,10 +190,10 @@
     return data;
   }
 
-  async function signIn(password) {
-    const res = await fetch(API,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'verify_password',password,rememberDevice:true})});
+  async function signIn(password, code) {
+    const res = await fetch(API,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'verify_password',password,code,rememberDevice:true})});
     const data = await res.json().catch(()=>({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || 'Incorrect password');
+    if (!res.ok || !data.ok) throw new Error(data.error || (data.totpRequired ? 'Invalid authenticator code' : 'Incorrect password'));
     if(data.sessionToken)localStorage.setItem(SESSION_TOKEN_KEY,data.sessionToken);
   }
 
@@ -665,7 +667,7 @@
   }));
   $('#refresh').addEventListener('click',()=>loadView(true));
   $('#lock').addEventListener('click',lockApp);
-  $('#login-form').addEventListener('submit',async e=>{e.preventDefault();const button=$('#login-button');button.disabled=true;button.textContent='Signing in…';$('#login-error').textContent='';try{await signIn($('#password').value);$('#password').value='';showApp();await loadView(true)}catch(err){$('#login-error').textContent=err.message}finally{button.disabled=false;button.textContent='Open dashboard'}});
+  $('#login-form').addEventListener('submit',async e=>{e.preventDefault();const button=$('#login-button');button.disabled=true;button.textContent='Signing in…';$('#login-error').textContent='';try{await signIn($('#password').value,($('#totp').value||'').replace(/\s+/g,''));$('#password').value='';$('#totp').value='';showApp();await loadView(true)}catch(err){$('#login-error').textContent=err.message}finally{button.disabled=false;button.textContent='Open dashboard'}});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.lastSync&&Date.now()-state.lastSync.getTime()>60000)loadView(true)});
   window.addEventListener('online',()=>loadView(true));
   if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').then(reg=>reg.update()).catch(()=>{});

@@ -9131,7 +9131,13 @@ async function renderTaxPlanning() {
       <div style="font-size:1.2rem;font-weight:700">${CURRENT_YEAR} Federal Tax Planning</div>
       <div class="tp-note">Uses IRS ${CURRENT_YEAR} MFJ brackets, standard deduction, capital-gains thresholds, and Social Security wage base.</div>
     </div>
-    <button class="btn btn-primary btn-sm" style="flex-shrink:0;margin-left:auto" onclick="switchView('efile-helper')" title="Step-by-step walkthrough to file this return free via IRS Free File Fillable Forms">📄 E-File Helper →</button>
+    <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:.35rem;flex-shrink:0">
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" onclick="checkTaxUpdates(this)" title="Check the IRS and Maryland for new forms or guidance">🔄 Check tax updates</button>
+        <button class="btn btn-primary btn-sm" onclick="switchView('efile-helper')" title="Step-by-step walkthrough to file this return free via IRS Free File Fillable Forms">📄 E-File Helper →</button>
+      </div>
+      <div id="tp-update-status" style="font-size:.72rem;color:var(--text-muted);text-align:right"></div>
+    </div>
   </div>
   <div class="tp-layout">
 
@@ -9388,6 +9394,96 @@ async function renderTaxPlanning() {
   // Use the record loaded above. Reading the form here would run before the
   // projection card has rendered its assumption controls.
   tpUpdateResults(tp);
+  tpLoadUpdateStatus();
+}
+
+// ── Tax guidance update check (button + weekly auto-check) ────────────────────
+// Runs a live check via the worker (which fetches IRS/MD pages server-side),
+// shows the results next to the app's current assumptions, and flags changes.
+async function checkTaxUpdates(btn) {
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    const data = await callApi({ action: 'check_tax_updates' });
+    _taxUpdateShow(data);
+    tpLoadUpdateStatus();
+  } catch (e) {
+    showBrandedNotice({ title: 'Update check failed', message: e?.message || 'Could not reach the tax-update service. Try again.', confirmLabel: 'OK' });
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+// Fills the small "last checked" status line in the Tax Planning header from the
+// stored (weekly/auto) check — no network fetch of the gov pages here.
+async function tpLoadUpdateStatus() {
+  const el = document.getElementById('tp-update-status');
+  if (!el) return;
+  try {
+    const data = await callApi({ action: 'get_tax_update_check' });
+    if (!data || !data.checkedAt) { el.textContent = 'Tax guidance: not checked yet'; return; }
+    const d = new Date(data.checkedAt);
+    const when = isNaN(d.getTime()) ? String(data.checkedAt) : d.toLocaleDateString();
+    el.innerHTML = data.hasChanges
+      ? `<span style="color:var(--warning);font-weight:700;cursor:pointer" onclick="checkTaxUpdates()">⚠ guidance changed — review</span> · checked ${escHtml(when)}`
+      : `Tax guidance checked ${escHtml(when)}`;
+  } catch { /* not logged in / transient — leave blank */ }
+}
+
+function _taxUpdateClose() {
+  const el = document.getElementById('tax-update-overlay');
+  if (el) el.remove();
+}
+
+function _taxUpdateShow(data) {
+  _taxUpdateClose();
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const dt = iso => { if (!iso) return '—'; const d = new Date(iso); return isNaN(d.getTime()) ? String(iso) : d.toLocaleString(); };
+  const assumptions = [
+    ['Tax year', String(CURRENT_YEAR)],
+    ['Federal standard deduction (MFJ)', fmt(TP_STD_DEDUCTION)],
+    ['Child Tax Credit / child', fmt(TP_CTC_PER_CHILD)],
+    ['NIIT threshold (MFJ)', fmt(TP_NIIT_THRESHOLD)],
+    ['IRA deduction limit (2 spouses)', fmt(TP_IRA_LIMIT)],
+    ['SE Social Security wage base', fmt(TP_SE_SS_BASE)],
+    ['Maryland standard deduction (MFJ)', fmt(MD_STD_DEDUCTION)],
+    ['Maryland military-retirement subtraction cap', fmt(12500)],
+    ['Wicomico local income-tax rate', ((MD_COUNTY_RATES['Wicomico'] || 0) * 100).toFixed(2) + '%'],
+  ];
+  const assumpHtml = assumptions.map(([k, v]) =>
+    `<tr><td style="padding:.25rem .5rem;color:var(--text-muted)">${escHtml(k)}</td><td style="padding:.25rem .5rem;text-align:right;font-weight:600">${escHtml(v)}</td></tr>`).join('');
+  const srcHtml = sources.map(s => {
+    const badge = s.changed
+      ? '<span style="color:var(--warning);font-weight:700">● changed since last check</span>'
+      : (s.ok ? '<span style="color:var(--success)">✓ reachable</span>' : `<span style="color:var(--danger)">⚠ ${escHtml(s.error || ('status ' + (s.status || '?')))} — open manually</span>`);
+    const lm = s.lastModified ? ` · updated ${escHtml(s.lastModified)}` : '';
+    return `<div style="padding:.55rem 0;border-bottom:1px solid var(--border)">
+      <a href="${escAttr(s.url)}" target="_blank" rel="noopener noreferrer" style="font-weight:600;color:var(--primary)">${escHtml(s.label)} ↗</a>
+      <div style="font-size:.78rem;color:var(--text-muted);margin-top:.15rem">${badge}${lm}</div>
+    </div>`;
+  }).join('');
+  const banner = data.hasChanges
+    ? `<div style="background:var(--warning-light);border:1px solid var(--warning);border-radius:var(--radius);padding:.6rem .8rem;margin-bottom:.8rem;font-size:.85rem;font-weight:600;color:var(--warning)">⚠️ One or more official pages changed since the last check. Review the changed sources, then update the app's assumptions (or ask Claude Code) if a number changed.</div>`
+    : '';
+  const overlay = document.createElement('div');
+  overlay.id = 'tax-update-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:1rem';
+  overlay.onclick = e => { if (e.target === overlay) _taxUpdateClose(); };
+  overlay.innerHTML = `<div style="background:var(--surface);color:var(--text);border-radius:var(--radius-lg);max-width:600px;width:100%;max-height:85vh;overflow:auto;box-shadow:var(--shadow-lg)">
+    <div style="padding:1rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:1rem;position:sticky;top:0;background:var(--surface)">
+      <div style="font-size:1.1rem;font-weight:700">🔄 Tax guidance check</div>
+      <button class="btn btn-ghost btn-sm" onclick="_taxUpdateClose()">✕</button>
+    </div>
+    <div style="padding:1rem 1.1rem">
+      ${banner}
+      <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:.9rem">Checked ${dt(data.checkedAt)}${data.previousCheckedAt ? ` · previous ${dt(data.previousCheckedAt)}` : ''}. Also runs automatically once a week. This pings the official pages and flags changes — it does not change the app's tax math.</div>
+      <div style="font-weight:700;font-size:.78rem;text-transform:uppercase;color:var(--text-muted);margin-bottom:.3rem">This app's current ${CURRENT_YEAR} assumptions</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:1.1rem"><tbody>${assumpHtml}</tbody></table>
+      <div style="font-weight:700;font-size:.78rem;text-transform:uppercase;color:var(--text-muted);margin-bottom:.3rem">Official sources — click to review</div>
+      ${srcHtml || '<div style="color:var(--text-muted)">No sources returned.</div>'}
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
 }
 
 // ── View: Deductions Tracker ──────────────────────────────────────────────────
@@ -10639,7 +10735,10 @@ function efRenderCurrent() {
   <div style="max-width:720px;margin:0 auto">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:.75rem;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
-        <button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;font-size:.8rem;margin-bottom:.3rem" onclick="switchView('tax-planning')">← Tax Planning</button>
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.3rem">
+          <button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;font-size:.8rem" onclick="switchView('tax-planning')">← Tax Planning</button>
+          <button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;font-size:.8rem" onclick="checkTaxUpdates(this)" title="Check the IRS and Maryland for new forms or guidance">🔄 Check tax updates</button>
+        </div>
         <div style="font-size:1.3rem;font-weight:800">📄 E-File Helper</div>
         <div style="font-size:.9rem;color:var(--text-muted)">${CURRENT_YEAR} federal return · Free File Fillable Forms</div>
       </div>

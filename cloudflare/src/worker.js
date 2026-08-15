@@ -120,6 +120,9 @@ export default {
     }
     if (easternHour === '06') {
       ctx.waitUntil(runScheduledRobinhoodRefresh(env, controller.scheduledTime));
+      // Weekly (Mondays, ET): ping IRS + Maryland guidance pages for changes.
+      const easternWeekday = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date(controller.scheduledTime));
+      if (easternWeekday === 'Mon') ctx.waitUntil(runTaxUpdateCheck(env).catch(() => {}));
     }
   }
 };
@@ -287,6 +290,10 @@ async function handleDataApi(request, env) {
   // Mom Moving Checklist — global
   if (action === 'get_mom_checklist')  return handleGetMomChecklist(env);
   if (action === 'save_mom_checklist') return handleSaveMomChecklist(env, body.data);
+
+  // Tax guidance update check — global
+  if (action === 'check_tax_updates')    return jsonResponse(await runTaxUpdateCheck(env));
+  if (action === 'get_tax_update_check') return jsonResponse((await env.RENTALS.get(TAX_UPDATE_KEY, 'json')) || { checkedAt: null, hasChanges: false, sources: [] });
 
   // Savings — global
   if (action === 'get_savings')  return handleGetSavings(env);
@@ -2308,6 +2315,63 @@ async function handleSaveMomChecklist(env, data) {
   })).filter(i => i.text);
   await env.RENTALS.put('mom_checklist', JSON.stringify(sanitized));
   return jsonResponse({ success: true, items: sanitized });
+}
+
+// ── Tax guidance update check ─────────────────────────────────────────────────
+// Pings the authoritative IRS + Maryland forms/guidance pages server-side (the
+// browser CSP can't) and reports status + Last-Modified so the user knows when
+// new guidance/forms drop. Change detection compares to the last stored check.
+// It NEVER edits the app's tax constants — that stays a human review step.
+const TAX_UPDATE_KEY = 'tax_update_check';
+const TAX_UPDATE_SOURCES = [
+  { label: 'IRS — About Form 1040', url: 'https://www.irs.gov/forms-pubs/about-form-1040' },
+  { label: 'IRS — Forms & Instructions (latest revisions)', url: 'https://www.irs.gov/forms-instructions' },
+  { label: "IRS — Newsroom (what's new)", url: 'https://www.irs.gov/newsroom' },
+  { label: "Maryland — What's New this filing season", url: 'https://www.marylandtaxes.gov/new-tax-year-update.php' },
+  { label: 'Maryland — Individual forms & instructions', url: 'https://www.marylandtaxes.gov/individual/income/income-forms-index.php' },
+  { label: 'Maryland — Local income tax rates', url: 'https://www.marylandtaxes.gov/individual/income/tax-info/tax-rates.php' },
+];
+
+async function fetchTaxSource(src) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(src.url, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RentalsTaxCheck/1.0)', 'Accept': 'text/html' },
+    });
+    const lastModified = res.headers.get('last-modified') || '';
+    let title = '';
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('text/html')) {
+      const html = (await res.text()).slice(0, 300000);
+      const tm = html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i);
+      if (tm) title = tm[1].replace(/\s+/g, ' ').trim();
+    }
+    return { label: src.label, url: src.url, ok: res.ok, status: res.status, lastModified, title };
+  } catch (e) {
+    return { label: src.label, url: src.url, ok: false, status: 0, error: (e && e.name === 'AbortError') ? 'timeout' : String((e && e.message) || e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runTaxUpdateCheck(env) {
+  const prev = await env.RENTALS.get(TAX_UPDATE_KEY, 'json');
+  const prevMap = {};
+  if (prev && Array.isArray(prev.sources)) for (const s of prev.sources) prevMap[s.url] = s;
+  const sources = await Promise.all(TAX_UPDATE_SOURCES.map(fetchTaxSource));
+  let hasChanges = false;
+  for (const s of sources) {
+    const p = prevMap[s.url];
+    // Only flag a change when we have a prior baseline to compare against.
+    s.changed = !!(p && ((p.lastModified || '') !== (s.lastModified || '') || (!!p.ok) !== (!!s.ok) || (p.status || 0) !== (s.status || 0)));
+    if (s.changed) hasChanges = true;
+  }
+  const record = { checkedAt: new Date().toISOString(), previousCheckedAt: prev ? (prev.checkedAt || null) : null, hasChanges, sources };
+  await env.RENTALS.put(TAX_UPDATE_KEY, JSON.stringify(record));
+  return record;
 }
 
 // ── Savings ───────────────────────────────────────────────────────────────────

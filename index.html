@@ -38,6 +38,7 @@
       --ef-estimate: #b45309;
       --ef-supply: #1d4ed8;
       --ef-verify: #6d28d9;
+      --ef-reconcile: #0f766e;
       --radius: 8px;
       --radius-lg: 12px;
       --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
@@ -62,6 +63,7 @@
       --ef-estimate: #fbbf24;
       --ef-supply: #60a5fa;
       --ef-verify: #c4b5fd;
+      --ef-reconcile: #5eead4;
       --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
       --shadow-lg: 0 4px 6px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.4);
     }
@@ -10003,6 +10005,7 @@ const EF_TAGS = {
   estimate: { icon: '🟡', label: 'planner estimate — verify', color: 'var(--ef-estimate)' },
   supply:   { icon: '🔵', label: 'you supply (source doc)', color: 'var(--ef-supply)' },
   verify:   { icon: '🔍', label: 'VERIFY FFFF shows this exact total', color: 'var(--ef-verify)' },
+  reconcile:{ icon: '🧾', label: 'MATCH app value to your 1099 / W-2', color: 'var(--ef-reconcile)' },
 };
 
 function efProgress() { try { return new Set(JSON.parse(localStorage.getItem(EF_PROGRESS_KEY) || '[]')); } catch { return new Set(); } }
@@ -10030,23 +10033,29 @@ function efR(id, form, line, label, value, tag, note) {
 function efV(id, form, line, label, value, note) {
   return { id, form, line, label, value, tag: 'verify', note: note || '' };
 }
+// A year-end reconciliation row (match an app value to an actual document).
+function efC(id, doc, label, value, note) {
+  return { id, form: doc, line: '', label, value, tag: 'reconcile', note: note || '' };
+}
 
 function efRenderRow(row) {
   const done = efProgress().has(row.id);
   const tag = EF_TAGS[row.tag] || EF_TAGS.estimate;
   const isVerify = row.tag === 'verify';
+  const isReconcile = row.tag === 'reconcile';
   const valHtml = typeof row.value === 'number'
     ? `<span style="font-variant-numeric:tabular-nums;font-weight:700">${fmt(row.value)}</span>`
     : `<span style="color:${tag.color};font-style:italic">${escHtml(String(row.value))}</span>`;
-  const bg = isVerify ? 'background:color-mix(in srgb, var(--ef-verify) 14%, transparent);' : '';
+  const bg = isVerify ? 'background:color-mix(in srgb, var(--ef-verify) 14%, transparent);'
+    : isReconcile ? 'background:color-mix(in srgb, var(--ef-reconcile) 14%, transparent);' : '';
   return `<label class="ef-row${done ? ' ef-done' : ''}" style="display:flex;gap:.6rem;align-items:flex-start;padding:.55rem .65rem;border-bottom:1px solid var(--border);cursor:pointer;${bg}">
-    <input type="checkbox" ${done ? 'checked' : ''} onchange="efToggleStep('${row.id}',this)" style="margin-top:.2rem;width:17px;height:17px;flex-shrink:0;accent-color:${isVerify ? 'var(--ef-verify)' : 'var(--success)'}">
+    <input type="checkbox" ${done ? 'checked' : ''} onchange="efToggleStep('${row.id}',this)" style="margin-top:.2rem;width:17px;height:17px;flex-shrink:0;accent-color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--success)'}">
     <span style="flex:1;min-width:0">
       <span style="display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
-        <span><strong style="font-size:.76rem;color:var(--text-muted)">${escHtml(row.form)}${row.line ? ' · Line ' + escHtml(row.line) : ''}</strong><br><span style="color:var(--text);${isVerify ? 'font-weight:600' : ''}">${escHtml(row.label)}</span></span>
+        <span><strong style="font-size:.76rem;color:var(--text-muted)">${escHtml(row.form)}${row.line ? ' · Line ' + escHtml(row.line) : ''}</strong><br><span style="color:var(--text);${isVerify || isReconcile ? 'font-weight:600' : ''}">${escHtml(row.label)}</span></span>
         <span style="text-align:right;white-space:nowrap">${valHtml}</span>
       </span>
-      <span style="display:block;font-size:.72rem;color:${isVerify ? 'var(--ef-verify)' : 'var(--text-muted)'};margin-top:.15rem">${tag.icon} ${escHtml(tag.label)}${row.note ? ' · ' + escHtml(row.note) : ''}</span>
+      <span style="display:block;font-size:.72rem;color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--text-muted)'};margin-top:.15rem">${tag.icon} ${escHtml(tag.label)}${row.note ? ' · ' + escHtml(row.note) : ''}</span>
     </span>
   </label>`;
 }
@@ -10059,16 +10068,73 @@ function efBuildSteps(tp, r, rentalRows) {
   const addlIncome = r.businessInc + r.rentalTaxInc + (r.cryptoInc || 0);
   const otherTaxes = r.seTax + r.addlMedicare + r.niit;
 
-  // 1. Get set up
-  steps.push({ key: 'setup', title: 'Get set up', subtitle: 'One-time prep before you touch a form.',
-    intro: 'Open <strong>IRS.gov → Free File → Free File Fillable Forms</strong> (no income limit) and sign in. FFFF is federal only — you\'ll do Maryland separately at the end.',
+  // ═══ PHASE 1: YEAR-END VALIDATION ═══════════════════════════════════════════
+  // Reconcile the app's numbers (estimates all year) against the real documents
+  // that just arrived, BEFORE transcribing anything into FFFF. If a value is
+  // wrong, fix it on the Tax Planning tab, then reopen this wizard.
+
+  steps.push({ key: 'validate-start', title: 'Year-End Validation — start here', subtitle: 'Phase 1 of 2: check the app against your real documents.',
+    intro: 'Your Tax Planning numbers were <strong>estimates</strong> all year. Now that your <strong>W-2, 1099-R, 1099-INT/DIV/B</strong> and business books have arrived, confirm each app figure matches before you file. <strong>If any 🧾 line doesn\'t match, fix it on the Tax Planning tab first</strong>, then reopen this wizard. <button class="btn btn-ghost btn-sm" style="padding:.1rem .45rem;font-size:.72rem" onclick="switchView(\'tax-planning\')">Open Tax Planning →</button>',
     rows: [
-      efR('setup-account', 'Free File Fillable Forms', '', 'Create / sign in to your FFFF account', 'do this at IRS.gov', 'supply'),
-      efR('setup-docs', 'Source documents', '', 'Gather W-2, 1099-R, 1099-INT/DIV/B, and business books', 'have them in front of you', 'supply'),
+      efR('setup-docs', 'Source documents', '', 'Gather every W-2, 1099-R, 1099-INT/DIV/B, and business year-end P&L', 'have them all in front of you', 'supply'),
+      efR('setup-account', 'Free File Fillable Forms', '', 'Create / sign in to your FFFF account (for Phase 2)', 'at IRS.gov → Free File', 'supply'),
       efR('setup-agi', 'Prior-year AGI', '', 'Find last year\'s AGI (needed to e-sign at the end)', 'from last year\'s return', 'supply'),
     ]});
 
-  // 2. Personal info
+  // Wages & pension
+  steps.push({ key: 'validate-wages', title: 'Validate — Wages & Pension', subtitle: 'W-2 and 1099-R.',
+    rows: [
+      efC('rec-w2-wages', 'W-2 box 1 (spouse)', 'Wages the app has', tpN(tp.wife_gross), 'Must equal W-2 box 1'),
+      efC('rec-w2-fed', 'W-2 box 2 (spouse)', 'Federal withholding the app has', tpN(tp.wife_fed), 'Must equal W-2 box 2'),
+      efC('rec-1099r-tax', '1099-R (military pension)', 'Taxable pension the app has', tpN(tp.navy_gross), 'Must equal 1099-R box 2a'),
+      efC('rec-1099r-fed', '1099-R box 4', 'Pension withholding the app has', tpN(tp.navy_fed), 'Must equal 1099-R box 4'),
+    ]});
+
+  // Interest (1099-INT) — only nonzero payers
+  const intRows = [];
+  if (tpN(tp.treasury_int)) intRows.push(efC('rec-int-treasury', '1099-INT — U.S. Treasury', 'Interest the app has', tpN(tp.treasury_int), 'Match box 1 / box 3'));
+  if (tpN(tp.ally_int)) intRows.push(efC('rec-int-ally', '1099-INT — Ally', 'Interest the app has', tpN(tp.ally_int), 'Match box 1'));
+  if (tpN(tp.rh_int)) intRows.push(efC('rec-int-rh', '1099-INT — Robinhood', 'Interest the app has', tpN(tp.rh_int), 'Match box 1'));
+  if (tpN(tp.ibkr_int)) intRows.push(efC('rec-int-ibkr', '1099-INT — IBKR', 'Interest the app has', tpN(tp.ibkr_int), 'Match box 1'));
+  intRows.push(efV('rec-int-total', 'Interest total', '', 'Sum should equal Schedule B / 1040 line 2b', r.interest, 'App total of all interest above'));
+  steps.push({ key: 'validate-interest', title: 'Validate — Interest (1099-INT)', subtitle: 'Match each payer\'s 1099-INT.', rows: intRows });
+
+  // Dividends & capital gains
+  const invRows = [];
+  if (tpN(tp.rh_div)) invRows.push(efC('rec-div-rh', '1099-DIV — Robinhood', 'Ordinary dividends the app has', tpN(tp.rh_div), 'Match box 1a'));
+  if (tpN(tp.ibkr_div)) invRows.push(efC('rec-div-ibkr', '1099-DIV — IBKR', 'Ordinary dividends the app has', tpN(tp.ibkr_div), 'Match box 1a'));
+  if (tpN(tp.rh_st) || tpN(tp.rh_lt)) invRows.push(efC('rec-b-rh', '1099-B — Robinhood', 'Net ST / LT gain the app has', tpN(tp.rh_st) + tpN(tp.rh_lt), `ST ${fmt(tpN(tp.rh_st))} · LT ${fmt(tpN(tp.rh_lt))}`));
+  if (tpN(tp.megan_rh_st)) invRows.push(efC('rec-b-megan', '1099-B — Robinhood (Megan)', 'Net ST gain the app has', tpN(tp.megan_rh_st), 'Match consolidated 1099-B'));
+  if (tpN(tp.ibkr_st) || tpN(tp.ibkr_lt)) invRows.push(efC('rec-b-ibkr', '1099-B — IBKR', 'Net ST / LT gain the app has', tpN(tp.ibkr_st) + tpN(tp.ibkr_lt), `ST ${fmt(tpN(tp.ibkr_st))} · LT ${fmt(tpN(tp.ibkr_lt))}`));
+  if (tpN(tp.crypto_st) || tpN(tp.crypto_lt) || tpN(tp.crypto_income)) invRows.push(efC('rec-crypto', 'Crypto 1099 / records', 'Crypto ST/LT/income the app has', tpN(tp.crypto_st) + tpN(tp.crypto_lt) + tpN(tp.crypto_income), 'Match exchange 1099 / your ledger'));
+  if (invRows.length === 0) invRows.push(efR('rec-inv-none', 'Dividends & capital gains', '', 'No dividend/capital-gain amounts in the app', 'confirm none on your 1099-DIV / 1099-B', 'supply'));
+  steps.push({ key: 'validate-invest', title: 'Validate — Dividends & Capital Gains', subtitle: 'Match 1099-DIV and 1099-B.', rows: invRows });
+
+  // Business income (Schedule C) — books, not always a 1099
+  const bizRows = [];
+  if (tpN(tp.fmg) || tpN(tp.fmg_sp)) bizRows.push(efC('rec-biz-fmg', 'FMG year-end books', 'Net profit the app has', tpN(tp.fmg) + tpN(tp.fmg_sp), 'Match FMG P&L / 1099-NEC/K'));
+  if (tpN(tp.esai)) bizRows.push(efC('rec-biz-esai', 'Eastern Shore AI books', 'Net profit the app has', tpN(tp.esai), 'Match ESAI P&L / 1099-NEC/K'));
+  if (bizRows.length) steps.push({ key: 'validate-business', title: 'Validate — Business Income', subtitle: 'Match each Schedule C net to year-end books.', rows: bizRows });
+
+  // Rental income & expenses (confirm everything is logged) + depreciation
+  const rentRows = [];
+  for (const row of rentalRows) {
+    rentRows.push(efC(`rec-rent-${row.prop}`, `Rental — ${row.prop}`, 'All 2026 rent & expenses logged?', row.net, `App: rents ${fmt(row.income)} − expenses ${fmt(row.expenses)}. Confirm every month is entered.`));
+    if (row.deprAmt) rentRows.push(efC(`rec-depr-${row.prop}`, `Depreciation — ${row.prop}`, 'Depreciation the app computed', row.deprAmt, 'Confirm against your depreciation schedule'));
+  }
+  if (rentRows.length) steps.push({ key: 'validate-rental', title: 'Validate — Rental Income & Depreciation', subtitle: 'Confirm every rental figure is complete.', rows: rentRows });
+
+  // Estimated tax payments actually made
+  steps.push({ key: 'validate-payments', title: 'Validate — Estimated Payments & Withholding', subtitle: 'Confirm what you actually paid.',
+    rows: [
+      efC('rec-est', 'IRS account / bank records', 'Federal estimated payments the app has', r.estPmts, 'Confirm against your IRS online account'),
+      efC('rec-wh', 'W-2 + 1099-R', 'Total federal withholding the app has', r.fedWithheld, 'Sum of W-2 box 2 + 1099-R box 4'),
+      efR('validate-done', 'Validation complete', '', 'All figures reconciled to documents — ready to file', 'proceed to Phase 2', 'records'),
+    ]});
+
+  // ═══ PHASE 2: FILL FREE FILE FILLABLE FORMS ═════════════════════════════════
+
+  // Personal info
   steps.push({ key: 'personal', title: 'Personal info (Form 1040 top)', subtitle: 'The header of Form 1040.',
     rows: [
       efR('f1040-filing', 'Form 1040', '', 'Filing status: Married filing jointly', 'select MFJ', 'supply'),
@@ -10321,7 +10387,7 @@ function efRenderCurrent() {
     ${_efStep === 0 ? `
     <div class="card" style="border-left:4px solid #b45309">
       <div style="padding:.8rem 1rem;font-size:.8rem;line-height:1.55">
-        <strong>How this works.</strong> A few lines at a time — type each into FFFF, then check it off. Tags: 🟢 from your records · 🟡 planner <em>estimate</em> (verify vs. your docs) · 🔵 you type from a W-2/1099/books · 🔍 a <strong>verify checkpoint</strong>: FFFF does little math, so confirm its running total matches the amount shown before moving on.
+        <strong>How this works.</strong> Two phases: <strong>Phase 1</strong> validates the app's numbers against your real documents; <strong>Phase 2</strong> walks you through typing them into FFFF, a few lines at a time. Tags: 🧾 <strong>reconcile</strong> — match the app value to your actual 1099/W-2 (fix on the Tax Planning tab if it differs) · 🟢 from your records · 🟡 planner <em>estimate</em> · 🔵 you type from a W-2/1099/books · 🔍 <strong>verify checkpoint</strong>: confirm FFFF's running total matches, since FFFF does no math-checking.
         <br><br><strong>This is a draft aid, not tax advice.</strong> You are responsible for the filed return; get a sale year or anything uncertain reviewed by a CPA.
       </div>
     </div>` : ''}

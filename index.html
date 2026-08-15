@@ -9984,8 +9984,9 @@ function mcToggleHideDone() {
 
 const EF_PROGRESS_KEY = `rentals_efile_progress_${CURRENT_YEAR}`;
 const EF_STEP_KEY = `rentals_efile_step_${CURRENT_YEAR}`;
-let _efModel = null;   // { steps:[{key,title,subtitle,intro,danger,rows:[...]}], r, allIds }
-let _efStep = 0;
+let _efModel = null;   // { steps:[...], pages:[...], r } — pages are steps split to ≤ EF_ROWS_PER_PAGE rows
+let _efStep = 0;       // indexes _efModel.pages
+const EF_ROWS_PER_PAGE = 3;   // keep each page short & readable
 
 // App expense category → Schedule E (Form 1040) line. HOA + other_expense fold
 // into Schedule E line 19 "Other". improvements are excluded (capitalized).
@@ -10135,13 +10136,13 @@ function efInstructionsHtml(step) {
   // Prefer the detailed help list; fall back to the short intro only when a step
   // has no help entry (avoids showing both, which would duplicate content).
   const body = help
-    ? `<ol style="margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.4rem">${help.map(h => `<li>${h}</li>`).join('')}</ol>`
-    : `<div>${step.intro}</div>`;
+    ? `<ol style="margin:0;padding-left:1.3rem;display:flex;flex-direction:column;gap:.55rem">${help.map(h => `<li>${h}</li>`).join('')}</ol>`
+    : `<div>${step.intro || ''}</div>`;
   return `<div style="border-bottom:1px solid var(--border)">
-    <button onclick="efToggleHelp('${step.key}')" style="width:100%;text-align:left;background:var(--surface2,var(--bg));border:none;padding:.55rem 1rem;cursor:pointer;font-size:.8rem;font-weight:700;color:var(--text);display:flex;justify-content:space-between;align-items:center;gap:.5rem">
-      <span>📖 ${open ? 'Hide' : 'Show'} step-by-step instructions</span><span style="font-size:.7rem">${open ? '▲ collapse' : '▼ expand'}</span>
+    <button onclick="efToggleHelp('${step.key}')" style="width:100%;text-align:left;background:var(--surface2,var(--bg));border:none;padding:.7rem 1rem;cursor:pointer;font-size:.95rem;font-weight:700;color:var(--text);display:flex;justify-content:space-between;align-items:center;gap:.5rem">
+      <span>📖 ${open ? 'Hide' : 'Show'} step-by-step instructions</span><span style="font-size:.8rem">${open ? '▲ collapse' : '▼ expand'}</span>
     </button>
-    ${open ? `<div style="padding:.7rem 1rem;font-size:.82rem;line-height:1.6;background:var(--surface2,var(--bg))">${body}</div>` : ''}
+    ${open ? `<div style="padding:.85rem 1.1rem;font-size:.98rem;line-height:1.65;background:var(--surface2,var(--bg))">${body}</div>` : ''}
   </div>`;
 }
 
@@ -10181,18 +10182,18 @@ function efRenderRow(row) {
   const isVerify = row.tag === 'verify';
   const isReconcile = row.tag === 'reconcile';
   const valHtml = typeof row.value === 'number'
-    ? `<span style="font-variant-numeric:tabular-nums;font-weight:700">${fmt(row.value)}</span>`
-    : `<span style="color:${tag.color};font-style:italic">${escHtml(String(row.value))}</span>`;
+    ? `<span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:1.35rem">${fmt(row.value)}</span>`
+    : `<span style="color:${tag.color};font-style:italic;font-size:1.05rem">${escHtml(String(row.value))}</span>`;
   const bg = isVerify ? 'background:color-mix(in srgb, var(--ef-verify) 14%, transparent);'
     : isReconcile ? 'background:color-mix(in srgb, var(--ef-reconcile) 14%, transparent);' : '';
-  return `<label class="ef-row${done ? ' ef-done' : ''}" style="display:flex;gap:.6rem;align-items:flex-start;padding:.55rem .65rem;border-bottom:1px solid var(--border);cursor:pointer;${bg}">
-    <input type="checkbox" ${done ? 'checked' : ''} onchange="efToggleStep('${row.id}',this)" style="margin-top:.2rem;width:17px;height:17px;flex-shrink:0;accent-color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--success)'}">
+  return `<label class="ef-row${done ? ' ef-done' : ''}" style="display:flex;gap:.75rem;align-items:flex-start;padding:.9rem .85rem;border-bottom:1px solid var(--border);cursor:pointer;${bg}">
+    <input type="checkbox" ${done ? 'checked' : ''} onchange="efToggleStep('${row.id}',this)" style="margin-top:.15rem;width:26px;height:26px;flex-shrink:0;accent-color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--success)'}">
     <span style="flex:1;min-width:0">
-      <span style="display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
-        <span><strong style="font-size:.76rem;color:var(--text-muted)">${escHtml(row.form)}${row.line ? ' · Line ' + escHtml(row.line) : ''}</strong><br><span style="color:var(--text);${isVerify || isReconcile ? 'font-weight:600' : ''}">${escHtml(row.label)}</span></span>
+      <span style="display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap;align-items:baseline">
+        <span style="flex:1;min-width:140px"><strong style="font-size:.9rem;color:var(--text-muted)">${escHtml(row.form)}${row.line ? ' · Line ' + escHtml(row.line) : ''}</strong><br><span style="color:var(--text);font-size:1.1rem;${isVerify || isReconcile ? 'font-weight:600' : ''}">${escHtml(row.label)}</span></span>
         <span style="text-align:right;white-space:nowrap">${valHtml}</span>
       </span>
-      <span style="display:block;font-size:.72rem;color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--text-muted)'};margin-top:.15rem">${tag.icon} ${escHtml(tag.label)}${row.note ? ' · ' + escHtml(row.note) : ''}</span>
+      <span style="display:block;font-size:.85rem;color:${isVerify ? 'var(--ef-verify)' : isReconcile ? 'var(--ef-reconcile)' : 'var(--text-muted)'};margin-top:.3rem;font-weight:600">${tag.icon} ${escHtml(tag.label)}${row.note ? ' · ' + escHtml(row.note) : ''}</span>
     </span>
   </label>`;
 }
@@ -10431,7 +10432,7 @@ function efToggleStep(id, el) {
 }
 function efGoStep(delta) {
   if (!_efModel) return;
-  _efStep = Math.max(0, Math.min(_efModel.steps.length - 1, _efStep + delta));
+  _efStep = Math.max(0, Math.min(_efModel.pages.length - 1, _efStep + delta));
   localStorage.setItem(EF_STEP_KEY, String(_efStep));
   efRenderCurrent();
   const main = document.getElementById('app');
@@ -10439,17 +10440,17 @@ function efGoStep(delta) {
 }
 function efJumpStep(i) {
   if (!_efModel) return;
-  _efStep = Math.max(0, Math.min(_efModel.steps.length - 1, i));
+  _efStep = Math.max(0, Math.min(_efModel.pages.length - 1, i));
   localStorage.setItem(EF_STEP_KEY, String(_efStep));
   efRenderCurrent();
 }
 function efMarkStepComplete() {
   if (!_efModel) return;
-  const step = _efModel.steps[_efStep];
+  const page = _efModel.pages[_efStep];
   const set = efProgress();
-  step.rows.forEach(row => set.add(row.id));
+  page.rows.forEach(row => set.add(row.id));
   efSaveProgress(set);
-  if (_efStep < _efModel.steps.length - 1) efGoStep(1);
+  if (_efStep < _efModel.pages.length - 1) efGoStep(1);
   else efRenderCurrent();
 }
 function efResetProgress() {
@@ -10464,75 +10465,79 @@ function efStepDone(step, set) { return step.rows.every(row => set.has(row.id));
 
 function efRenderCurrent() {
   if (!_efModel) return;
-  const { steps } = _efModel;
-  _efStep = Math.max(0, Math.min(steps.length - 1, _efStep));
+  const { steps, pages } = _efModel;
+  _efStep = Math.max(0, Math.min(pages.length - 1, _efStep));
   const set = efProgress();
-  const step = steps[_efStep];
+  const page = pages[_efStep];
 
   const totalLines = steps.reduce((s, st) => s + st.rows.length, 0);
   const doneLines = steps.reduce((s, st) => s + st.rows.filter(row => set.has(row.id)).length, 0);
   const pct = totalLines ? Math.round(doneLines / totalLines * 100) : 0;
-  const stepDoneCount = step.rows.filter(row => set.has(row.id)).length;
+  const pageDoneCount = page.rows.filter(row => set.has(row.id)).length;
 
+  // Dots represent forms (steps); clicking jumps to that step's first page.
+  const firstPageOfStep = {};
+  pages.forEach((pg, i) => { if (pg.first) firstPageOfStep[pg.stepIndex] = i; });
   const dots = steps.map((st, i) => {
     const full = efStepDone(st, set);
-    const cur = i === _efStep;
+    const cur = i === page.stepIndex;
     const bg = cur ? 'var(--primary,#2563eb)' : full ? '#16a34a' : 'var(--border)';
     const ring = cur ? 'box-shadow:0 0 0 3px color-mix(in srgb, var(--primary,#2563eb) 30%, transparent);' : '';
-    return `<button title="${escAttr(st.title)}" onclick="efJumpStep(${i})" style="width:13px;height:13px;border-radius:50%;border:none;padding:0;cursor:pointer;background:${bg};${ring}"></button>`;
+    return `<button title="${escAttr(st.title)}" onclick="efJumpStep(${firstPageOfStep[i]})" style="width:14px;height:14px;border-radius:50%;border:none;padding:0;cursor:pointer;background:${bg};${ring}"></button>`;
   }).join('');
 
-  const rowsHtml = step.rows.map(efRenderRow).join('');
-  const isLast = _efStep === steps.length - 1;
+  const rowsHtml = page.rows.map(efRenderRow).join('');
+  const isLast = _efStep === pages.length - 1;
+  const partLabel = page.parts > 1 ? ` · part ${page.part + 1} of ${page.parts}` : '';
 
   document.getElementById('app').innerHTML = `
-  <div style="max-width:760px;margin:0 auto">
+  <div style="max-width:720px;margin:0 auto">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:.75rem;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
-        <button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.72rem;margin-bottom:.25rem" onclick="switchView('tax-planning')">← Tax Planning</button>
-        <div style="font-size:1.15rem;font-weight:700">📄 E-File Helper — Free File Fillable Forms</div>
-        <div style="font-size:.78rem;color:var(--text-muted)">${CURRENT_YEAR} federal return · type each value into FFFF</div>
+        <button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;font-size:.8rem;margin-bottom:.3rem" onclick="switchView('tax-planning')">← Tax Planning</button>
+        <div style="font-size:1.3rem;font-weight:800">📄 E-File Helper</div>
+        <div style="font-size:.9rem;color:var(--text-muted)">${CURRENT_YEAR} federal return · Free File Fillable Forms</div>
       </div>
       <div style="text-align:right">
-        <div style="font-size:1.6rem;font-weight:800;line-height:1;color:var(--success)">${pct}%</div>
-        <div style="font-size:.68rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">complete</div>
+        <div style="font-size:2rem;font-weight:800;line-height:1;color:var(--success)">${pct}%</div>
+        <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">complete</div>
       </div>
     </div>
 
-    <div style="height:8px;background:var(--surface2,var(--border));border-radius:999px;overflow:hidden;margin-bottom:.5rem">
+    <div style="height:10px;background:var(--surface2,var(--border));border-radius:999px;overflow:hidden;margin-bottom:.5rem">
       <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#22c55e,#16a34a);transition:width .3s"></div>
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:1rem">${dots}</div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:1rem">${dots}</div>
 
-    <div class="card" style="margin-bottom:1rem${step.danger ? ';border-left:4px solid var(--danger)' : ''}">
-      <div class="card-header" style="padding:.65rem 1rem;display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap">
+    <div class="card" style="margin-bottom:1rem${page.danger ? ';border-left:4px solid var(--danger)' : ''}">
+      <div class="card-header" style="padding:.85rem 1rem;display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap">
         <div>
-          <div style="font-size:.72rem;color:var(--text-muted);font-weight:700;text-transform:uppercase">Step ${_efStep + 1} of ${steps.length}</div>
-          <div class="card-title">${escHtml(step.title)}</div>
-          ${step.subtitle ? `<div style="font-size:.76rem;color:var(--text-muted);margin-top:.1rem">${escHtml(step.subtitle)}</div>` : ''}
+          <div style="font-size:.8rem;color:var(--text-muted);font-weight:700;text-transform:uppercase">Step ${page.stepIndex + 1} of ${steps.length}${partLabel}</div>
+          <div style="font-size:1.25rem;font-weight:700">${escHtml(page.title)}</div>
+          ${page.subtitle && page.first ? `<div style="font-size:.9rem;color:var(--text-muted);margin-top:.15rem">${escHtml(page.subtitle)}</div>` : ''}
         </div>
         <div style="text-align:right;white-space:nowrap">
-          <div style="font-size:.75rem;color:var(--text-muted)">${stepDoneCount}/${step.rows.length} done</div>
-          ${step.key.startsWith('validate') ? `<button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.7rem;margin-top:.25rem" onclick="switchView('tax-planning')" title="If a value doesn't match your document, fix it here first">✏️ Fix in Tax Planning</button>` : ''}
+          <div style="font-size:.85rem;color:var(--text-muted);font-weight:600">${pageDoneCount}/${page.rows.length} done</div>
+          ${page.key.startsWith('validate') ? `<button class="btn btn-ghost btn-sm" style="padding:.15rem .5rem;font-size:.78rem;margin-top:.3rem" onclick="switchView('tax-planning')" title="If a value doesn't match your document, fix it here first">✏️ Fix in Tax Planning</button>` : ''}
         </div>
       </div>
-      ${efInstructionsHtml(step)}
+      ${page.first ? efInstructionsHtml(page) : ''}
       <div>${rowsHtml}</div>
     </div>
 
     <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1.5rem">
       <button class="btn btn-ghost" onclick="efGoStep(-1)" ${_efStep === 0 ? 'disabled style="opacity:.4"' : ''}>← Back</button>
-      <button class="btn btn-secondary" onclick="efMarkStepComplete()">✓ Mark step done${isLast ? '' : ' & continue'}</button>
+      <button class="btn btn-secondary" onclick="efMarkStepComplete()">✓ Mark done${isLast ? '' : ' & next'}</button>
       <div style="flex:1"></div>
       ${isLast
-        ? (pct === 100 ? `<span style="font-weight:700;color:var(--success)">🎉 All steps complete</span>` : `<button class="btn btn-primary" onclick="efGoStep(0)" disabled style="opacity:.4">Finish</button>`)
+        ? (pct === 100 ? `<span style="font-weight:700;color:var(--success)">🎉 All done</span>` : `<button class="btn btn-primary" disabled style="opacity:.4">Finish</button>`)
         : `<button class="btn btn-primary" onclick="efGoStep(1)">Next →</button>`}
     </div>
 
     ${_efStep === 0 ? `
     <div class="card" style="border-left:4px solid #b45309">
-      <div style="padding:.8rem 1rem;font-size:.8rem;line-height:1.55">
-        <strong>How this works.</strong> Two phases: <strong>Phase 1</strong> validates the app's numbers against your real documents; <strong>Phase 2</strong> walks you through typing them into FFFF, a few lines at a time. Tags: 🧾 <strong>reconcile</strong> — match the app value to your actual 1099/W-2 (fix on the Tax Planning tab if it differs) · 🟢 from your records · 🟡 planner <em>estimate</em> · 🔵 you type from a W-2/1099/books · 🔍 <strong>verify checkpoint</strong>: confirm FFFF's running total matches, since FFFF does no math-checking.
+      <div style="padding:.9rem 1.1rem;font-size:.92rem;line-height:1.6">
+        <strong>How this works.</strong> Two phases: <strong>Phase 1</strong> validates the app's numbers against your real documents; <strong>Phase 2</strong> walks you through typing them into FFFF, a few lines at a time. Tags: 🧾 <strong>reconcile</strong> — match the app value to your 1099/W-2 · 🟢 from your records · 🟡 planner <em>estimate</em> · 🔵 you type from a W-2/1099 · 🔍 <strong>verify checkpoint</strong>.
         <br><br><strong>This is a draft aid, not tax advice.</strong> You are responsible for the filed return; get a sale year or anything uncertain reviewed by a CPA.
       </div>
     </div>` : ''}
@@ -10561,8 +10566,22 @@ async function renderEfileHelper() {
   const tp = await tpLoadFromAPI();
   const r = tpCalc(tp, rentalRows);
 
-  _efModel = { steps: efBuildSteps(tp, r, rentalRows), r };
-  _efStep = Math.max(0, Math.min(_efModel.steps.length - 1, parseInt(localStorage.getItem(EF_STEP_KEY) || '0', 10) || 0));
+  const steps = efBuildSteps(tp, r, rentalRows);
+  // Split each step into pages of at most EF_ROWS_PER_PAGE rows so each screen
+  // stays short and readable.
+  const pages = [];
+  steps.forEach((st, stepIndex) => {
+    const parts = Math.max(1, Math.ceil(st.rows.length / EF_ROWS_PER_PAGE));
+    for (let p = 0; p < parts; p++) {
+      pages.push({
+        key: st.key, stepIndex, title: st.title, subtitle: st.subtitle, danger: st.danger,
+        rows: st.rows.slice(p * EF_ROWS_PER_PAGE, (p + 1) * EF_ROWS_PER_PAGE),
+        part: p, parts, first: p === 0,
+      });
+    }
+  });
+  _efModel = { steps, pages, r };
+  _efStep = Math.max(0, Math.min(pages.length - 1, parseInt(localStorage.getItem(EF_STEP_KEY) || '0', 10) || 0));
   efRenderCurrent();
 }
 

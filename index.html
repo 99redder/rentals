@@ -9460,10 +9460,10 @@ function _taxUpdateShow(data) {
     const badge = s.changed
       ? '<span style="color:var(--warning);font-weight:700">● changed since last check</span>'
       : (s.ok ? '<span style="color:var(--success)">✓ reachable</span>' : `<span style="color:var(--danger)">⚠ ${escHtml(s.error || ('status ' + (s.status || '?')))} — open manually</span>`);
-    const lm = s.lastModified ? ` · updated ${escHtml(s.lastModified)}` : '';
+    const dateInfo = s.contentUpdated ? ` · page updated ${escHtml(s.contentUpdated)}` : '';
     return `<div style="padding:.55rem 0;border-bottom:1px solid var(--border)">
       <a href="${escAttr(s.url)}" target="_blank" rel="noopener noreferrer" style="font-weight:600;color:var(--primary)">${escHtml(s.label)} ↗</a>
-      <div style="font-size:.78rem;color:var(--text-muted);margin-top:.15rem">${badge}${lm}</div>
+      <div style="font-size:.78rem;color:var(--text-muted);margin-top:.15rem">${badge}${dateInfo}</div>
     </div>`;
   }).join('');
   // Always lead with a clear result header: changed / no changes / first check.

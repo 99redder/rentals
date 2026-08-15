@@ -2343,13 +2343,23 @@ async function fetchTaxSource(src) {
     });
     const lastModified = res.headers.get('last-modified') || '';
     let title = '';
+    let contentUpdated = '';
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('text/html')) {
-      const html = (await res.text()).slice(0, 300000);
+      const html = (await res.text()).slice(0, 400000);
       const tm = html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i);
       if (tm) title = tm[1].replace(/\s+/g, ' ').trim();
+      // The page's own content-revision date (IRS: "Page Last Reviewed or
+      // Updated: 28-Jun-2026"). This is the real change signal — the HTTP
+      // Last-Modified header is CDN churn and produces false positives.
+      const pm = html.match(/Page Last Reviewed or Updated:[\s\S]{0,120}?(\d{1,2}-[A-Za-z]{3}-\d{4})/i)
+        || html.match(/Last Updated:[\s\S]{0,60}?(\d{1,2}-[A-Za-z]{3}-\d{4})/i);
+      if (pm) contentUpdated = pm[1];
     }
-    return { label: src.label, url: src.url, ok: res.ok, status: res.status, lastModified, title };
+    // Change detection uses the content date if we found one, else the title —
+    // never the volatile HTTP Last-Modified.
+    const signature = contentUpdated || title || '';
+    return { label: src.label, url: src.url, ok: res.ok, status: res.status, lastModified, title, contentUpdated, signature };
   } catch (e) {
     return { label: src.label, url: src.url, ok: false, status: 0, error: (e && e.name === 'AbortError') ? 'timeout' : String((e && e.message) || e) };
   } finally {
@@ -2365,8 +2375,11 @@ async function runTaxUpdateCheck(env) {
   let hasChanges = false;
   for (const s of sources) {
     const p = prevMap[s.url];
-    // Only flag a change when we have a prior baseline to compare against.
-    s.changed = !!(p && ((p.lastModified || '') !== (s.lastModified || '') || (!!p.ok) !== (!!s.ok) || (p.status || 0) !== (s.status || 0)));
+    // Flag a change only when BOTH the prior and current checks have a non-empty
+    // content signature (page revision date, else title) and they differ. This
+    // ignores CDN Last-Modified churn and won't false-positive on the one-time
+    // schema upgrade from older records that lack a signature.
+    s.changed = !!(p && s.signature && p.signature && p.signature !== s.signature);
     if (s.changed) hasChanges = true;
   }
   const record = { checkedAt: new Date().toISOString(), previousCheckedAt: prev ? (prev.checkedAt || null) : null, hasChanges, sources };

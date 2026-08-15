@@ -58,7 +58,7 @@ A full table of contents is in the `NAVIGATION GUIDE` block comment at the very 
 
 ### Navigation (two-tier)
 ```
-Header buttons: [🏠 Properties]  [❤️ Health]  [Monthly Budget]  [Cash Flow]  [Tax Planning]  [Net Worth]  [💰 Savings]  [More ▸ ☀️ Solar · Deductions · Mom Budget]
+Header buttons: [❤️ Health]  [🏠 Properties]  [Monthly Budget]  [Cash Flow]  [Tax Planning]  [More ▸ Net Worth · 💰 Savings · ☀️ Solar · Deductions · Mom Budget]
 Property tabs:  [6AL]  [95EB]  [446BB]  [731WO]  [4781MC]     ← shown ONLY in property mode (behind 🏠 Properties)
 View tabs:      [Current Year]  [Tax Summary]  [Investment Return]  [Historical]  [Maintenance]  [Move-In Purchases]  [Later List]  [All Properties]
 ```

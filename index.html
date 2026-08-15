@@ -1449,16 +1449,16 @@
       <button class="prop-tab" data-prop="4781MC">4781MC</button>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
-      <button class="tp-header-btn" id="properties-btn" onclick="switchToProperties()">🏠 Properties</button>
       <button class="tp-header-btn health-btn active" id="health-btn" onclick="switchView('health')">❤️ Health</button>
+      <button class="tp-header-btn" id="properties-btn" onclick="switchToProperties()">🏠 Properties</button>
       <button class="tp-header-btn" id="budget-btn" onclick="switchView('budget')">Monthly Budget</button>
       <button class="tp-header-btn" id="cash-flow-btn" onclick="switchView('cash-flow')">Cash Flow</button>
       <button class="tp-header-btn" id="tax-planning-btn" onclick="switchView('tax-planning')">Tax Planning</button>
-      <button class="tp-header-btn" id="net-worth-btn" onclick="switchView('net-worth')">Net Worth</button>
-      <button class="tp-header-btn" id="savings-btn" onclick="switchView('savings')">💰 Savings</button>
       <details class="header-tools-menu" id="header-tools-menu">
         <summary class="tp-header-btn" id="header-tools-summary">More</summary>
         <div class="header-tools-panel">
+          <button class="tp-header-btn" id="net-worth-btn" onclick="switchView('net-worth')">Net Worth</button>
+          <button class="tp-header-btn" id="savings-btn" onclick="switchView('savings')">💰 Savings</button>
           <button class="tp-header-btn" id="solar-btn" onclick="switchView('solar')">☀️ Solar</button>
           <button class="tp-header-btn" id="deductions-btn" onclick="switchView('deductions')">Deductions Tracker</button>
           <button class="tp-header-btn" id="mom-budget-btn" onclick="switchView('mom-budget')">Mom Budget</button>
@@ -2596,7 +2596,7 @@ function switchView(view) {
   const propsBtn = document.getElementById('properties-btn');
   if (propsBtn) propsBtn.classList.toggle('active', propMode);
   const toolsSummary = document.getElementById('header-tools-summary');
-  if (toolsSummary) toolsSummary.classList.toggle('active', isSolar || isDeductions || isMomBudget);
+  if (toolsSummary) toolsSummary.classList.toggle('active', isNetWorth || isSavings || isSolar || isDeductions || isMomBudget);
   renderView();
 }
 

@@ -10008,6 +10008,143 @@ const EF_TAGS = {
   reconcile:{ icon: '🧾', label: 'MATCH app value to your 1099 / W-2', color: 'var(--ef-reconcile)' },
 };
 
+// Detailed, dummy-proof instructions per step (collapsed by default). Keyed by
+// step key; property Schedule E steps (sche-6AL etc.) share the 'sche' entry.
+const EF_HELP = {
+  'validate-start': [
+    'This wizard has <strong>two phases</strong>. Phase 1 (the teal 🧾 steps) checks that the numbers in your Tax Planning app match the real tax documents that arrived in the mail. Phase 2 walks you through typing them into Free File Fillable Forms.',
+    'Lay out every document now: your spouse\'s <strong>W-2</strong>, your military <strong>1099-R</strong>, every <strong>1099-INT</strong>, <strong>1099-DIV</strong>, and <strong>1099-B</strong>, and the year-end net-profit number for each business.',
+    'Open a second browser tab to <strong>IRS.gov → Free File → Free File Fillable Forms</strong> and create or sign in to your account. You\'ll use it in Phase 2.',
+    'Find last year\'s federal return and note the <strong>AGI</strong> — you need it at the very end to electronically sign.',
+    '<strong>Golden rule:</strong> if a 🧾 number matches your document, check it off. If it does NOT match, leave it unchecked, tap “Fix in Tax Planning”, correct the number there, save, and reopen this wizard.',
+  ],
+  'validate-wages': [
+    'Get your spouse\'s <strong>W-2</strong> and your military pension <strong>1099-R</strong>.',
+    'W-2 <strong>Box 1</strong> = “Wages, tips, other compensation.” Compare it to the app\'s wages figure below.',
+    'W-2 <strong>Box 2</strong> = “Federal income tax withheld.” Compare to the app\'s withholding.',
+    '1099-R <strong>Box 2a</strong> = the “Taxable amount” of your pension. Compare to the app. (If Box 2a is blank, use Box 1.)',
+    '1099-R <strong>Box 4</strong> = “Federal income tax withheld.” Compare to the app.',
+    'Check a line only if it matches to the dollar. If not, fix it in Tax Planning first.',
+  ],
+  'validate-interest': [
+    'Gather every <strong>1099-INT</strong> (banks, brokerages, TreasuryDirect).',
+    'On each one, <strong>Box 1</strong> = “Interest income.” For U.S. Treasury, ALSO add <strong>Box 3</strong> = “Interest on U.S. Savings Bonds and Treasury obligations.”',
+    'Match each payer\'s amount to the app value on that line.',
+    'The final 🔍 line is the running total — you\'ll confirm FFFF shows this same total in Phase 2.',
+  ],
+  'validate-invest': [
+    'Gather your <strong>1099-DIV</strong> and <strong>1099-B</strong> (often combined as one “Consolidated 1099” per brokerage).',
+    '1099-DIV <strong>Box 1a</strong> = “Total ordinary dividends.” Match to the app.',
+    'On the 1099-B / Schedule D summary, find the <strong>SHORT-TERM</strong> total and the <strong>LONG-TERM</strong> total <strong>separately</strong> — they are reported on different lines.',
+    'Each has its own line below. Verify short-term by itself, then long-term by itself. <strong>Never add them together</strong> — that\'s where mistakes happen.',
+    'A loss is a negative number — that\'s normal and fine.',
+  ],
+  'validate-business': [
+    'For each business, get its year-end <strong>Profit &amp; Loss</strong> (net profit) and any <strong>1099-NEC</strong> or <strong>1099-K</strong> it received.',
+    'Compare the net profit to the app value. In Phase 2 you\'ll rebuild the full Schedule C from the books; this just confirms the net is right.',
+  ],
+  'validate-rental': [
+    'For each property, open its <strong>Current Year</strong> tab in the app and confirm EVERY month of rent is recorded and EVERY expense receipt is entered.',
+    'Missing rent or expenses here becomes a wrong Schedule E later — add anything missing on that property\'s tab before checking off.',
+    'Depreciation is calculated automatically. Confirm it matches last year\'s depreciation schedule (it should be the same annual amount unless you sold or added the property).',
+  ],
+  'validate-payments': [
+    'Log in to your IRS online account at <strong>irs.gov/account</strong> and open your payment history for the year.',
+    'Confirm the total <strong>estimated tax payments</strong> matches the app.',
+    'Confirm total <strong>federal withholding</strong> = spouse\'s W-2 Box 2 + your 1099-R Box 4.',
+  ],
+  'personal': [
+    'In FFFF, start <strong>Form 1040</strong> and choose <strong>Married filing jointly</strong>.',
+    'Type both names and Social Security numbers <strong>exactly</strong> as printed on your Social Security cards.',
+    'Add each child as a dependent, and <strong>check the box in column 4</strong> for the Child Tax Credit.',
+  ],
+  'schb': [
+    'In FFFF, click <strong>Add</strong> and choose <strong>Schedule B</strong>.',
+    'In <strong>Part I</strong>, type each interest payer\'s name and the amount you validated in Phase 1.',
+    'In <strong>Part II</strong>, type each dividend payer\'s name and amount.',
+    'The 🔍 lines are FFFF\'s totals — confirm they equal the app amounts before continuing.',
+  ],
+  'schc': [
+    'Add <strong>one Schedule C per business</strong>.',
+    'Enter the business name, business code, gross receipts (Line 1), and each expense on its category line — all from that business\'s books.',
+    'Goal: <strong>Line 31 (net profit)</strong> equals the app\'s net shown here. If your detailed entries don\'t reach that net, recheck the books — don\'t force the number.',
+  ],
+  'schse': [
+    'FFFF usually creates <strong>Schedule SE</strong> automatically from your Schedule C net profit.',
+    'Confirm the self-employment tax and the ½-SE-tax deduction match the app amounts.',
+  ],
+  'sche': [
+    'Add <strong>ONE Schedule E</strong> and use a separate <strong>column</strong> (A, B, C) for each property.',
+    'Type the address, fair-rental days, rents on <strong>Line 3</strong>, and each expense on its numbered line.',
+    'Depreciation goes on <strong>Line 18</strong>. The 🔍 net line is FFFF\'s <strong>Line 21</strong> — confirm it matches before moving on.',
+  ],
+  'sche-total': [
+    'After all property columns are entered, FFFF sums them on <strong>Line 26</strong>.',
+    'Confirm that total matches the app, then it flows to Schedule 1 Line 5.',
+  ],
+  'capgains': [
+    'Enter each sale on <strong>Form 8949</strong>, which flows to <strong>Schedule D</strong>.',
+    '<strong>Short-term</strong> sales go in Part I; <strong>long-term</strong> in Part II — keep them separate.',
+    'A rental-property sale goes on <strong>Form 4797</strong> first, then to Schedule D, and includes <strong>depreciation recapture</strong>. This is the most error-prone part of the return — have a CPA review it.',
+  ],
+  'qbi': [
+    'FFFF builds <strong>Form 8995</strong> from your business income.',
+    'Confirm the QBI deduction matches, then it flows to 1040 Line 13.',
+  ],
+  'sch1': [
+    'FFFF builds <strong>Schedule 1</strong> from your Schedule C and Schedule E.',
+    'Confirm business income (Line 3) and rental (Line 5), then the two totals (Lines 10 and 25).',
+  ],
+  'sch2': [
+    '<strong>Schedule 2</strong> collects self-employment tax, Net Investment Income Tax, and Additional Medicare Tax.',
+    'Confirm each line matches, then the total on Line 21.',
+  ],
+  'f1040-income': [
+    'Back on <strong>Form 1040</strong>, enter the income lines.',
+    '<strong>Line 1a</strong> = W-2 Box 1. <strong>Line 5b</strong> = your 1099-R taxable pension. <strong>2b/3b</strong> = interest/dividends. <strong>Line 7</strong> = capital gain. <strong>Line 8</strong> = the Schedule 1 total.',
+    '<strong>Line 9</strong> is FFFF\'s total income — confirm it matches.',
+  ],
+  'f1040-tax': [
+    '<strong>Line 11</strong> is your AGI — confirm it matches. <strong>Line 12</strong> is the standard deduction. <strong>Line 13</strong> is QBI.',
+    '<strong>Line 16</strong> is the tax. If you have capital gains/qualified dividends, use FFFF\'s <strong>Qualified Dividends and Capital Gain Tax Worksheet</strong> so the preferential rates apply.',
+  ],
+  'f1040-final': [
+    '<strong>Line 24</strong> = total tax. <strong>Line 25</strong> = total withholding. <strong>Line 26</strong> = estimated payments.',
+    '<strong>Line 37</strong> is what you owe (or <strong>Line 34</strong> your refund). Pay any balance at <strong>irs.gov/payments</strong> (Direct Pay) — even with e-file you pay separately.',
+    'Sign by entering <strong>last year\'s AGI</strong>, then submit to <strong>e-file the federal return</strong>. Save the confirmation.',
+  ],
+  'md': [
+    'FFFF does <strong>NOT</strong> do Maryland. Go to <strong>marylandtaxes.gov → iFile</strong> (free).',
+    'Most of <strong>MD Form 502</strong> flows from your federal AGI. The app\'s Tax Planning tab has your Maryland figures.',
+  ],
+};
+const _efHelpExpanded = new Set();
+function efHelpFor(key) {
+  if (EF_HELP[key]) return EF_HELP[key];
+  if (key.startsWith('sche-') && key !== 'sche-total') return EF_HELP['sche'];
+  return null;
+}
+function efToggleHelp(key) {
+  if (_efHelpExpanded.has(key)) _efHelpExpanded.delete(key); else _efHelpExpanded.add(key);
+  efRenderCurrent();
+}
+function efInstructionsHtml(step) {
+  const help = efHelpFor(step.key);
+  if (!help && !step.intro) return '';
+  const open = _efHelpExpanded.has(step.key);
+  // Prefer the detailed help list; fall back to the short intro only when a step
+  // has no help entry (avoids showing both, which would duplicate content).
+  const body = help
+    ? `<ol style="margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.4rem">${help.map(h => `<li>${h}</li>`).join('')}</ol>`
+    : `<div>${step.intro}</div>`;
+  return `<div style="border-bottom:1px solid var(--border)">
+    <button onclick="efToggleHelp('${step.key}')" style="width:100%;text-align:left;background:var(--surface2,var(--bg));border:none;padding:.55rem 1rem;cursor:pointer;font-size:.8rem;font-weight:700;color:var(--text);display:flex;justify-content:space-between;align-items:center;gap:.5rem">
+      <span>📖 ${open ? 'Hide' : 'Show'} step-by-step instructions</span><span style="font-size:.7rem">${open ? '▲ collapse' : '▼ expand'}</span>
+    </button>
+    ${open ? `<div style="padding:.7rem 1rem;font-size:.82rem;line-height:1.6;background:var(--surface2,var(--bg))">${body}</div>` : ''}
+  </div>`;
+}
+
 function efProgress() { try { return new Set(JSON.parse(localStorage.getItem(EF_PROGRESS_KEY) || '[]')); } catch { return new Set(); } }
 function efSaveProgress(set) { localStorage.setItem(EF_PROGRESS_KEY, JSON.stringify([...set])); }
 
@@ -10103,10 +10240,15 @@ function efBuildSteps(tp, r, rentalRows) {
   const invRows = [];
   if (tpN(tp.rh_div)) invRows.push(efC('rec-div-rh', '1099-DIV — Robinhood', 'Ordinary dividends the app has', tpN(tp.rh_div), 'Match box 1a'));
   if (tpN(tp.ibkr_div)) invRows.push(efC('rec-div-ibkr', '1099-DIV — IBKR', 'Ordinary dividends the app has', tpN(tp.ibkr_div), 'Match box 1a'));
-  if (tpN(tp.rh_st) || tpN(tp.rh_lt)) invRows.push(efC('rec-b-rh', '1099-B — Robinhood', 'Net ST / LT gain the app has', tpN(tp.rh_st) + tpN(tp.rh_lt), `ST ${fmt(tpN(tp.rh_st))} · LT ${fmt(tpN(tp.rh_lt))}`));
-  if (tpN(tp.megan_rh_st)) invRows.push(efC('rec-b-megan', '1099-B — Robinhood (Megan)', 'Net ST gain the app has', tpN(tp.megan_rh_st), 'Match consolidated 1099-B'));
-  if (tpN(tp.ibkr_st) || tpN(tp.ibkr_lt)) invRows.push(efC('rec-b-ibkr', '1099-B — IBKR', 'Net ST / LT gain the app has', tpN(tp.ibkr_st) + tpN(tp.ibkr_lt), `ST ${fmt(tpN(tp.ibkr_st))} · LT ${fmt(tpN(tp.ibkr_lt))}`));
-  if (tpN(tp.crypto_st) || tpN(tp.crypto_lt) || tpN(tp.crypto_income)) invRows.push(efC('rec-crypto', 'Crypto 1099 / records', 'Crypto ST/LT/income the app has', tpN(tp.crypto_st) + tpN(tp.crypto_lt) + tpN(tp.crypto_income), 'Match exchange 1099 / your ledger'));
+  // ST and LT are separate tasks — never add them together (avoids math errors).
+  if (tpN(tp.rh_st)) invRows.push(efC('rec-b-rh-st', '1099-B — Robinhood', 'SHORT-TERM gain/loss the app has', tpN(tp.rh_st), 'Match the short-term total ONLY'));
+  if (tpN(tp.rh_lt)) invRows.push(efC('rec-b-rh-lt', '1099-B — Robinhood', 'LONG-TERM gain/loss the app has', tpN(tp.rh_lt), 'Match the long-term total ONLY'));
+  if (tpN(tp.megan_rh_st)) invRows.push(efC('rec-b-megan-st', '1099-B — Robinhood (Megan)', 'SHORT-TERM gain/loss the app has', tpN(tp.megan_rh_st), 'Match the short-term total ONLY'));
+  if (tpN(tp.ibkr_st)) invRows.push(efC('rec-b-ibkr-st', '1099-B — IBKR', 'SHORT-TERM gain/loss the app has', tpN(tp.ibkr_st), 'Match the short-term total ONLY'));
+  if (tpN(tp.ibkr_lt)) invRows.push(efC('rec-b-ibkr-lt', '1099-B — IBKR', 'LONG-TERM gain/loss the app has', tpN(tp.ibkr_lt), 'Match the long-term total ONLY'));
+  if (tpN(tp.crypto_st)) invRows.push(efC('rec-crypto-st', 'Crypto 1099 / ledger', 'SHORT-TERM crypto gain/loss the app has', tpN(tp.crypto_st), 'Match the short-term total ONLY'));
+  if (tpN(tp.crypto_lt)) invRows.push(efC('rec-crypto-lt', 'Crypto 1099 / ledger', 'LONG-TERM crypto gain/loss the app has', tpN(tp.crypto_lt), 'Match the long-term total ONLY'));
+  if (tpN(tp.crypto_income)) invRows.push(efC('rec-crypto-inc', 'Crypto 1099 / ledger', 'Crypto ordinary income the app has', tpN(tp.crypto_income), 'Match staking/reward income'));
   if (invRows.length === 0) invRows.push(efR('rec-inv-none', 'Dividends & capital gains', '', 'No dividend/capital-gain amounts in the app', 'confirm none on your 1099-DIV / 1099-B', 'supply'));
   steps.push({ key: 'validate-invest', title: 'Validate — Dividends & Capital Gains', subtitle: 'Match 1099-DIV and 1099-B.', rows: invRows });
 
@@ -10369,9 +10511,12 @@ function efRenderCurrent() {
           <div class="card-title">${escHtml(step.title)}</div>
           ${step.subtitle ? `<div style="font-size:.76rem;color:var(--text-muted);margin-top:.1rem">${escHtml(step.subtitle)}</div>` : ''}
         </div>
-        <div style="font-size:.75rem;color:var(--text-muted);white-space:nowrap">${stepDoneCount}/${step.rows.length} done</div>
+        <div style="text-align:right;white-space:nowrap">
+          <div style="font-size:.75rem;color:var(--text-muted)">${stepDoneCount}/${step.rows.length} done</div>
+          ${step.key.startsWith('validate') ? `<button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.7rem;margin-top:.25rem" onclick="switchView('tax-planning')" title="If a value doesn't match your document, fix it here first">✏️ Fix in Tax Planning</button>` : ''}
+        </div>
       </div>
-      ${step.intro ? `<div style="padding:.6rem 1rem;font-size:.8rem;line-height:1.5;background:var(--surface2,var(--bg));border-bottom:1px solid var(--border)">${step.intro}</div>` : ''}
+      ${efInstructionsHtml(step)}
       <div>${rowsHtml}</div>
     </div>
 

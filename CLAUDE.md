@@ -58,12 +58,14 @@ A full table of contents is in the `NAVIGATION GUIDE` block comment at the very 
 
 ### Navigation (two-tier)
 ```
-Property tabs:  [6AL]  [95EB]  [446BB]  [731WO]  [4781MC]
+Header buttons: [🏠 Properties]  [❤️ Health]  [Monthly Budget]  [Cash Flow]  [Tax Planning]  [Net Worth]  [💰 Savings]  [More ▸ ☀️ Solar · Deductions · Mom Budget]
+Property tabs:  [6AL]  [95EB]  [446BB]  [731WO]  [4781MC]     ← shown ONLY in property mode (behind 🏠 Properties)
 View tabs:      [Current Year]  [Tax Summary]  [Investment Return]  [Historical]  [Maintenance]  [Move-In Purchases]  [Later List]  [All Properties]
-Header buttons: [❤️ Health]  [Deductions Tracker]  [Monthly Budget]  [Mom Budget]  [☀️ Solar]  [Tax Planning]  [💰 Savings]  [Net Worth]  [Cash Flow]
 ```
+- **Health is the default landing view** on load (`state.currentView` initializes to `'health'`; the header/tabs chrome is set by calling `switchView(state.currentView)` — not bare `renderView()` — in `initApp` and after login so the correct buttons/tabs are active).
 - The **❤️ Health** header button is deliberately styled **red** (`.tp-header-btn.health-btn`) to stand out from the green tools.
-- Property tabs are hidden for the global header views (`GLOBAL_HEADER_VIEWS`: `tax-planning`, `net-worth`, `budget`, `cash-flow`, `mom-budget`, `solar`, `deductions`, `savings`, `health`) and for **All Properties**.
+- **The per-property tabs live behind the `🏠 Properties` header button** — they are **not** always displayed. `switchToProperties()` enters "property mode": it shows `#property-tabs` + `#view-nav`, marks `#properties-btn` active, and lands on the last-used property view (`_lastPropertyView`, tracked in `switchView`/`switchProperty`) or the current property's `defaultViewForProperty`. `isPropertyMode(view)` = `!GLOBAL_HEADER_VIEWS.has(view)` is the single source of truth: `switchView` shows the property tabs + toggles `#properties-btn` active only in property mode, and hides both `#property-tabs` and `#view-nav` for global header views. Initial HTML has `#property-tabs`/`#view-nav` at `display:none` and `#health-btn` pre-marked `active` to avoid a flash before JS runs.
+- Global header views (`GLOBAL_HEADER_VIEWS`: `tax-planning`, `net-worth`, `budget`, `cash-flow`, `mom-budget`, `solar`, `deductions`, `savings`, `health`) hide the property tabs and the view-nav. **All Properties** (`portfolio`) is a property view (tabs shown, no single tab highlighted).
 - **731WO** and **4781MC** are primary residences — only show Investment Return and Maintenance views (`PRIMARY_PROPERTIES` / `PRIMARY_VIEWS` constants).
 - **Move-In Purchases** and **Later List** are available only on **4781MC** (`MOVE_IN_PURCHASE_PROPERTY` / `LATER_LIST_PROPERTY`).
 - Switching property tabs reloads the current view for the new property.

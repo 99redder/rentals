@@ -1441,7 +1441,7 @@
       <img class="app-title-icon" src="stuff-icon-192.png" alt="" aria-hidden="true">
       Red's <span>STUFF</span>
     </a>
-    <div class="property-tabs" id="property-tabs">
+    <div class="property-tabs" id="property-tabs" style="display:none">
       <button class="prop-tab active" data-prop="6AL">6AL</button>
       <button class="prop-tab" data-prop="95EB">95EB</button>
       <button class="prop-tab" data-prop="446BB">446BB</button>
@@ -1449,7 +1449,8 @@
       <button class="prop-tab" data-prop="4781MC">4781MC</button>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
-      <button class="tp-header-btn health-btn" id="health-btn" onclick="switchView('health')">❤️ Health</button>
+      <button class="tp-header-btn" id="properties-btn" onclick="switchToProperties()">🏠 Properties</button>
+      <button class="tp-header-btn health-btn active" id="health-btn" onclick="switchView('health')">❤️ Health</button>
       <button class="tp-header-btn" id="budget-btn" onclick="switchView('budget')">Monthly Budget</button>
       <button class="tp-header-btn" id="cash-flow-btn" onclick="switchView('cash-flow')">Cash Flow</button>
       <button class="tp-header-btn" id="tax-planning-btn" onclick="switchView('tax-planning')">Tax Planning</button>
@@ -1467,7 +1468,7 @@
       <button class="btn-signout" id="signout-btn" onclick="signOut()" title="Sign out">Sign Out</button>
     </div>
   </div>
-  <div class="view-nav" id="view-nav">
+  <div class="view-nav" id="view-nav" style="display:none">
     <button class="view-btn active" data-view="current-year">Current Year</button>
     <button class="view-btn" data-view="tax-summary">Tax Summary</button>
     <button class="view-btn" data-view="investment-return">Investment Return</button>
@@ -2178,7 +2179,7 @@ const MAINT_SEED_COUNTS = Object.freeze({
 
 const state = {
   currentProperty: '6AL',
-  currentView: 'current-year',
+  currentView: 'health',   // Health is the landing view; Properties button opens the per-property tabs
   password: '', // legacy only; runtime auth uses HttpOnly session cookie
   data: {
     '6AL':   { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null, laterList: null, laterCategories: null },
@@ -2490,6 +2491,29 @@ function defaultViewForProperty(prop) {
   return PRIMARY_PROPERTIES.has(prop) ? 'investment-return' : 'current-year';
 }
 
+// A "property view" is any non-global view — the per-property tabs + view-nav are
+// shown only in this mode. Global header views (Health, Budget, …) hide them.
+function isPropertyMode(view) {
+  return !GLOBAL_HEADER_VIEWS.has(view);
+}
+
+// Remember the last per-property view so the Properties button returns you to it.
+let _lastPropertyView = null;
+
+// Properties header button: enter (or return to) per-property mode.
+function switchToProperties() {
+  const prop = state.currentProperty;
+  let view = state.currentView;
+  if (!isPropertyMode(view)) {
+    view = (_lastPropertyView && isViewAvailableForProperty(prop, _lastPropertyView))
+      ? _lastPropertyView
+      : defaultViewForProperty(prop);
+  }
+  updateViewTabAvailability(prop);
+  syncPropertyTabActive(!PROPERTY_TAB_RETURN_VIEWS.has(view));
+  switchView(view);
+}
+
 function updateViewTabAvailability(prop) {
   document.querySelectorAll('.view-btn').forEach(b => {
     b.style.display = isViewAvailableForProperty(prop, b.dataset.view) ? '' : 'none';
@@ -2517,8 +2541,10 @@ function switchProperty(prop) {
   }
   document.getElementById('property-tabs').style.display = '';
   document.getElementById('view-nav').style.display = '';
-  ['tax-planning-btn', 'net-worth-btn', 'budget-btn', 'cash-flow-btn', 'mom-budget-btn', 'solar-btn', 'deductions-btn', 'savings-btn', 'header-tools-summary']
+  ['tax-planning-btn', 'net-worth-btn', 'budget-btn', 'cash-flow-btn', 'mom-budget-btn', 'solar-btn', 'deductions-btn', 'savings-btn', 'health-btn', 'header-tools-summary']
     .forEach(id => document.getElementById(id)?.classList.remove('active'));
+  document.getElementById('properties-btn')?.classList.add('active');
+  if (state.currentView !== 'add-entry') _lastPropertyView = state.currentView;
   renderView();
 }
 
@@ -2541,9 +2567,11 @@ function switchView(view) {
   const isSavings = view === 'savings';
   const isHealth = view === 'health';
   const isFullscreen = GLOBAL_HEADER_VIEWS.has(view);
+  const propMode = isPropertyMode(view);
+  if (propMode && view !== 'add-entry') _lastPropertyView = view;
   syncPropertyTabActive(!PROPERTY_TAB_RETURN_VIEWS.has(view));
-  // Keep property tabs visible even in global views so a property is one click away.
-  document.getElementById('property-tabs').style.display = '';
+  // Per-property tabs live behind the Properties button — shown only in property mode.
+  document.getElementById('property-tabs').style.display = propMode ? '' : 'none';
   // Hide view-nav for fullscreen global views
   document.getElementById('view-nav').style.display = isFullscreen ? 'none' : '';
   // Toggle header button active states
@@ -2565,6 +2593,8 @@ function switchView(view) {
   if (savingsBtn) savingsBtn.classList.toggle('active', isSavings);
   const healthBtn = document.getElementById('health-btn');
   if (healthBtn) healthBtn.classList.toggle('active', isHealth);
+  const propsBtn = document.getElementById('properties-btn');
+  if (propsBtn) propsBtn.classList.toggle('active', propMode);
   const toolsSummary = document.getElementById('header-tools-summary');
   if (toolsSummary) toolsSummary.classList.toggle('active', isSolar || isDeductions || isMomBudget);
   renderView();
@@ -15541,7 +15571,7 @@ async function submitPassword() {
       state.password = '';
       document.querySelector('.app-header').style.display = '';
       updateViewTabAvailability(state.currentProperty);
-      renderView();
+      switchView(state.currentView);
     } else {
       errEl.classList.remove('hidden');
       document.getElementById('pw-input').value = '';
@@ -15606,6 +15636,7 @@ document.getElementById('view-nav').addEventListener('click', e => {
 
 // Expose functions called from inline handlers
 window.switchView          = switchView;
+window.switchToProperties  = switchToProperties;
 window.openAddYear         = openAddYear;
 window.openEditYear        = openEditYear;
 window.closeYearForm       = closeYearForm;
@@ -15748,7 +15779,7 @@ document.addEventListener('keydown', e => {
 (async function initApp() {
   if (await verifySession()) {
     updateViewTabAvailability(state.currentProperty);
-    renderView();
+    switchView(state.currentView);
   } else {
     showPasswordGate();
   }

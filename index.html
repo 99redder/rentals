@@ -1494,6 +1494,7 @@
   </div>
 </header>
 
+<div id="tax-update-banner" style="display:none"></div>
 <div id="sold-banner" style="display:none"></div>
 
 <main class="page" id="app">
@@ -2653,6 +2654,7 @@ async function renderView() {
     app.innerHTML = `<div class="error-msg">Failed to load: ${escHtml(e.message)}</div>`;
   } finally {
     updateSoldBanner();
+    updateTaxUpdateBanner();
   }
 }
 
@@ -9405,8 +9407,10 @@ async function checkTaxUpdates(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
   try {
     const data = await callApi({ action: 'check_tax_updates' });
+    _taxUpdateFlag = data;
     _taxUpdateShow(data);
     tpLoadUpdateStatus();
+    updateTaxUpdateBanner();
   } catch (e) {
     showBrandedNotice({ title: 'Update check failed', message: e?.message || 'Could not reach the tax-update service. Try again.', confirmLabel: 'OK' });
   } finally {
@@ -9472,7 +9476,10 @@ function _taxUpdateShow(data) {
   overlay.innerHTML = `<div style="background:var(--surface);color:var(--text);border-radius:var(--radius-lg);max-width:600px;width:100%;max-height:85vh;overflow:auto;box-shadow:var(--shadow-lg)">
     <div style="padding:1rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:1rem;position:sticky;top:0;background:var(--surface)">
       <div style="font-size:1.1rem;font-weight:700">🔄 Tax guidance check</div>
-      <button class="btn btn-ghost btn-sm" onclick="_taxUpdateClose()">✕</button>
+      <div style="display:flex;gap:.4rem">
+        ${data.hasChanges ? `<button class="btn btn-secondary btn-sm" onclick="ackTaxUpdate();_taxUpdateClose()">Acknowledge</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="_taxUpdateClose()">✕</button>
+      </div>
     </div>
     <div style="padding:1rem 1.1rem">
       ${banner}
@@ -9484,6 +9491,45 @@ function _taxUpdateShow(data) {
     </div>
   </div>`;
   document.body.appendChild(overlay);
+}
+
+// ── Global "tax guidance changed" banner (persists until acknowledged) ────────
+const TAX_UPDATE_ACK_KEY = 'rentals_tax_update_ack';
+let _taxUpdateFlag = null;   // last get_tax_update_check result, cached per session
+
+async function loadTaxUpdateFlag() {
+  try { _taxUpdateFlag = await callApi({ action: 'get_tax_update_check' }); }
+  catch { _taxUpdateFlag = null; }
+  updateTaxUpdateBanner();
+}
+
+// Rendered outside #app so it survives every view switch; called from renderView.
+function updateTaxUpdateBanner() {
+  const el = document.getElementById('tax-update-banner');
+  if (!el) return;
+  const d = _taxUpdateFlag;
+  const ack = localStorage.getItem(TAX_UPDATE_ACK_KEY) || '';
+  if (!d || !d.hasChanges || !d.checkedAt || d.checkedAt === ack) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const when = (() => { const x = new Date(d.checkedAt); return isNaN(x.getTime()) ? String(d.checkedAt) : x.toLocaleDateString(); })();
+  el.innerHTML = `<div style="background:linear-gradient(180deg,#f59e0b,#d97706);color:#fff;border-bottom:3px solid #b45309;box-shadow:0 3px 10px rgba(217,119,6,.4);padding:.65rem 1rem;display:flex;align-items:center;justify-content:center;gap:.9rem;flex-wrap:wrap;text-align:center">
+    <span style="font-weight:800;font-size:1rem">⚠️ New tax guidance detected</span>
+    <span style="font-size:.88rem;font-weight:600">IRS or Maryland pages changed (checked ${escHtml(when)}) — the app's tax formulas may need updating before you file.</span>
+    <span style="display:inline-flex;gap:.5rem;flex-shrink:0">
+      <button onclick="reviewTaxUpdate()" style="background:#fff;color:#b45309;border:none;border-radius:6px;padding:.35rem .85rem;font-weight:700;cursor:pointer">Review</button>
+      <button onclick="ackTaxUpdate()" style="background:rgba(0,0,0,.22);color:#fff;border:1px solid #fff;border-radius:6px;padding:.35rem .85rem;font-weight:700;cursor:pointer">Acknowledge</button>
+    </span>
+  </div>`;
+  el.style.display = 'block';
+}
+
+function ackTaxUpdate() {
+  if (_taxUpdateFlag && _taxUpdateFlag.checkedAt) localStorage.setItem(TAX_UPDATE_ACK_KEY, _taxUpdateFlag.checkedAt);
+  updateTaxUpdateBanner();
+}
+
+function reviewTaxUpdate() {
+  if (_taxUpdateFlag && _taxUpdateFlag.checkedAt) _taxUpdateShow(_taxUpdateFlag);
+  else checkTaxUpdates();
 }
 
 // ── View: Deductions Tracker ──────────────────────────────────────────────────
@@ -10108,6 +10154,12 @@ const EF_TAGS = {
 // Detailed, dummy-proof instructions per step (collapsed by default). Keyed by
 // step key; property Schedule E steps (sche-6AL etc.) share the 'sche' entry.
 const EF_HELP = {
+  'preflight': [
+    'Tax forms and inflation-adjusted figures for the year come out late — IRS Rev. Procs. in the fall, Maryland guidance and final forms around January — so before you rely on the app\'s numbers, confirm its formulas and constants are current.',
+    'Tap <strong>“Copy the audit prompt”</strong> above, open <strong>Claude Code</strong> in this project folder, and paste it.',
+    'Claude Code will search the web for the latest IRS + Maryland ' + CURRENT_YEAR + ' figures, audit <code>tpCalc</code> / <code>calcMarylandTax</code> and the tax constants against them, and report any mismatch with a proposed fix (it asks before changing anything).',
+    'Apply any fixes it proposes. Because this E-File Helper reads its numbers live from Tax Planning, fixing them there updates everything here automatically.',
+  ],
   'validate-start': [
     'This wizard has <strong>two phases</strong>. Phase 1 (the teal 🧾 steps) checks that the numbers in your Tax Planning app match the real tax documents that arrived in the mail. Phase 2 walks you through typing them into Free File Fillable Forms.',
     'Lay out every document now: your spouse\'s <strong>W-2</strong>, your military <strong>1099-R</strong>, every <strong>1099-INT</strong>, <strong>1099-DIV</strong>, and <strong>1099-B</strong>, and the year-end net-profit number for each business.',
@@ -10300,6 +10352,42 @@ function efExportValidation() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// The copy-paste prompt for the pre-flight step: have Claude Code check current
+// IRS/MD guidance and audit the app's tax formulas/constants before filing.
+function efAuditPromptText() {
+  const y = CURRENT_YEAR;
+  return `You are auditing the tax calculations in my personal finance app before I file my ${y} taxes. The app is a single self-contained index.html (plus a Cloudflare worker in cloudflare/src/worker.js). Be rigorous and cite official sources.
+
+1. Search the web for the current OFFICIAL ${y} tax figures:
+   - IRS (irs.gov): MFJ standard deduction; ordinary-income tax brackets; long-term capital-gains 0/15/20% breakpoints; Child Tax Credit per child and phase-out threshold; Net Investment Income Tax threshold; Social Security wage base; IRA contribution/deduction limits; QBI (Section 199A) taxable-income thresholds; Additional Medicare Tax threshold.
+   - Maryland (marylandtaxes.gov): MFJ standard deduction; state income-tax brackets (Schedule II, MFJ); personal-exemption amounts and income phase-outs; county/local income-tax rates (especially Wicomico); military-retirement subtraction cap; and the 2% capital-gains surcharge rules/threshold.
+
+2. Open index.html and audit the tax logic against those figures:
+   - Constants: TP_STD_DEDUCTION, TP_BRACKETS_MFJ, TP_LTCG_MFJ, TP_CTC_PER_CHILD, TP_CTC_PHASEOUT, TP_NIIT_THRESHOLD, TP_SE_SS_BASE, TP_IRA_LIMIT, TP_QBI_THRESHOLD, TP_ADDL_MEDICARE.
+   - Maryland: MD_BRACKETS_MFJ, MD_STD_DEDUCTION, MD_COUNTY_RATES, and the military-retirement + 529 subtractions.
+   - Functions: tpCalc() and calcMarylandTax() — verify the formulas (bracket stacking, LTCG stacking on top of ordinary income + depreciation recapture at 25%, SE tax, NIIT base, QBI income cap, MD exemption phase-out).
+
+3. Produce a table: item | app value or formula | official ${y} value | MATCH or MISMATCH | source URL.
+
+4. For every mismatch or outdated formula, show the exact code change needed but DO NOT apply it until I confirm. Flag any tax rule that materially affects my return that the app does not model. If a ${y} figure has not been officially published yet, say so rather than guessing. Finally, confirm that mobile/index.html's mobileTaxCalc still mirrors index.html.`;
+}
+
+function _efFallbackCopy(txt, done) {
+  const ta = document.createElement('textarea');
+  ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand('copy'); done(); } catch { /* ignore */ } finally { ta.remove(); }
+}
+function efCopyPrompt(btn) {
+  const txt = efAuditPromptText();
+  const done = () => { if (btn) { const o = btn.textContent; btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = o; }, 1500); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(done).catch(() => _efFallbackCopy(txt, done));
+  } else {
+    _efFallbackCopy(txt, done);
+  }
+}
 function efInstructionsHtml(step) {
   const help = efHelpFor(step.key);
   if (!help && !step.intro) return '';
@@ -10383,12 +10471,23 @@ function efBuildSteps(tp, r, rentalRows) {
   const otherTaxes = r.seTax + r.addlMedicare + r.niit;
   const md = r.md || {};
 
+  // ═══ PHASE 0: PRE-FLIGHT — audit the app's tax math with Claude Code ═════════
+  steps.push({ key: 'preflight', title: 'Pre-flight — audit the tax math with Claude Code', subtitle: 'Do this FIRST. Confirms the app\'s formulas match current IRS + MD guidance.',
+    actionHtml: `<div style="padding:.85rem 1rem;background:var(--surface2,var(--bg));border-bottom:1px solid var(--border)">
+      <button class="btn btn-primary" style="font-size:1rem;padding:.6rem 1rem" onclick="efCopyPrompt(this)">📋 Copy the audit prompt</button>
+      <div style="font-size:.82rem;color:var(--text-muted);margin:.55rem 0 .4rem">Paste this into a Claude Code session opened in this project:</div>
+      <pre style="white-space:pre-wrap;word-break:break-word;font-size:.76rem;line-height:1.5;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:.7rem;max-height:240px;overflow:auto;margin:0">${escHtml(efAuditPromptText())}</pre>
+    </div>`,
+    rows: [
+      efR('preflight-done', 'Claude Code', '', 'Ran the audit and applied any needed fixes', 'the app\'s tax math is confirmed current', 'supply'),
+    ]});
+
   // ═══ PHASE 1: YEAR-END VALIDATION ═══════════════════════════════════════════
   // Reconcile the app's numbers (estimates all year) against the real documents
   // that just arrived, BEFORE transcribing anything into FFFF. If a value is
   // wrong, fix it on the Tax Planning tab, then reopen this wizard.
 
-  steps.push({ key: 'validate-start', title: 'Year-End Validation — start here', subtitle: 'Phase 1 of 2: check the app against your real documents.',
+  steps.push({ key: 'validate-start', title: 'Year-End Validation — start here', subtitle: 'Phase 1: check the app against your real documents.',
     intro: 'Your Tax Planning numbers were <strong>estimates</strong> all year. Now that your <strong>W-2, 1099-R, 1099-INT/DIV/B</strong> and business books have arrived, confirm each app figure matches before you file. <strong>If any 🧾 line doesn\'t match, fix it on the Tax Planning tab first</strong>, then reopen this wizard. <button class="btn btn-ghost btn-sm" style="padding:.1rem .45rem;font-size:.72rem" onclick="switchView(\'tax-planning\')">Open Tax Planning →</button>',
     rows: [
       efR('setup-docs', 'Source documents', '', 'Gather every W-2, 1099-R, 1099-INT/DIV/B, and business year-end P&L', 'have them all in front of you', 'supply'),
@@ -16685,6 +16784,7 @@ async function submitPassword() {
       document.querySelector('.app-header').style.display = '';
       updateViewTabAvailability(state.currentProperty);
       switchView(state.currentView);
+      loadTaxUpdateFlag();
     } else if (data.totpRequired) {
       // Password was correct but the authenticator code was missing/wrong.
       errEl.textContent = 'Invalid authenticator code. Check your app and try again.';
@@ -16901,6 +17001,7 @@ document.addEventListener('keydown', e => {
   if (await verifySession()) {
     updateViewTabAvailability(state.currentProperty);
     switchView(state.currentView);
+    loadTaxUpdateFlag();
   } else {
     showPasswordGate();
   }

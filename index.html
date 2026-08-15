@@ -15751,30 +15751,38 @@ function showPasswordGate() {
           <label for="pw-input">Password</label>
           <input type="password" id="pw-input" placeholder="••••••••" autocomplete="current-password">
         </div>
+        <div class="form-group mt-1">
+          <label for="totp-input">Authenticator code</label>
+          <input type="text" id="totp-input" placeholder="123456" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+          <div style="color:var(--text-muted);font-size:0.75rem;margin-top:0.25rem">6-digit code from your authenticator app.</div>
+        </div>
         <div id="pw-error" class="error-msg hidden mt-1">Incorrect password.</div>
         <button class="btn btn-primary" style="width:100%;margin-top:1rem" onclick="submitPassword()">
           Sign In
         </button>
       </div>
     </div>`;
-  // Allow Enter key
+  // Allow Enter key from either field
   setTimeout(() => {
-    const el = document.getElementById('pw-input');
-    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') submitPassword(); });
+    ['pw-input', 'totp-input'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') submitPassword(); });
+    });
   }, 0);
 }
 
 async function submitPassword() {
   const pw = document.getElementById('pw-input')?.value || '';
+  const code = (document.getElementById('totp-input')?.value || '').replace(/\s+/g, '');
   const errEl = document.getElementById('pw-error');
 
-  // Verify password via worker
+  // Verify password (+ optional authenticator code) via worker
   try {
     const res = await fetch(`${API}/api/data`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'verify_password', password: pw })
+      body: JSON.stringify({ action: 'verify_password', password: pw, code })
     });
     const data = await res.json();
     if (data.ok) {
@@ -15783,7 +15791,14 @@ async function submitPassword() {
       document.querySelector('.app-header').style.display = '';
       updateViewTabAvailability(state.currentProperty);
       switchView(state.currentView);
+    } else if (data.totpRequired) {
+      // Password was correct but the authenticator code was missing/wrong.
+      errEl.textContent = 'Invalid authenticator code. Check your app and try again.';
+      errEl.classList.remove('hidden');
+      const totpEl = document.getElementById('totp-input');
+      if (totpEl) { totpEl.value = ''; totpEl.focus(); }
     } else {
+      errEl.textContent = 'Incorrect password.';
       errEl.classList.remove('hidden');
       document.getElementById('pw-input').value = '';
       document.getElementById('pw-input').focus();

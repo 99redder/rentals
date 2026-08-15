@@ -236,7 +236,7 @@ async function handleDataApi(request, env) {
 
   // Password check — creates an HttpOnly session cookie on success.
   if (action === 'verify_password') {
-    return handleVerifyPassword(request, env, body.password, body.rememberDevice === true);
+    return handleVerifyPassword(request, env, body.password, body.rememberDevice === true, body.code);
   }
   if (action === 'logout') {
     return handleLogout(request, env);
@@ -446,7 +446,7 @@ async function handleDataApi(request, env) {
   }
 }
 
-async function handleVerifyPassword(request, env, password, rememberDevice = false) {
+async function handleVerifyPassword(request, env, password, rememberDevice = false, code = '') {
   const stored = env.ADMIN_PASSWORD || '';
   if (!stored) return jsonResponse({ error: 'Password not configured on server' }, 500);
 
@@ -468,6 +468,17 @@ async function handleVerifyPassword(request, env, password, rememberDevice = fal
   if (!timingSafeEqualStrings(String(password || ''), stored)) {
     await env.RENTALS.put(failKey, String(failures + 1), { expirationTtl: LOGIN_WINDOW_SECONDS });
     return jsonResponse({ ok: false });
+  }
+
+  // Second factor — enforced only when the TOTP_SECRET Worker secret is set.
+  // A wrong/missing code after a correct password still counts toward the
+  // lockout so the 6-digit code can't be brute-forced with a known password.
+  const totpSecret = String(env.TOTP_SECRET || '').trim();
+  if (totpSecret) {
+    if (!(await verifyTotp(totpSecret, code))) {
+      await env.RENTALS.put(failKey, String(failures + 1), { expirationTtl: LOGIN_WINDOW_SECONDS });
+      return jsonResponse({ ok: false, totpRequired: true, error: 'Invalid authenticator code' });
+    }
   }
 
   await env.RENTALS.delete(failKey);
@@ -649,6 +660,67 @@ function timingSafeEqualStrings(left, right) {
   return lengthsMatch
     ? crypto.subtle.timingSafeEqual(leftBytes, rightBytes)
     : !crypto.subtle.timingSafeEqual(leftBytes, leftBytes);
+}
+
+// ── TOTP (RFC 6238) — optional second factor ──────────────────────────────────
+// Verifies a 6-digit time-based code against the base32 TOTP_SECRET. Standard
+// params (6 digits / 30-second step / HMAC-SHA1) so any authenticator app works
+// — Microsoft Authenticator, Google Authenticator, 1Password, Authy. Accepts
+// the adjacent windows (±1 step) to tolerate device clock drift. No deps: uses
+// crypto.subtle, which supports HMAC-SHA1 on Workers.
+const TOTP_DIGITS = 6;
+const TOTP_PERIOD_SECONDS = 30;
+const TOTP_SKEW_STEPS = 1;
+
+function base32Decode(input) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = String(input || '').toUpperCase().replace(/=+$/, '').replace(/\s+/g, '');
+  let bits = 0;
+  let value = 0;
+  const out = [];
+  for (const ch of clean) {
+    const idx = alphabet.indexOf(ch);
+    if (idx === -1) continue; // ignore stray separators (spaces, dashes)
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((value >>> bits) & 0xff);
+    }
+  }
+  return new Uint8Array(out);
+}
+
+async function totpCodeForStep(secretBytes, step) {
+  const counter = new ArrayBuffer(8);
+  const view = new DataView(counter);
+  // 64-bit big-endian counter (high word first).
+  view.setUint32(0, Math.floor(step / 0x1_0000_0000));
+  view.setUint32(4, step >>> 0);
+  const key = await crypto.subtle.importKey('raw', secretBytes, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, counter));
+  const offset = sig[sig.length - 1] & 0x0f;
+  const binary = ((sig[offset] & 0x7f) << 24)
+    | ((sig[offset + 1] & 0xff) << 16)
+    | ((sig[offset + 2] & 0xff) << 8)
+    | (sig[offset + 3] & 0xff);
+  return String(binary % (10 ** TOTP_DIGITS)).padStart(TOTP_DIGITS, '0');
+}
+
+async function verifyTotp(secret, code, now = Date.now()) {
+  const cleanCode = String(code || '').replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(cleanCode)) return false;
+  const secretBytes = base32Decode(secret);
+  if (secretBytes.length === 0) return false;
+  const currentStep = Math.floor(now / 1000 / TOTP_PERIOD_SECONDS);
+  let match = false;
+  // Check every window (no early return) so the work is constant regardless of
+  // which step matches.
+  for (let offset = -TOTP_SKEW_STEPS; offset <= TOTP_SKEW_STEPS; offset++) {
+    const expected = await totpCodeForStep(secretBytes, currentStep + offset);
+    if (timingSafeEqualStrings(expected, cleanCode)) match = true;
+  }
+  return match;
 }
 
 async function isPropertySold(env, property) {

@@ -2215,12 +2215,13 @@ async function callApi(body) {
   const res = await fetch(`${API}/api/data`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: sessionAuthHeaders(),
     body: JSON.stringify(body)
   });
   if (res.status === 401) {
     // Session expired or wrong password — kick back to gate
     sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_TOKEN_KEY);
     clearSensitiveRuntimeState();
     showPasswordGate();
     throw new Error('Unauthorized');
@@ -15718,13 +15719,25 @@ function escAttr(str) {
 // ── Password Gate ─────────────────────────────────────────────────────────────
 
 const SESSION_KEY = 'rentals_auth';
+const SESSION_TOKEN_KEY = 'rentals_session_token';
+
+// Cross-site cookies (github.io → workers.dev, SameSite=None) are dropped by
+// browsers that block third-party cookies and by private/incognito windows.
+// The worker also accepts the session as an X-Session header, so we persist the
+// token returned at login and send it as a fallback whenever it's present.
+function sessionAuthHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = sessionStorage.getItem(SESSION_TOKEN_KEY);
+  if (token) headers['X-Session'] = token;
+  return headers;
+}
 
 async function verifySession() {
   try {
     const res = await fetch(`${API}/api/data`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: sessionAuthHeaders(),
       body: JSON.stringify({ action: 'verify_session' })
     });
     if (!res.ok) throw new Error('Session invalid');
@@ -15787,6 +15800,7 @@ async function submitPassword() {
     const data = await res.json();
     if (data.ok) {
       sessionStorage.setItem(SESSION_KEY, '1');
+      if (data.sessionToken) sessionStorage.setItem(SESSION_TOKEN_KEY, data.sessionToken);
       state.password = '';
       document.querySelector('.app-header').style.display = '';
       updateViewTabAvailability(state.currentProperty);
@@ -15836,11 +15850,12 @@ async function signOut() {
     await fetch(`${API}/api/data`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: sessionAuthHeaders(),
       body: JSON.stringify({ action: 'logout' })
     });
   } catch { /* ignore logout network errors */ }
   sessionStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(SESSION_TOKEN_KEY);
   clearSensitiveRuntimeState();
   state.password = '';
   showPasswordGate();

@@ -9129,6 +9129,7 @@ async function renderTaxPlanning() {
       <div style="font-size:1.2rem;font-weight:700">${CURRENT_YEAR} Federal Tax Planning</div>
       <div class="tp-note">Uses IRS ${CURRENT_YEAR} MFJ brackets, standard deduction, capital-gains thresholds, and Social Security wage base.</div>
     </div>
+    <button class="btn btn-primary btn-sm" style="flex-shrink:0;margin-left:auto" onclick="switchView('efile-helper')" title="Step-by-step walkthrough to file this return free via IRS Free File Fillable Forms">📄 E-File Helper →</button>
   </div>
   <div class="tp-layout">
 
@@ -10280,6 +10281,7 @@ function efRenderCurrent() {
   <div style="max-width:760px;margin:0 auto">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:.75rem;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
+        <button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.72rem;margin-bottom:.25rem" onclick="switchView('tax-planning')">← Tax Planning</button>
         <div style="font-size:1.15rem;font-weight:700">📄 E-File Helper — Free File Fillable Forms</div>
         <div style="font-size:.78rem;color:var(--text-muted)">${CURRENT_YEAR} federal return · type each value into FFFF</div>
       </div>

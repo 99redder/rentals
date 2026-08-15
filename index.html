@@ -10126,9 +10126,43 @@ const EF_HELP = {
     'If you owe a balance, pay it at <strong>irs.gov/payments</strong> (Direct Pay) — even with e-file you pay separately. If you owe nothing, skip it.',
     'Sign by entering <strong>last year\'s AGI</strong>, then submit to <strong>e-file the federal return</strong>. Save the acceptance confirmation.',
   ],
-  'md': [
-    'FFFF does <strong>NOT</strong> do Maryland. Go to <strong>marylandtaxes.gov → iFile</strong> (free).',
-    'Most of <strong>MD Form 502</strong> flows from your federal AGI. The app\'s Tax Planning tab has your Maryland figures.',
+  'md-start': [
+    'FFFF does <strong>NOT</strong> do Maryland — this phase files it separately and free.',
+    'Go to <strong>marylandtaxes.gov → iFile</strong> and start a <strong>Form 502</strong> (resident return). iFile is a question-by-question interview, not fillable forms.',
+    'Finish and e-file your <strong>federal</strong> return first — Maryland starts from your federal numbers.',
+  ],
+  'md-income': [
+    'iFile will pull your <strong>federal AGI</strong> onto Form 502 line 1 — confirm it matches the amount shown.',
+    'Enter the <strong>military retirement subtraction</strong> (Form 502SU, code <strong>u</strong>) — this is the part of your Navy pension Maryland doesn\'t tax (capped at $12,500).',
+    'Enter your <strong>Maryland 529</strong> (College Investment Plan) contribution subtraction if you have one.',
+    'iFile then computes <strong>Maryland AGI</strong> (line 16) — confirm it matches.',
+  ],
+  'md-deductions': [
+    'Choose the <strong>Maryland standard deduction</strong> (it differs from the federal one).',
+    'Enter your <strong>exemptions</strong> — Maryland phases the per-exemption amount down as income rises, so use the amount shown.',
+    'iFile computes your <strong>Maryland taxable net income</strong> (line 20) — confirm it matches.',
+  ],
+  'md-tax': [
+    'iFile computes <strong>state tax</strong> (line 22) and your <strong>local/county tax</strong> from your county rate — confirm both.',
+    'If your federal AGI is over $350k, Maryland adds a <strong>2% capital-gains surcharge</strong> (Form 502CG).',
+    'Confirm the <strong>total Maryland tax</strong> matches.',
+  ],
+  'md-payments': [
+    'Enter <strong>Maryland tax withheld</strong> — W-2 <strong>Box 17</strong> (state income tax) plus any state withholding on your 1099-R.',
+    'Enter any <strong>Maryland estimated payments</strong> you made during the year.',
+    'iFile shows your <strong>balance due or refund</strong> — confirm it matches.',
+  ],
+  'md-review': [
+    '<strong>Do NOT submit MD yet.</strong> Cross-check it the same way you did the federal return.',
+    '<strong>1.</strong> In iFile, use <strong>review / print</strong> to save your Form 502 as a PDF before submitting.',
+    '<strong>2.</strong> Tap <strong>“Export validation data”</strong> above (the .json already includes your Maryland lines).',
+    '<strong>3.</strong> Put both files in one folder, open <strong>Claude Code</strong> there, and paste: <em>“Compare the Maryland lines in efile-validation-' + CURRENT_YEAR + '.json against my Maryland Form 502 PDF &lt;filename&gt;.pdf. Flag every line where the PDF differs from expected (form, line, expected, actual).”</em>',
+    '<strong>4.</strong> Fix any mismatch in iFile (or in the Tax Planning tab if the app was wrong, then re-export) before submitting.',
+  ],
+  'md-submit': [
+    'Only submit after the Claude Code review shows Maryland matches.',
+    'If you owe Maryland, pay at <strong>marylandtaxes.gov → BillPay</strong>. If you owe nothing, skip it.',
+    'Submit / e-file the Maryland return on iFile and <strong>save the confirmation</strong>.',
   ],
 };
 const _efHelpExpanded = new Set();
@@ -10155,7 +10189,7 @@ function efExportValidation() {
     generated: new Date().toISOString(),
     taxYear: CURRENT_YEAR,
     source: "Red's STUFF — Tax Planning app (expected federal return values)",
-    instructions: 'Compare each `expected` value below against the same line on the saved Free File Fillable Forms return PDF. Report any line where the PDF differs from expected, listing form, line, expected, and actual.',
+    instructions: 'Compare each `expected` value below against the same line on the saved return PDF — federal Free File Fillable Forms (Form 1040 & schedules) and/or Maryland Form 502. Report any line where the PDF differs from expected, listing form, line, expected, and actual.',
     summary: _efModel.r,
     lines,
   };
@@ -10250,6 +10284,7 @@ function efBuildSteps(tp, r, rentalRows) {
   const hasCapGains = (r.stGains || 0) !== 0 || (r.ltGains || 0) !== 0;
   const addlIncome = r.businessInc + r.rentalTaxInc + (r.cryptoInc || 0);
   const otherTaxes = r.seTax + r.addlMedicare + r.niit;
+  const md = r.md || {};
 
   // ═══ PHASE 1: YEAR-END VALIDATION ═══════════════════════════════════════════
   // Reconcile the app's numbers (estimates all year) against the real documents
@@ -10474,11 +10509,60 @@ function efBuildSteps(tp, r, rentalRows) {
       efR('f1040-sign', 'Form 1040', '', 'E-sign with last year\'s AGI, then click E-FILE', 'submit the federal return & save the confirmation', 'supply'),
     ]});
 
-  // 16. Maryland
-  steps.push({ key: 'md', title: 'Maryland — file separately (iFile)', subtitle: 'FFFF is federal only.',
-    intro: `Federal done? Now file <strong>MD Form 502</strong> free at the Comptroller\'s <em>iFile</em> site. Most of it flows from your federal AGI (<strong>${fmt(r.agi)}</strong>) — the Tax Planning tab has your MD figures.`,
+  // ═══ PHASE 3: MARYLAND — Form 502 on iFile (free, federal is done) ═══════════
+  const exportButtonHtml = `<div style="padding:.8rem 1rem;background:var(--surface2,var(--bg));border-bottom:1px solid var(--border)"><button class="btn btn-primary" style="font-size:1rem;padding:.6rem 1rem" onclick="efExportValidation()">⬇ Export validation data (.json)</button><div style="font-size:.82rem;color:var(--text-muted);margin-top:.4rem">Includes your Maryland lines too — for Claude Code to compare against your MD Form 502.</div></div>`;
+
+  steps.push({ key: 'md-start', title: 'Maryland — start on iFile', subtitle: 'Phase 3 of 3 · FFFF is federal only.',
     rows: [
-      efR('md-file', 'MD Form 502', '', 'File Maryland return on iFile', 'marylandtaxes.gov → iFile', 'supply'),
+      efR('md-open', 'Maryland iFile', '', 'Go to marylandtaxes.gov → iFile and start a Form 502', 'iFile is a free interview — not fillable forms', 'supply'),
+      efR('md-fed-done', 'Federal return', '', 'Confirm your federal return is filed/accepted first', 'Maryland builds on your federal numbers', 'supply'),
+    ]});
+
+  const mdIncomeRows = [
+    efV('md-fed-agi', 'MD Form 502', '1', 'Federal adjusted gross income', r.agi, 'iFile carries this from your federal return — confirm it matches'),
+  ];
+  if (md.navyExempt) mdIncomeRows.push(efR('md-mil-sub', 'MD Form 502SU (code u)', '', 'Military retirement subtraction', md.navyExempt, 'estimate', 'Enter as a subtraction — capped at $12,500'));
+  if (md.md529) mdIncomeRows.push(efR('md-529-sub', 'MD Form 502SU', '', '529 (MD College Investment Plan) subtraction', md.md529, 'estimate', 'Your MD 529 contributions'));
+  mdIncomeRows.push(efV('md-agi', 'MD Form 502', '16', 'Maryland adjusted gross income', md.mdAgi, 'Federal AGI minus the subtractions above'));
+  steps.push({ key: 'md-income', title: 'Maryland — Income & Subtractions', subtitle: 'The MD-specific subtractions.', rows: mdIncomeRows });
+
+  const mdExemptCount = md.mdPerExemption ? Math.round((md.mdExemptAmt || 0) / md.mdPerExemption) : 0;
+  const mdExemptNote = (md.mdExemptAmt || 0) > 0
+    ? `${mdExemptCount} exemptions × ${fmt(md.mdPerExemption)} each`
+    : 'Exemptions phase out above $200k federal AGI';
+  steps.push({ key: 'md-deductions', title: 'Maryland — Deductions & Exemptions', subtitle: 'MD uses its own amounts.',
+    rows: [
+      efR('md-std', 'MD Form 502', '17', 'Maryland standard deduction (MFJ)', md.mdStdDed, 'estimate'),
+      efR('md-exempt', 'MD Form 502', '19', 'Exemption amount', md.mdExemptAmt, 'estimate', mdExemptNote),
+      efV('md-taxinc', 'MD Form 502', '20', 'Maryland taxable net income', md.mdTaxInc, 'MD AGI minus the deduction & exemptions'),
+    ]});
+
+  const mdTaxRows = [
+    efV('md-state-tax', 'MD Form 502', '22', 'Maryland state income tax', md.stateTax),
+    efV('md-local-tax', 'MD Form 502', '28', `Local (county) tax — ${md.county || 'county'} @ ${((md.countyRate || 0) * 100).toFixed(2)}%`, md.countyTax),
+  ];
+  if (md.cgSurcharge) mdTaxRows.push(efR('md-cg', 'MD Form 502CG', '', '2% capital-gains surcharge', md.cgSurcharge, 'estimate', 'Applies when federal AGI is over $350k'));
+  mdTaxRows.push(efV('md-total-tax', 'MD Form 502', '', 'Total Maryland tax', md.totalTax, 'State + local' + (md.cgSurcharge ? ' + surcharge' : '')));
+  steps.push({ key: 'md-tax', title: 'Maryland — Tax', subtitle: 'State plus local (county).', rows: mdTaxRows });
+
+  steps.push({ key: 'md-payments', title: 'Maryland — Payments', subtitle: 'What you already paid Maryland.',
+    rows: [
+      efR('md-wh', 'W-2 box 17 / 1099-R', '', 'Maryland tax withheld', md.withheld, 'supply', 'W-2 Box 17 (state) + 1099-R state withholding'),
+      efR('md-est', 'MD estimated payments', '', 'Maryland estimated tax payments', md.estState, 'estimate', 'Your MD quarterly payments, if any'),
+      efV('md-owed', 'MD Form 502', '', (md.owed || 0) >= 0 ? 'Maryland balance due' : 'Maryland refund', Math.abs(md.owed || 0), (md.owed || 0) >= 0 ? 'Pay via iFile / BillPay' : 'Refund'),
+    ]});
+
+  steps.push({ key: 'md-review', title: 'Maryland — cross-check with Claude Code', subtitle: 'Do this BEFORE submitting MD.',
+    actionHtml: exportButtonHtml,
+    rows: [
+      efR('md-review-pdf', 'MD return', '', 'In iFile, review / print your Form 502 to a PDF', 'before you submit', 'supply'),
+      efR('md-review-run', 'Claude Code', '', 'Have Claude Code compare it to the exported .json (MD lines)', 'see the instructions for the exact prompt', 'supply'),
+    ]});
+
+  steps.push({ key: 'md-submit', title: 'Submit the Maryland return', subtitle: 'Last step — after the review passes.',
+    rows: [
+      efR('md-pay', 'MD BillPay', '', (md.owed || 0) > 0 ? `Pay the ${fmt(Math.abs(md.owed))} Maryland balance` : 'No Maryland balance due', (md.owed || 0) > 0 ? 'marylandtaxes.gov → BillPay' : 'skip', 'supply'),
+      efR('md-file', 'MD Form 502', '', 'Submit / e-file your Maryland return on iFile', 'save the confirmation', 'supply'),
     ]});
 
   return steps;
@@ -10598,7 +10682,7 @@ function efRenderCurrent() {
     ${_efStep === 0 ? `
     <div class="card" style="border-left:4px solid #b45309">
       <div style="padding:.9rem 1.1rem;font-size:.92rem;line-height:1.6">
-        <strong>How this works.</strong> Two phases: <strong>Phase 1</strong> validates the app's numbers against your real documents; <strong>Phase 2</strong> walks you through typing them into FFFF, a few lines at a time. Tags: 🧾 <strong>reconcile</strong> — match the app value to your 1099/W-2 · 🟢 from your records · 🟡 planner <em>estimate</em> · 🔵 you type from a W-2/1099 · 🔍 <strong>verify checkpoint</strong>.
+        <strong>How this works.</strong> Three phases: <strong>Phase 1</strong> validates the app's numbers against your real documents; <strong>Phase 2</strong> walks you through typing the federal return into FFFF; <strong>Phase 3</strong> does your Maryland return on iFile. A few lines at a time. Tags: 🧾 <strong>reconcile</strong> — match the app value to your 1099/W-2 · 🟢 from your records · 🟡 planner <em>estimate</em> · 🔵 you type from a W-2/1099 · 🔍 <strong>verify checkpoint</strong>.
         <br><br><strong>This is a draft aid, not tax advice.</strong> You are responsible for the filed return; get a sale year or anything uncertain reviewed by a CPA.
       </div>
     </div>` : ''}

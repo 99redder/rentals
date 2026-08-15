@@ -9466,9 +9466,26 @@ function _taxUpdateShow(data) {
       <div style="font-size:.78rem;color:var(--text-muted);margin-top:.15rem">${badge}${lm}</div>
     </div>`;
   }).join('');
-  const banner = data.hasChanges
-    ? `<div style="background:var(--warning-light);border:1px solid var(--warning);border-radius:var(--radius);padding:.6rem .8rem;margin-bottom:.8rem;font-size:.85rem;font-weight:600;color:var(--warning)">⚠️ One or more official pages changed since the last check. Review the changed sources, then update the app's assumptions (or ask Claude Code) if a number changed.</div>`
-    : '';
+  // Always lead with a clear result header: changed / no changes / first check.
+  const firstRun = !data.previousCheckedAt;
+  let banner;
+  if (data.hasChanges) {
+    const n = sources.filter(s => s.changed).length;
+    banner = `<div style="background:var(--warning-light);border:1px solid var(--warning);border-radius:var(--radius);padding:.7rem .9rem;margin-bottom:.85rem;color:var(--warning)">
+      <div style="font-size:1.05rem;font-weight:800">⚠️ Changes detected</div>
+      <div style="font-size:.85rem;font-weight:600;margin-top:.15rem">${n} source${n === 1 ? '' : 's'} changed since the last check — review the flagged one${n === 1 ? '' : 's'} below, then update the app's numbers (or run the pre-flight audit) if a figure changed.</div>
+    </div>`;
+  } else if (firstRun) {
+    banner = `<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:var(--radius);padding:.7rem .9rem;margin-bottom:.85rem;color:var(--primary)">
+      <div style="font-size:1.05rem;font-weight:800">ℹ️ Baseline saved</div>
+      <div style="font-size:.85rem;font-weight:600;margin-top:.15rem">This is the first check, so there's nothing to compare against yet. Future checks will flag anything that changes.</div>
+    </div>`;
+  } else {
+    banner = `<div style="background:var(--success-light);border:1px solid var(--success);border-radius:var(--radius);padding:.7rem .9rem;margin-bottom:.85rem;color:var(--success)">
+      <div style="font-size:1.05rem;font-weight:800">✓ No changes detected</div>
+      <div style="font-size:.85rem;font-weight:600;margin-top:.15rem">Nothing on the official IRS or Maryland pages changed since the last check.</div>
+    </div>`;
+  }
   const overlay = document.createElement('div');
   overlay.id = 'tax-update-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:1rem';

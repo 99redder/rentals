@@ -284,6 +284,10 @@ async function handleDataApi(request, env) {
   if (action === 'get_deductions')  return handleGetDeductions(env);
   if (action === 'save_deductions') return handleSaveDeductions(env, body.data);
 
+  // Mom Moving Checklist — global
+  if (action === 'get_mom_checklist')  return handleGetMomChecklist(env);
+  if (action === 'save_mom_checklist') return handleSaveMomChecklist(env, body.data);
+
   // Savings — global
   if (action === 'get_savings')  return handleGetSavings(env);
   if (action === 'save_savings') return handleSaveSavings(env, body.data);
@@ -2210,6 +2214,28 @@ async function handleSaveDeductions(env, data) {
   }));
   await env.RENTALS.put('deductions', JSON.stringify(sanitized));
   return jsonResponse({ success: true });
+}
+
+// ── Mom Moving Checklist ──────────────────────────────────────────────────────
+// Single global KV record `mom_checklist` — an array of
+// { id, text, note, done }. Full-overwrite save, mirroring deductions.
+async function handleGetMomChecklist(env) {
+  const items = await env.RENTALS.get('mom_checklist', 'json') || [];
+  return jsonResponse({ items });
+}
+
+async function handleSaveMomChecklist(env, data) {
+  if (!data || !Array.isArray(data)) {
+    return jsonResponse({ error: 'data must be an array' }, 400);
+  }
+  const sanitized = data.map(i => ({
+    id: i.id || crypto.randomUUID(),
+    text: String(i.text || '').trim().slice(0, 500),
+    note: String(i.note || '').trim().slice(0, 1000),
+    done: !!i.done
+  })).filter(i => i.text);
+  await env.RENTALS.put('mom_checklist', JSON.stringify(sanitized));
+  return jsonResponse({ success: true, items: sanitized });
 }
 
 // ── Savings ───────────────────────────────────────────────────────────────────

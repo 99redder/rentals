@@ -1462,6 +1462,7 @@
           <button class="tp-header-btn" id="solar-btn" onclick="switchView('solar')">☀️ Solar</button>
           <button class="tp-header-btn" id="deductions-btn" onclick="switchView('deductions')">Deductions Tracker</button>
           <button class="tp-header-btn" id="mom-budget-btn" onclick="switchView('mom-budget')">Mom Budget</button>
+          <button class="tp-header-btn" id="mom-checklist-btn" onclick="switchView('mom-checklist')">📦 Mom Moving Checklist</button>
         </div>
       </details>
       <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">🌙</button>
@@ -1878,7 +1879,7 @@ function laterListCategoryIcon(name) {
 // Offers — offer-comparison dashboard, 6AL only (home sale).
 const OFFERS_PROPERTY = '6AL';
 const PRIMARY_VIEWS = new Set(['investment-return', 'maintenance']);
-const GLOBAL_HEADER_VIEWS = new Set(['tax-planning', 'net-worth', 'budget', 'cash-flow', 'mom-budget', 'solar', 'deductions', 'savings', 'health']);
+const GLOBAL_HEADER_VIEWS = new Set(['tax-planning', 'net-worth', 'budget', 'cash-flow', 'mom-budget', 'solar', 'deductions', 'savings', 'health', 'mom-checklist']);
 const CASH_FLOW_YEAR = 2026;
 const CASH_FLOW_AUTO_PROCEEDS_PROPS = ['6AL', '95EB', '731WO'];
 // Sale-tax reserves for these properties are rolled into a single combined
@@ -2566,6 +2567,7 @@ function switchView(view) {
   const isDeductions = view === 'deductions';
   const isSavings = view === 'savings';
   const isHealth = view === 'health';
+  const isMomChecklist = view === 'mom-checklist';
   const isFullscreen = GLOBAL_HEADER_VIEWS.has(view);
   const propMode = isPropertyMode(view);
   if (propMode && view !== 'add-entry') _lastPropertyView = view;
@@ -2593,10 +2595,12 @@ function switchView(view) {
   if (savingsBtn) savingsBtn.classList.toggle('active', isSavings);
   const healthBtn = document.getElementById('health-btn');
   if (healthBtn) healthBtn.classList.toggle('active', isHealth);
+  const momChecklistBtn = document.getElementById('mom-checklist-btn');
+  if (momChecklistBtn) momChecklistBtn.classList.toggle('active', isMomChecklist);
   const propsBtn = document.getElementById('properties-btn');
   if (propsBtn) propsBtn.classList.toggle('active', propMode);
   const toolsSummary = document.getElementById('header-tools-summary');
-  if (toolsSummary) toolsSummary.classList.toggle('active', isNetWorth || isSavings || isSolar || isDeductions || isMomBudget);
+  if (toolsSummary) toolsSummary.classList.toggle('active', isNetWorth || isSavings || isSolar || isDeductions || isMomBudget || isMomChecklist);
   renderView();
 }
 
@@ -2625,6 +2629,7 @@ async function renderView() {
       case 'deductions':    await renderDeductions();    break;
       case 'savings':       await renderSavings();       break;
       case 'health':        await renderHealth();        break;
+      case 'mom-checklist': await renderMomChecklist();  break;
     }
   } catch (e) {
     app.innerHTML = `<div class="error-msg">Failed to load: ${escHtml(e.message)}</div>`;
@@ -9736,6 +9741,212 @@ async function envRENTALS_get() {
 
 async function envRENTALS_put(data) {
   await callApi({ action: 'save_deductions', data });
+}
+
+// ── View: Mom Moving Checklist ────────────────────────────────────────────────
+// Global checklist for Red's mother's move. One KV record `mom_checklist` — an
+// array of { id, text, note, done } via get_mom_checklist / save_mom_checklist.
+// Full-overwrite saves, mirroring the Deductions tracker pattern.
+let _mcEdit = null;      // id currently being edited ('new' for the add row), or null
+let _mcBusy = false;
+let _mcHideDone = false;
+
+async function mcGet() {
+  const result = await callApi({ action: 'get_mom_checklist' });
+  return Array.isArray(result.items) ? result.items : [];
+}
+
+async function mcPut(items) {
+  const result = await callApi({ action: 'save_mom_checklist', data: items });
+  return Array.isArray(result.items) ? result.items : items;
+}
+
+async function renderMomChecklist(savedData = null) {
+  const raw = Array.isArray(savedData) ? savedData : await mcGet();
+  const all = Array.isArray(raw) ? raw : [];
+  const total = all.length;
+  const doneCount = all.filter(i => i.done).length;
+  const pct = total ? Math.round((doneCount / total) * 100) : 0;
+  const visible = _mcHideDone ? all.filter(i => !i.done) : all;
+
+  const itemRows = visible.length === 0
+    ? `<div style="text-align:center;padding:2.5rem 1rem;color:var(--text-muted)">${
+        total === 0
+          ? 'No items yet. Add the first thing to do for the move above.'
+          : 'All items are complete. 🎉'
+      }</div>`
+    : visible.map(mcItemHtml).join('');
+
+  document.getElementById('app').innerHTML = `
+  <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:1.25rem;font-weight:700">📦 Mom Moving Checklist</div>
+      <div style="font-size:.8rem;color:var(--text-muted)">Everything to get done for Mom's move</div>
+    </div>
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-size:1.3rem;font-weight:700">${doneCount} / ${total}</div>
+      <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">Complete</div>
+    </div>
+  </div>
+
+  <div style="height:8px;background:var(--surface2,var(--border));border-radius:999px;overflow:hidden;margin-bottom:1.25rem">
+    <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#22c55e,#16a34a);transition:width .3s"></div>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem;padding:.85rem 1rem">
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:1;min-width:220px">
+        <label style="display:block;font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:.2rem">New item</label>
+        <input type="text" id="mc-new-text" placeholder="e.g. Book movers" onkeydown="mcNewKey(event)"
+          style="width:100%;padding:.45rem .55rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text);font-size:.9rem">
+      </div>
+      <div style="flex:1;min-width:220px">
+        <label style="display:block;font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:.2rem">Note (optional)</label>
+        <input type="text" id="mc-new-note" placeholder="Details…" onkeydown="mcNewKey(event)"
+          style="width:100%;padding:.45rem .55rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text);font-size:.9rem">
+      </div>
+      <button class="btn btn-primary" data-mc-mutation style="padding:.5rem 1rem;flex-shrink:0" onclick="mcAddItem()">+ Add</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header" style="padding:.55rem 1rem;display:flex;justify-content:space-between;align-items:center">
+      <div class="card-title">Items</div>
+      ${total > 0 ? `<button class="btn btn-ghost btn-sm" style="padding:.2rem .5rem;font-size:.75rem" onclick="mcToggleHideDone()">${_mcHideDone ? 'Show completed' : 'Hide completed'}</button>` : ''}
+    </div>
+    <div style="padding:.35rem .5rem">${itemRows}</div>
+  </div>`;
+
+  if (_mcEdit) setTimeout(() => document.getElementById('mc-edit-text')?.focus(), 40);
+  else setTimeout(() => document.getElementById('mc-new-text')?.focus(), 40);
+}
+
+function mcItemHtml(i) {
+  if (_mcEdit === i.id) {
+    return `<div style="padding:.5rem .5rem;border-bottom:1px solid var(--border)">
+      <input type="text" id="mc-edit-text" value="${escAttr(i.text)}" onkeydown="mcEditKey(event,'${i.id}')"
+        style="width:100%;padding:.4rem .5rem;margin-bottom:.35rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text);font-size:.9rem">
+      <input type="text" id="mc-edit-note" value="${escAttr(i.note || '')}" placeholder="Note (optional)" onkeydown="mcEditKey(event,'${i.id}')"
+        style="width:100%;padding:.4rem .5rem;margin-bottom:.4rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text);font-size:.85rem">
+      <div style="text-align:right;white-space:nowrap">
+        <button class="btn btn-primary btn-sm" data-mc-mutation style="padding:.3rem .6rem" onclick="mcSaveEdit('${i.id}')">Save</button>
+        <button class="btn btn-ghost btn-sm" style="padding:.3rem .5rem" onclick="mcCancelEdit()">✕</button>
+      </div>
+    </div>`;
+  }
+  return `<div style="display:flex;align-items:flex-start;gap:.6rem;padding:.55rem .5rem;border-bottom:1px solid var(--border)">
+    <input type="checkbox" ${i.done ? 'checked' : ''} data-mc-mutation onchange="mcToggleDone('${i.id}')"
+      aria-label="Mark ${escAttr(i.text)} complete"
+      style="margin-top:.15rem;width:18px;height:18px;flex-shrink:0;cursor:pointer;accent-color:#16a34a">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:.92rem;font-weight:500;${i.done ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(i.text)}</div>
+      ${i.note ? `<div style="font-size:.78rem;color:var(--text-muted);margin-top:.1rem;${i.done ? 'text-decoration:line-through' : ''}">${escHtml(i.note)}</div>` : ''}
+    </div>
+    <div style="flex-shrink:0;white-space:nowrap">
+      <button class="btn btn-ghost btn-sm" data-mc-mutation style="padding:.15rem .4rem;font-size:.78rem" onclick="mcEditItem('${i.id}')">Edit</button>
+      <button class="btn btn-ghost btn-sm" data-mc-mutation style="padding:.15rem .4rem;font-size:.78rem;color:var(--danger)" onclick="mcDeleteItem('${i.id}')" aria-label="Delete ${escAttr(i.text)}">×</button>
+    </div>
+  </div>`;
+}
+
+function mcSetBusy(busy) {
+  _mcBusy = busy;
+  document.querySelectorAll('[data-mc-mutation]').forEach(el => { el.disabled = busy; });
+}
+
+async function mcMutate(mutator) {
+  if (_mcBusy) return;
+  mcSetBusy(true);
+  let saved = null;
+  try {
+    const raw = await mcGet();
+    const all = Array.isArray(raw) ? raw : [];
+    const next = mutator(all.map(i => ({ ...i })));
+    saved = await mcPut(next);
+  } catch (error) {
+    showBrandedNotice({
+      title: 'Checklist not saved',
+      message: error?.message || 'The change could not be saved. Please try again.',
+      confirmLabel: 'OK'
+    });
+  } finally {
+    try {
+      await renderMomChecklist(saved);
+    } finally {
+      mcSetBusy(false);
+    }
+  }
+}
+
+function mcAddItem() {
+  const textEl = document.getElementById('mc-new-text');
+  const noteEl = document.getElementById('mc-new-note');
+  const text = (textEl?.value || '').trim();
+  const note = (noteEl?.value || '').trim();
+  if (!text) { textEl?.focus(); return; }
+  mcMutate(items => {
+    items.push({ id: crypto.randomUUID(), text, note, done: false });
+    return items;
+  });
+}
+
+function mcNewKey(e) {
+  if (e.key === 'Enter') { e.preventDefault(); mcAddItem(); }
+}
+
+function mcToggleDone(id) {
+  mcMutate(items => {
+    const it = items.find(i => i.id === id);
+    if (it) it.done = !it.done;
+    return items;
+  });
+}
+
+function mcEditItem(id) {
+  _mcEdit = id;
+  renderMomChecklist();
+}
+
+function mcCancelEdit() {
+  _mcEdit = null;
+  renderMomChecklist();
+}
+
+function mcEditKey(e, id) {
+  if (e.key === 'Enter') { e.preventDefault(); mcSaveEdit(id); }
+  else if (e.key === 'Escape') { e.preventDefault(); mcCancelEdit(); }
+}
+
+function mcSaveEdit(id) {
+  const text = (document.getElementById('mc-edit-text')?.value || '').trim();
+  const note = (document.getElementById('mc-edit-note')?.value || '').trim();
+  if (!text) { document.getElementById('mc-edit-text')?.focus(); return; }
+  _mcEdit = null;
+  mcMutate(items => {
+    const it = items.find(i => i.id === id);
+    if (it) { it.text = text; it.note = note; }
+    return items;
+  });
+}
+
+function mcDeleteItem(id) {
+  mcGet().then(raw => {
+    const all = Array.isArray(raw) ? raw : [];
+    const it = all.find(x => x.id === id);
+    if (!it) return;
+    showBrandedNotice({
+      type: 'danger',
+      title: 'Delete item',
+      message: `Delete "${it.text}" from the checklist?`,
+      confirmLabel: 'Yes, Delete',
+      onConfirm: () => mcMutate(items => items.filter(i => i.id !== id))
+    });
+  });
+}
+
+function mcToggleHideDone() {
+  _mcHideDone = !_mcHideDone;
+  renderMomChecklist();
 }
 
 // ── View: 2026 Cash Flow ─────────────────────────────────────────────────────

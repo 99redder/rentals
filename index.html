@@ -10111,8 +10111,20 @@ const EF_HELP = {
   ],
   'f1040-final': [
     '<strong>Line 24</strong> = total tax. <strong>Line 25</strong> = total withholding. <strong>Line 26</strong> = estimated payments.',
-    '<strong>Line 37</strong> is what you owe (or <strong>Line 34</strong> your refund). Pay any balance at <strong>irs.gov/payments</strong> (Direct Pay) — even with e-file you pay separately.',
-    'Sign by entering <strong>last year\'s AGI</strong>, then submit to <strong>e-file the federal return</strong>. Save the confirmation.',
+    '<strong>Line 37</strong> is what you owe (or <strong>Line 34</strong> your refund). Confirm these match, then continue to the final review.',
+  ],
+  'claude-review': [
+    '<strong>Do NOT e-file yet.</strong> FFFF checks nothing, so do one independent cross-check first.',
+    '<strong>1. Save your FFFF return as a PDF.</strong> In Free File Fillable Forms use <strong>“Print Return”</strong>, or your browser\'s <strong>Print → Save as PDF</strong>. Save the whole return.',
+    '<strong>2. Tap “Export validation data”</strong> at the top of this step to download <strong>efile-validation-' + CURRENT_YEAR + '.json</strong> (every number this app expects on your return).',
+    '<strong>3. Put both files in one folder</strong> (the PDF and the .json), open <strong>Claude Code</strong> in that folder, and paste this prompt:',
+    '<em>“Compare efile-validation-' + CURRENT_YEAR + '.json (my Tax Planning app\'s expected values) line-by-line against my Free File Fillable Forms return PDF &lt;filename&gt;.pdf. For every line, tell me whether the PDF matches the expected value, and flag each mismatch with the form, line, expected amount, and the amount actually on the PDF.”</em>',
+    '<strong>4. Fix any mismatch</strong> — in FFFF if you mistyped, or in the Tax Planning tab if the app\'s number was wrong (then re-export). Only continue when everything matches.',
+  ],
+  'efile-submit': [
+    'Only do this after the Claude Code review above shows everything matches.',
+    'If you owe a balance, pay it at <strong>irs.gov/payments</strong> (Direct Pay) — even with e-file you pay separately. If you owe nothing, skip it.',
+    'Sign by entering <strong>last year\'s AGI</strong>, then submit to <strong>e-file the federal return</strong>. Save the acceptance confirmation.',
   ],
   'md': [
     'FFFF does <strong>NOT</strong> do Maryland. Go to <strong>marylandtaxes.gov → iFile</strong> (free).',
@@ -10128,6 +10140,34 @@ function efHelpFor(key) {
 function efToggleHelp(key) {
   if (_efHelpExpanded.has(key)) _efHelpExpanded.delete(key); else _efHelpExpanded.add(key);
   efRenderCurrent();
+}
+// Download every expected return value as JSON so Claude Code (run locally) can
+// cross-check it against the saved FFFF return PDF before the user e-files.
+function efExportValidation() {
+  if (!_efModel) return;
+  const lines = [];
+  _efModel.steps.forEach(st => st.rows.forEach(row => {
+    if (typeof row.value === 'number') {
+      lines.push({ step: st.title, form: row.form, line: row.line || '', label: row.label, expected: Math.round(row.value * 100) / 100 });
+    }
+  }));
+  const payload = {
+    generated: new Date().toISOString(),
+    taxYear: CURRENT_YEAR,
+    source: "Red's STUFF — Tax Planning app (expected federal return values)",
+    instructions: 'Compare each `expected` value below against the same line on the saved Free File Fillable Forms return PDF. Report any line where the PDF differs from expected, listing form, line, expected, and actual.',
+    summary: _efModel.r,
+    lines,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `efile-validation-${CURRENT_YEAR}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function efInstructionsHtml(step) {
   const help = efHelpFor(step.key);
@@ -10409,17 +10449,32 @@ function efBuildSteps(tp, r, rentalRows) {
       efR('f1040-23', 'Form 1040', '23', 'Other taxes (Schedule 2)', otherTaxes, 'estimate'),
     ]});
 
-  // 13. Form 1040 — totals, payments, sign
-  steps.push({ key: 'f1040-final', title: 'Form 1040 — Total Tax, Payments & Sign', subtitle: 'The finish line.',
+  // 13. Form 1040 — totals & payments
+  steps.push({ key: 'f1040-final', title: 'Form 1040 — Total Tax & Payments', subtitle: 'The bottom line.',
     rows: [
       efV('f1040-24', 'Form 1040', '24', 'Total tax', r.netFedTax),
       efR('f1040-25', 'Form 1040', '25', 'Federal tax withheld (W-2 + 1099)', r.fedWithheld, 'supply', 'Type exact withholding from your forms'),
       efR('f1040-26', 'Form 1040', '26', 'Estimated tax payments', r.estPmts, 'estimate'),
       efV('f1040-owe', 'Form 1040', r.fedOwed >= 0 ? '37' : '34', r.fedOwed >= 0 ? 'Amount you owe' : 'Overpayment / refund', Math.abs(r.fedOwed), r.fedOwed >= 0 ? 'Pay via IRS Direct Pay' : 'Refund'),
-      efR('f1040-sign', 'Form 1040', '', 'E-sign with prior-year AGI, then E-FILE', 'submit the federal return', 'supply'),
     ]});
 
-  // 14. Maryland
+  // 14. Final independent review with Claude Code (BEFORE e-filing)
+  steps.push({ key: 'claude-review', title: 'Final Review — cross-check with Claude Code', subtitle: 'Do this BEFORE you e-file. FFFF does no validation.',
+    actionHtml: `<div style="padding:.8rem 1rem;background:var(--surface2,var(--bg));border-bottom:1px solid var(--border)"><button class="btn btn-primary" style="font-size:1rem;padding:.6rem 1rem" onclick="efExportValidation()">⬇ Export validation data (.json)</button><div style="font-size:.82rem;color:var(--text-muted);margin-top:.4rem">Downloads <strong>efile-validation-${CURRENT_YEAR}.json</strong> — every expected number, for Claude Code to compare against your saved FFFF return.</div></div>`,
+    rows: [
+      efR('review-pdf', 'FFFF return', '', 'Save your finished FFFF return as a PDF', 'In FFFF: "Print Return", or browser Print → Save as PDF', 'supply'),
+      efR('review-export', 'This app', '', 'Tap "Export validation data" above to download the .json', 'the app\'s expected numbers', 'supply'),
+      efR('review-run', 'Claude Code', '', 'Have Claude Code compare the two and fix any mismatch', 'see the instructions for the exact prompt', 'supply'),
+    ]});
+
+  // 15. Sign & e-file (only after the review passes)
+  steps.push({ key: 'efile-submit', title: 'Sign & E-File the federal return', subtitle: 'Last step — only after the review above passes.',
+    rows: [
+      efR('f1040-pay', 'IRS Direct Pay', '', r.fedOwed > 0 ? `Pay the ${fmt(Math.abs(r.fedOwed))} balance` : 'No balance due — nothing to pay', r.fedOwed > 0 ? 'irs.gov/payments' : 'skip', 'supply'),
+      efR('f1040-sign', 'Form 1040', '', 'E-sign with last year\'s AGI, then click E-FILE', 'submit the federal return & save the confirmation', 'supply'),
+    ]});
+
+  // 16. Maryland
   steps.push({ key: 'md', title: 'Maryland — file separately (iFile)', subtitle: 'FFFF is federal only.',
     intro: `Federal done? Now file <strong>MD Form 502</strong> free at the Comptroller\'s <em>iFile</em> site. Most of it flows from your federal AGI (<strong>${fmt(r.agi)}</strong>) — the Tax Planning tab has your MD figures.`,
     rows: [
@@ -10527,6 +10582,7 @@ function efRenderCurrent() {
         </div>
       </div>
       ${page.first ? efInstructionsHtml(page) : ''}
+      ${page.first && page.actionHtml ? page.actionHtml : ''}
       <div>${rowsHtml}</div>
     </div>
 
@@ -10579,7 +10635,7 @@ async function renderEfileHelper() {
     const parts = Math.max(1, Math.ceil(st.rows.length / EF_ROWS_PER_PAGE));
     for (let p = 0; p < parts; p++) {
       pages.push({
-        key: st.key, stepIndex, title: st.title, subtitle: st.subtitle, danger: st.danger,
+        key: st.key, stepIndex, title: st.title, subtitle: st.subtitle, danger: st.danger, actionHtml: st.actionHtml,
         rows: st.rows.slice(p * EF_ROWS_PER_PAGE, (p + 1) * EF_ROWS_PER_PAGE),
         part: p, parts, first: p === 0,
       });

@@ -13214,15 +13214,21 @@ function healthNormFood(f) {
 function healthFactorMealSeed() {
   const F = (name, calories, protein, carbs, fat, est) =>
     ({ id: hid(), name, calories, protein, carbs, fat, uses: 0, tag: 'Factor 75', ...(est ? { est: true } : {}) });
+  // kcal/protein/carbs from Factor's published cards; fat is exact where the
+  // full panel was available, else derived by Atwater (kcal−4P−4C)/9.
   return [
     F('Homestyle Turkey & Gravy', 440, 28, 36, 21),
     F('Tex-Mex Burger Bowl', 580, 35, 17, 43),
     F('Cavatappi & Meatballs', 490, 28, 37, 27),
-    F('Currywurst Meatballs & Swiss Fondue Potatoes', 600, 30, 38, 36, true),
-    F('Ginger Teriyaki Burger', 500, 34, 34, 24, true),
-    F('Mexican-Style Green Chile Rice Bowl', 520, 34, 45, 22, true),
-    F('Cheddar & Poblano Shredded Beef Bowl', 490, 30, 40, 23),
-    F('Smoky Spanish-Style Meatballs & Piperade', 520, 30, 22, 34, true),
+    F('Currywurst Meatballs & Swiss Fondue Potatoes', 510, 29, 35, 27),
+    F('Ginger Teriyaki Burger', 550, 33, 34, 31),
+    F('Mexican-Style Green Chile Rice Bowl', 470, 14, 63, 18),
+    F('Cheddar & Poblano Shredded Beef Bowl', 540, 37, 39, 26),
+    F('Smoky Spanish-Style Meatballs & Piperade', 550, 28, 48, 27),
+    F('Creamy Pesto Tortellini', 350, 11, 39, 17),
+    F('Indian-Style Chicken Curry', 500, 29, 46, 22),
+    F('Garlic-Parmesan Cream Shredded Beef', 490, 31, 33, 26),
+    F('Mexican-Style Meatball Rice Bowl', 500, 27, 39, 26),
   ];
 }
 
@@ -13335,6 +13341,20 @@ function healthNormalize(raw) {
     }
     profile.factorMealsV1 = true;
   }
+  // One-time: correct Factor macros from the published cards (the first seed had
+  // estimates for several) AND add any newly-introduced Factor meals. Overwrites
+  // macros only on existing Factor-tagged foods matched by name; adds missing
+  // seed meals; never touches non-Factor foods.
+  if (!profile.factorMealsV2) {
+    const byName = {};
+    for (const f of foods) byName[f.name.toLowerCase()] = f;
+    for (const meal of healthFactorMealSeed()) {
+      const f = byName[meal.name.toLowerCase()];
+      if (f && f.tag === 'Factor 75') { f.calories = meal.calories; f.protein = meal.protein; f.carbs = meal.carbs; f.fat = meal.fat; if (meal.est) f.est = true; else delete f.est; }
+      else if (!f) foods.push(healthNormFood(meal));
+    }
+    profile.factorMealsV2 = true;
+  }
   return {
     profile,
     foods,
@@ -13354,7 +13374,7 @@ async function loadHealth() {
   const seeded = !raw || Object.keys(raw).length === 0;
   // Persist one-time migrations (e.g. Monday front-load) the first time we see a
   // record that predates them, so they don't re-run every load.
-  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1);
+  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1 && raw.profile.factorMealsV2);
   state.health = healthNormalize(raw);
   if (seeded || needsMigrationSave) await saveHealth();
 }

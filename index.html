@@ -13075,6 +13075,7 @@ let _healthView = localStorage.getItem('rentals_health_view') || 'daily';
 let _healthDate = null;      // selected calendar day (Daily view)
 let _healthWeekMon = null;   // Monday of the week shown in Weekly view
 let _healthLibType = localStorage.getItem('rentals_health_lib_type') || 'all';   // Meal Library filter
+let _healthLibOpen = new Set();   // expanded source groups in the Meal Library (UI-only; start all collapsed)
 let _healthEditFoodId = null;
 let _healthEditDbId = null;
 let _healthDemoOpen = new Set();   // exercise ids whose demo panel is expanded (UI-only)
@@ -14210,10 +14211,14 @@ function healthWeeklyHtml() {
   for (const f of shownFoods) (groups[srcOf(f)] = groups[srcOf(f)] || []).push(f);
   const srcRank = k => k === 'Factor 75' ? 0 : (k === 'Homemade' ? 2 : 1);
   const groupKeys = Object.keys(groups).sort((a, b) => srcRank(a) - srcRank(b) || a.localeCompare(b));
-  const libInner = groupKeys.map(k => `<div style="margin-bottom:.5rem">
-      <div style="font-size:.63rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);margin:.1rem 0 .35rem">${escHtml(k)} <span style="opacity:.55">${groups[k].length}</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:.4rem">${groups[k].map(chip).join('')}</div>
-    </div>`).join('');
+  // Collapsible source groups, collapsed by default. Open state is tracked in
+  // _healthLibOpen (via <details> ontoggle) so a drop's re-render keeps them open.
+  const libInner = groupKeys.map(k => `<details ${_healthLibOpen.has(k) ? 'open' : ''} data-libgroup="${escAttr(k)}" ontoggle="healthLibGroupToggled(this)" class="h-lib-group" style="margin-bottom:.15rem">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:.4rem;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);padding:.3rem .1rem;user-select:none">
+        <span class="h-lib-caret">▸</span>${escHtml(k)} <span style="opacity:.55">${groups[k].length}</span>
+      </summary>
+      <div style="display:flex;flex-wrap:wrap;gap:.4rem;padding:.15rem 0 .5rem">${groups[k].map(chip).join('')}</div>
+    </details>`).join('');
   const emptyMsg = libFoods.length
     ? `<span style="color:var(--text-muted);font-size:.82rem">No ${HEALTH_MEAL_TYPE_LABELS[_healthLibType] || ''} foods yet — set a food's type in Setup → Food Database.</span>`
     : '<span style="color:var(--text-muted);font-size:.82rem">No foods yet — add some under Setup → Food Database.</span>';
@@ -14275,6 +14280,10 @@ function healthWeeklyHtml() {
       .h-plan-lib{position:sticky;top:4.5rem}
       .h-plan-lib > .card{margin-bottom:0}
       .h-plan-lib-scroll{max-height:calc(100vh - 15rem)}
+      .h-lib-group summary{list-style:none}
+      .h-lib-group summary::-webkit-details-marker{display:none}
+      .h-lib-caret{display:inline-block;transition:transform .12s;font-size:.7em}
+      .h-lib-group[open] > summary .h-lib-caret{transform:rotate(90deg)}
       @media(max-width:820px){
         .h-plan-wrap{flex-direction:column}
         .h-plan-lib{position:static;flex:1 1 auto;width:100%}
@@ -14290,6 +14299,13 @@ function healthSetLibType(t) {
   _healthLibType = HEALTH_MEAL_TYPES.includes(t) ? t : 'all';
   try { localStorage.setItem('rentals_health_lib_type', _healthLibType); } catch (e) {}
   _renderHealthHtml();
+}
+// Track which Meal Library source groups are expanded (native <details> handles
+// the show/hide; we just remember it so a re-render doesn't collapse them).
+function healthLibGroupToggled(el) {
+  const k = el && el.dataset ? el.dataset.libgroup : '';
+  if (!k) return;
+  if (el.open) _healthLibOpen.add(k); else _healthLibOpen.delete(k);
 }
 function healthDragStart(ev, foodId) {
   try { ev.dataTransfer.setData('text/plain', foodId); ev.dataTransfer.effectAllowed = 'copy'; } catch (e) {}

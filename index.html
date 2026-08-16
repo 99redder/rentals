@@ -14213,9 +14213,20 @@ function healthWeeklyHtml() {
       ${HEALTH_MEAL_TYPES.map(tp => filterBtn(tp, HEALTH_MEAL_TYPE_LABELS[tp], typeCount(tp))).join('')}
     </div>`;
   const shownFoods = _healthLibType === 'all' ? libFoods : libFoods.filter(f => f.mealType === _healthLibType);
-  const libChips = shownFoods.map(f => `<div draggable="true" ondragstart="healthDragStart(event,'${f.id}')" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F — drag onto a day')}"
+  const chip = f => `<div draggable="true" ondragstart="healthDragStart(event,'${f.id}')" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F — drag onto a day')}"
       style="cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:.35rem;background:var(--card-bg);border:1px solid var(--border);border-radius:999px;padding:.28rem .6rem;font-size:.78rem">
       <span style="opacity:.5">⠿</span><span style="font-weight:600">${escHtml(f.name)}</span>${healthFoodTag(f)}<span style="color:var(--text-muted);font-size:.7rem">${Math.round(f.calories)}</span>
+    </div>`;
+  // Secondary grouping by source/brand: Factor 75 first, restaurants next,
+  // homemade/untagged last — so e.g. Lunch splits into Factor 75, Taco Bell, …
+  const srcOf = f => f.tag || 'Homemade';
+  const groups = {};
+  for (const f of shownFoods) (groups[srcOf(f)] = groups[srcOf(f)] || []).push(f);
+  const srcRank = k => k === 'Factor 75' ? 0 : (k === 'Homemade' ? 2 : 1);
+  const groupKeys = Object.keys(groups).sort((a, b) => srcRank(a) - srcRank(b) || a.localeCompare(b));
+  const libInner = groupKeys.map(k => `<div style="margin-bottom:.5rem">
+      <div style="font-size:.63rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);margin:.1rem 0 .35rem">${escHtml(k)} <span style="opacity:.55">${groups[k].length}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:.4rem">${groups[k].map(chip).join('')}</div>
     </div>`).join('');
   const emptyMsg = libFoods.length
     ? `<span style="color:var(--text-muted);font-size:.82rem">No ${HEALTH_MEAL_TYPE_LABELS[_healthLibType] || ''} foods yet — set a food's type in Setup → Food Database.</span>`
@@ -14226,7 +14237,7 @@ function healthWeeklyHtml() {
         <span style="font-size:.74rem;color:var(--text-muted)">Drag a meal onto a day →</span>
       </div>
       <div style="padding:.5rem 1rem 0">${filters}</div>
-      <div style="padding:.7rem 1rem;display:flex;flex-wrap:wrap;gap:.4rem;max-height:172px;overflow:auto">${libChips || emptyMsg}</div>
+      <div style="padding:.7rem 1rem;max-height:240px;overflow:auto">${libInner || emptyMsg}</div>
     </div>`;
 
   // Day cards — big drop targets that build each date's plan.

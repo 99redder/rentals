@@ -13484,14 +13484,12 @@ function healthDayTotals(day) {
     t.calories += +f.calories || 0; t.protein += +f.protein || 0; t.carbs += +f.carbs || 0; t.fat += +f.fat || 0; return t;
   }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
-// The meal plan for a specific date: an explicit per-date plan (built by the
-// Weekly drag-and-drop planner, stored in day.meals) if present, otherwise the
-// weekday template as a sensible default so untouched days aren't empty.
+// The meal plan for a specific date — the meals dragged onto it in the Weekly
+// planner (stored in day.meals). Days start blank: you build each one by
+// dragging meals in, so there are never placeholder meals to delete.
 function healthMealsForDate(iso) {
   const day = state.health.days[iso];
-  if (day && Array.isArray(day.meals)) return day.meals;
-  const wd = healthWeekday(iso);
-  return state.health.mealPlan[String(wd)] || [];
+  return (day && Array.isArray(day.meals)) ? day.meals : [];
 }
 function healthWeighInFor(mondayIso) {
   return (state.health.weighIns || []).find(w => w.date === mondayIso) || null;
@@ -13874,7 +13872,7 @@ function healthDailyHtml() {
           ${macroLine}
         </span>
       </label>`;
-  }).join('') : '<div style="color:var(--text-muted);font-size:.85rem">No meal plan for this day. Edit it under Setup.</div>');
+  }).join('') : '<div style="color:var(--text-muted);font-size:.85rem">No meals planned for this day. Plan it in the <strong>Weekly</strong> tab by dragging meals onto it.</div>');
   const mealCard = healthCard('🍽️ Meal Plan', mealInner, `<span style="font-size:.8rem;color:var(--text-muted)">${mealsDone}/${meals.length} done</span>`);
 
   // Food log card
@@ -14238,7 +14236,6 @@ function healthWeeklyHtml() {
     const fasting = state.health.profile.fasting;
     const isFasting = fasting && fasting.weekday === wd;
     const day = state.health.days[iso];
-    const explicit = !!(day && Array.isArray(day.meals));
     const meals = healthMealsForDate(iso);
     const dayCal = meals.reduce((s, m) => s + (+m.calories || 0), 0);
     const dayP = meals.reduce((s, m) => s + (+m.protein || 0), 0);
@@ -14260,21 +14257,17 @@ function healthWeeklyHtml() {
           ${isRest ? '<span style="color:var(--text-muted)">😌 Rest</span>' : ''}
           ${isFasting ? '<span style="color:var(--primary);font-weight:700">⏳ Fasting</span>' : ''}
           ${day && day.closed ? '<span style="color:var(--success);font-weight:700">✓ closed</span>' : ''}
-          ${!explicit ? '<span style="color:var(--text-muted)" title="Using your default weekday plan until you edit it">default</span>' : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:.35rem;flex:1">${mealRows}</div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:.4rem;border-top:1px solid var(--border);padding-top:.4rem">
           <span style="font-size:.64rem;color:var(--text-muted)">${dayP ? Math.round(dayP) + 'g protein' : '&nbsp;'}</span>
-          <span style="display:flex;gap:.25rem">
-            ${explicit ? `<button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.66rem" onclick="healthPlanResetDay('${iso}')" title="Revert to your default weekday plan">↺ Default</button>` : ''}
-            ${meals.length ? `<button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.66rem" onclick="healthPlanClearDay('${iso}')" title="Remove all meals from this day">Clear</button>` : ''}
-          </span>
+          ${meals.length ? `<button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.66rem" onclick="healthPlanClearDay('${iso}')" title="Remove all meals from this day">Clear</button>` : ''}
         </div>
       </div>`;
   }).join('');
 
   return `${nav}
-    <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:.8rem">Plan the week by dragging meals from the library onto each day. Planned meals appear on the <strong>Daily</strong> tab, where checking one logs its calories. Untouched days use your default weekday plan.</div>
+    <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:.8rem">Each day starts empty — drag meals from the library onto it to plan it. Planned meals appear on the <strong>Daily</strong> tab, where checking one logs its calories.</div>
     ${library}
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.7rem" class="h-week-plan">${dayCards}</div>
     ${weighCard}
@@ -14299,14 +14292,10 @@ function healthDrop(ev, iso) {
   let foodId = ''; try { foodId = ev.dataTransfer.getData('text/plain'); } catch (e) {}
   if (foodId) healthPlanAddMeal(iso, foodId);
 }
-// Turn a date's plan explicit (materialize the weekday template, keeping meal ids
-// so any existing check-offs stay valid) so it can be edited independently.
+// Ensure a date has an explicit (initially empty) meal list to edit.
 function healthPlanEnsureExplicit(iso) {
   const d = healthEnsureDay(iso);
-  if (!Array.isArray(d.meals)) {
-    const wd = healthWeekday(iso);
-    d.meals = (state.health.mealPlan[String(wd)] || []).map(m => ({ ...m }));
-  }
+  if (!Array.isArray(d.meals)) d.meals = [];
   return d;
 }
 async function healthPlanAddMeal(iso, foodId) {
@@ -14326,11 +14315,6 @@ async function healthPlanRemoveMeal(iso, mealId) {
 async function healthPlanClearDay(iso) {
   const d = healthEnsureDay(iso);
   d.meals = [];
-  await saveHealth(); _renderHealthHtml();
-}
-async function healthPlanResetDay(iso) {
-  const d = state.health.days[iso];
-  if (d) delete d.meals;   // revert to the weekday template default
   await saveHealth(); _renderHealthHtml();
 }
 function healthShiftWeek(n) {

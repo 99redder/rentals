@@ -14237,7 +14237,7 @@ function healthWeeklyHtml() {
         <span style="font-size:.74rem;color:var(--text-muted)">Drag a meal onto a day →</span>
       </div>
       <div style="padding:.5rem 1rem 0">${filters}</div>
-      <div style="padding:.7rem 1rem;max-height:240px;overflow:auto">${libInner || emptyMsg}</div>
+      <div class="h-plan-lib-scroll" style="padding:.7rem 1rem;overflow:auto">${libInner || emptyMsg}</div>
     </div>`;
 
   // Day cards — big drop targets that build each date's plan.
@@ -14279,10 +14279,25 @@ function healthWeeklyHtml() {
 
   return `${nav}
     <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:.8rem">Each day starts empty — drag meals from the library onto it to plan it. Planned meals appear on the <strong>Daily</strong> tab, where checking one logs its calories.</div>
-    ${library}
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.7rem" class="h-week-plan">${dayCards}</div>
-    ${weighCard}
-    <style>@media(max-width:640px){.h-week-plan{grid-template-columns:1fr!important}}</style>`;
+    <div class="h-plan-wrap" style="display:flex;gap:1rem;align-items:flex-start">
+      <div class="h-plan-lib" style="flex:0 0 300px">${library}</div>
+      <div class="h-plan-main" style="flex:1;min-width:0">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.7rem" class="h-week-plan">${dayCards}</div>
+        ${weighCard}
+      </div>
+    </div>
+    <style>
+      .h-plan-lib{position:sticky;top:4.5rem}
+      .h-plan-lib > .card{margin-bottom:0}
+      .h-plan-lib-scroll{max-height:calc(100vh - 15rem)}
+      @media(max-width:820px){
+        .h-plan-wrap{flex-direction:column}
+        .h-plan-lib{position:static;flex:1 1 auto;width:100%}
+        .h-plan-lib-scroll{max-height:210px}
+        .h-week-plan{grid-template-columns:repeat(2,1fr)}
+      }
+      @media(max-width:520px){ .h-week-plan{grid-template-columns:1fr} }
+    </style>`;
 }
 
 // ── Weekly meal-plan drag & drop ─────────────────────────────────────────────

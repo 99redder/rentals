@@ -13436,6 +13436,15 @@ function healthDayTotals(day) {
     t.calories += +f.calories || 0; t.protein += +f.protein || 0; t.carbs += +f.carbs || 0; t.fat += +f.fat || 0; return t;
   }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
+// The meal plan for a specific date: an explicit per-date plan (built by the
+// Weekly drag-and-drop planner, stored in day.meals) if present, otherwise the
+// weekday template as a sensible default so untouched days aren't empty.
+function healthMealsForDate(iso) {
+  const day = state.health.days[iso];
+  if (day && Array.isArray(day.meals)) return day.meals;
+  const wd = healthWeekday(iso);
+  return state.health.mealPlan[String(wd)] || [];
+}
 function healthWeighInFor(mondayIso) {
   return (state.health.weighIns || []).find(w => w.date === mondayIso) || null;
 }
@@ -13796,7 +13805,7 @@ function healthDailyHtml() {
   const workoutCard = healthCard(`🏋️ Workout · ${HEALTH_WEEKDAYS[wd]}`, workoutInner, workoutHeader);
 
   // Meal plan card
-  const meals = state.health.mealPlan[String(wd)] || [];
+  const meals = healthMealsForDate(iso);
   const mealsDone = meals.filter(m => day.mealsDone[m.id]).length;
   const fasting = state.health.profile.fasting;
   const isFastingDay = fasting && fasting.weekday === wd;
@@ -13990,8 +13999,7 @@ async function healthToggleMeal(iso, mealId) {
   d.mealsDone[mealId] = now;
   // A planned meal carrying macros auto-logs to (and un-logs from) the food log
   // so the calorie ring reflects the plan without re-typing it.
-  const wd = healthWeekday(iso);
-  const meal = (state.health.mealPlan[String(wd)] || []).find(m => m.id === mealId);
+  const meal = healthMealsForDate(iso).find(m => m.id === mealId);
   d.foodLog = d.foodLog || [];
   if (now) {
     const hasMacros = meal && (meal.calories || meal.protein || meal.carbs || meal.fat);
@@ -14138,47 +14146,6 @@ function healthWeeklyHtml() {
       <button class="btn btn-primary btn-sm" onclick="healthSaveWeighIn('${mon}')">${weighIn ? 'Update' : 'Save'}</button>
     </div></div>`;
 
-  let sumCals = 0, calDays = 0, workoutsDone = 0, workoutsTotal = 0, rewardsEarned = 0, onPlanDays = 0, applicableDays = 0;
-  const cells = days.map(iso => {
-    const wd = healthWeekday(iso);
-    const isRest = HEALTH_REST_DAYS.has(wd);
-    const day = state.health.days[iso];
-    const totals = day ? healthDayTotals(day) : { calories: 0 };
-    const exs = isRest ? [] : (state.health.workoutPlan[String(wd)] || []);
-    const wDone = day ? exs.filter(e => day.workoutsDone[e.id]).length : 0;
-    if (!isRest) { workoutsTotal += exs.length; workoutsDone += wDone; }
-    if (day && totals.calories > 0) { sumCals += totals.calories; calDays++; }
-    if (day && HEALTH_REWARD_DAYS.has(wd)) { if (day.rewardAm) rewardsEarned++; if (day.rewardPm) rewardsEarned++; }
-    if (iso <= today) { applicableDays++; const ad = healthDayAdherence(iso); if (ad.workoutOk && ad.calOk) onPlanDays++; }
-    const overGoal = totals.calories > t.calories;
-    const calColor = totals.calories === 0 ? 'var(--text-muted)' : (overGoal ? 'var(--danger)' : 'var(--success)');
-    const isToday = iso === today;
-    const dh = day && day.habits ? day.habits : {};
-    const habitBits = (state.health.profile.habits || []).map(hb => {
-      const v = dh[hb.id] || 0;
-      if (hb.type === 'counter') return v ? hb.icon + v : '';
-      return v >= 1 ? hb.icon + '✓' : '';
-    }).filter(Boolean).join(' ');
-    const hasHabits = !!habitBits;
-    return `<button type="button" onclick="healthSetView('daily');healthSetDate('${iso}')" style="text-align:left;cursor:pointer;background:${isToday ? 'var(--primary-light)' : 'var(--surface)'};border:1px solid ${isToday ? 'var(--primary)' : 'var(--border)'};border-radius:var(--radius);padding:.6rem;display:flex;flex-direction:column;gap:.3rem;min-height:118px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-weight:700;font-size:.82rem">${HEALTH_WEEKDAYS[wd]}</span><span style="font-size:.68rem;color:var(--text-muted)">${iso.slice(5)}</span></div>
-      ${day && day.closed ? '<span style="font-size:.62rem;color:var(--success);font-weight:700">✓ closed</span>' : ''}
-      <div style="font-size:.72rem;color:var(--text-muted)">${isRest ? '😌 Rest' : `🏋️ ${wDone}/${exs.length}`}</div>
-      <div style="font-size:.9rem;font-weight:700;color:${calColor}">${totals.calories ? Math.round(totals.calories) + ' kcal' : '—'}</div>
-      ${hasHabits ? `<div style="font-size:.66rem;color:var(--text-muted)">${habitBits}</div>` : ''}
-      ${HEALTH_REWARD_DAYS.has(wd) ? `<div style="font-size:.72rem">🎁 <span title="AM">${day && day.rewardAm ? '☀️' : '·'}</span> <span title="PM">${day && day.rewardPm ? '🌙' : '·'}</span></div>` : ''}
-    </button>`;
-  }).join('');
-
-  const avgCals = calDays ? Math.round(sumCals / calDays) : 0;
-  const onPlanPct = applicableDays ? Math.round((onPlanDays / applicableDays) * 100) : 0;
-  const summary = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;margin-bottom:1rem">
-      <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">On-Plan Days</div><div style="font-size:1.3rem;font-weight:750;color:${onPlanPct >= 70 ? 'var(--success)' : (onPlanPct >= 40 ? 'var(--warning)' : 'var(--text)')}">${onPlanPct}%<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> · ${onPlanDays}/${applicableDays}</span></div></div>
-      <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Avg Calories</div><div style="font-size:1.3rem;font-weight:750">${avgCals || '—'}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / ${t.calories}</span></div></div>
-      <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Workout Sets Done</div><div style="font-size:1.3rem;font-weight:750">${workoutsDone}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / ${workoutsTotal}</span></div></div>
-      <div style="padding:.8rem 1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted)">Rewards Earned</div><div style="font-size:1.3rem;font-weight:750">${rewardsEarned}<span style="font-size:.75rem;font-weight:600;color:var(--text-muted)"> / 10</span></div></div>
-    </div>`;
-
   const startMon = healthMondayOf(state.health.profile.startDate || mon);
   const atStartWeek = mon <= startMon;
   const disW = 'disabled style="opacity:.4;cursor:not-allowed"';
@@ -14189,9 +14156,117 @@ function healthWeeklyHtml() {
       <button class="btn btn-ghost btn-sm" onclick="healthThisWeek()">This Week</button>
     </div></div>`;
 
-  return `${nav}${summary}${weighCard}
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:.5rem" class="health-week-grid">${cells}</div>
-    <style>@media(max-width:720px){.health-week-grid{grid-template-columns:repeat(2,1fr)!important}}</style>`;
+  // Meal library — every food in the database is a draggable object.
+  const libFoods = [...state.health.foods].sort((a, b) =>
+    (b.tag ? 1 : 0) - (a.tag ? 1 : 0) || (b.uses || 0) - (a.uses || 0) || a.name.localeCompare(b.name));
+  const libChips = libFoods.map(f => `<div draggable="true" ondragstart="healthDragStart(event,'${f.id}')" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F — drag onto a day')}"
+      style="cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:.35rem;background:var(--card-bg);border:1px solid var(--border);border-radius:999px;padding:.28rem .6rem;font-size:.78rem">
+      <span style="opacity:.5">⠿</span><span style="font-weight:600">${escHtml(f.name)}</span>${healthFoodTag(f)}<span style="color:var(--text-muted);font-size:.7rem">${Math.round(f.calories)}</span>
+    </div>`).join('');
+  const library = `<div class="card" style="margin-bottom:1rem">
+      <div class="card-header" style="padding:.6rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap">
+        <div class="card-title">🍱 Meal Library</div>
+        <span style="font-size:.74rem;color:var(--text-muted)">Drag a meal onto a day →</span>
+      </div>
+      <div style="padding:.7rem 1rem;display:flex;flex-wrap:wrap;gap:.4rem;max-height:172px;overflow:auto">${libChips || '<span style="color:var(--text-muted);font-size:.82rem">No foods yet — add some under Setup → Food Database.</span>'}</div>
+    </div>`;
+
+  // Day cards — big drop targets that build each date's plan.
+  const dayCards = days.map(iso => {
+    const wd = healthWeekday(iso);
+    const isRest = HEALTH_REST_DAYS.has(wd);
+    const fasting = state.health.profile.fasting;
+    const isFasting = fasting && fasting.weekday === wd;
+    const day = state.health.days[iso];
+    const explicit = !!(day && Array.isArray(day.meals));
+    const meals = healthMealsForDate(iso);
+    const dayCal = meals.reduce((s, m) => s + (+m.calories || 0), 0);
+    const dayP = meals.reduce((s, m) => s + (+m.protein || 0), 0);
+    const isToday = iso === today;
+    const overGoal = dayCal > t.calories;
+    const mealRows = meals.length ? meals.map(m => `<div style="display:flex;align-items:center;gap:.4rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.3rem .45rem">
+        <span style="flex:1;font-size:.8rem;font-weight:600;line-height:1.2">${escHtml(m.name)}${m.tag ? healthFoodTag(m) : ''}</span>
+        <span style="font-size:.64rem;color:var(--text-muted);white-space:nowrap">${Math.round(+m.calories || 0)}</span>
+        <button class="btn btn-ghost btn-sm" style="padding:0 .3rem;font-size:.8rem" onclick="healthPlanRemoveMeal('${iso}','${m.id}')" title="Remove from this day">✕</button>
+      </div>`).join('') : `<div style="color:var(--text-muted);font-size:.78rem;text-align:center;padding:1.3rem .5rem;border:2px dashed var(--border);border-radius:var(--radius)">Drop meals here</div>`;
+    return `<div class="h-day-drop" ondragover="healthDragOver(event)" ondragenter="healthDragEnter(event)" ondragleave="healthDragLeave(event)" ondrop="healthDrop(event,'${iso}')"
+        style="border:1px solid ${isToday ? 'var(--primary)' : 'var(--border)'};background:${isToday ? 'var(--primary-light)' : 'var(--surface)'};border-radius:var(--radius);padding:.7rem;display:flex;flex-direction:column;gap:.45rem;min-height:210px;transition:outline .1s">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.4rem">
+          <button type="button" onclick="healthSetView('daily');healthSetDate('${iso}')" title="Open this day" style="background:none;border:none;padding:0;cursor:pointer;color:var(--text);font-weight:800;font-size:.92rem;text-align:left">${HEALTH_WEEKDAYS_LONG[wd]} <span style="font-weight:500;color:var(--text-muted);font-size:.72rem">${iso.slice(5)}</span></button>
+          <span style="font-size:.72rem;font-weight:800;color:${dayCal === 0 ? 'var(--text-muted)' : (overGoal ? 'var(--danger)' : 'var(--success)')}">${dayCal ? Math.round(dayCal) + ' kcal' : ''}</span>
+        </div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;font-size:.64rem">
+          ${isToday ? '<span style="color:var(--primary);font-weight:700">● Today</span>' : ''}
+          ${isRest ? '<span style="color:var(--text-muted)">😌 Rest</span>' : ''}
+          ${isFasting ? '<span style="color:var(--primary);font-weight:700">⏳ Fasting</span>' : ''}
+          ${day && day.closed ? '<span style="color:var(--success);font-weight:700">✓ closed</span>' : ''}
+          ${!explicit ? '<span style="color:var(--text-muted)" title="Using your default weekday plan until you edit it">default</span>' : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:.35rem;flex:1">${mealRows}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:.4rem;border-top:1px solid var(--border);padding-top:.4rem">
+          <span style="font-size:.64rem;color:var(--text-muted)">${dayP ? Math.round(dayP) + 'g protein' : '&nbsp;'}</span>
+          <span style="display:flex;gap:.25rem">
+            ${explicit ? `<button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.66rem" onclick="healthPlanResetDay('${iso}')" title="Revert to your default weekday plan">↺ Default</button>` : ''}
+            ${meals.length ? `<button class="btn btn-ghost btn-sm" style="padding:.1rem .4rem;font-size:.66rem" onclick="healthPlanClearDay('${iso}')" title="Remove all meals from this day">Clear</button>` : ''}
+          </span>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `${nav}
+    <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:.8rem">Plan the week by dragging meals from the library onto each day. Planned meals appear on the <strong>Daily</strong> tab, where checking one logs its calories. Untouched days use your default weekday plan.</div>
+    ${library}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.7rem" class="h-week-plan">${dayCards}</div>
+    ${weighCard}
+    <style>@media(max-width:640px){.h-week-plan{grid-template-columns:1fr!important}}</style>`;
+}
+
+// ── Weekly meal-plan drag & drop ─────────────────────────────────────────────
+function healthDragStart(ev, foodId) {
+  try { ev.dataTransfer.setData('text/plain', foodId); ev.dataTransfer.effectAllowed = 'copy'; } catch (e) {}
+}
+function healthDragOver(ev) { ev.preventDefault(); try { ev.dataTransfer.dropEffect = 'copy'; } catch (e) {} }
+function healthDragEnter(ev) { const el = ev.currentTarget; if (el) el.style.outline = '2px dashed var(--primary)'; }
+function healthDragLeave(ev) { const el = ev.currentTarget; if (el && !el.contains(ev.relatedTarget)) el.style.outline = ''; }
+function healthDrop(ev, iso) {
+  ev.preventDefault();
+  const el = ev.currentTarget; if (el) el.style.outline = '';
+  let foodId = ''; try { foodId = ev.dataTransfer.getData('text/plain'); } catch (e) {}
+  if (foodId) healthPlanAddMeal(iso, foodId);
+}
+// Turn a date's plan explicit (materialize the weekday template, keeping meal ids
+// so any existing check-offs stay valid) so it can be edited independently.
+function healthPlanEnsureExplicit(iso) {
+  const d = healthEnsureDay(iso);
+  if (!Array.isArray(d.meals)) {
+    const wd = healthWeekday(iso);
+    d.meals = (state.health.mealPlan[String(wd)] || []).map(m => ({ ...m }));
+  }
+  return d;
+}
+async function healthPlanAddMeal(iso, foodId) {
+  const food = state.health.foods.find(f => f.id === foodId);
+  if (!food) return;
+  const d = healthPlanEnsureExplicit(iso);
+  d.meals.push({ id: hid(), name: food.name, calories: +food.calories || 0, protein: +food.protein || 0, carbs: +food.carbs || 0, fat: +food.fat || 0, note: '', foodId: food.id, ...(food.tag ? { tag: food.tag } : {}) });
+  await saveHealth(); _renderHealthHtml();
+}
+async function healthPlanRemoveMeal(iso, mealId) {
+  const d = healthPlanEnsureExplicit(iso);
+  d.meals = d.meals.filter(m => m.id !== mealId);
+  if (d.mealsDone) delete d.mealsDone[mealId];                       // drop any check-off
+  if (Array.isArray(d.foodLog)) d.foodLog = d.foodLog.filter(f => f.fromMeal !== mealId);   // and its auto-logged calories
+  await saveHealth(); _renderHealthHtml();
+}
+async function healthPlanClearDay(iso) {
+  const d = healthEnsureDay(iso);
+  d.meals = [];
+  await saveHealth(); _renderHealthHtml();
+}
+async function healthPlanResetDay(iso) {
+  const d = state.health.days[iso];
+  if (d) delete d.meals;   // revert to the weekday template default
+  await saveHealth(); _renderHealthHtml();
 }
 function healthShiftWeek(n) {
   const startMon = healthMondayOf(state.health.profile.startDate || _healthWeekMon);
@@ -14409,35 +14484,6 @@ function healthSetupHtml() {
   }).join('');
   const workoutEditor = healthCard('🏋️ Workout Plan', planCards);
 
-  const mealCards = order.map(wd => {
-    const meals = state.health.mealPlan[String(wd)] || [];
-    const macroInput = (m, field, ph, w) => `<input type="number" class="form-input" value="${m[field] || ''}" placeholder="${ph}" onchange="healthUpdateMeal(${wd},'${m.id}','${field}',this.value)" style="width:${w};font-size:.78rem;text-align:right" title="${ph}">`;
-    const rows = meals.map(m => `<div style="padding:.35rem 0;border-bottom:1px solid var(--border)">
-        <div style="display:flex;align-items:flex-start;gap:.5rem">
-          <span style="flex:1"><strong style="font-size:.84rem">${escHtml(m.name)}</strong>${m.note ? `<span style="display:block;font-size:.74rem;color:var(--text-muted)">${escHtml(m.note)}</span>` : ''}</span>
-          <button class="btn btn-ghost btn-sm" style="padding:.1rem .35rem" onclick="healthDeleteMeal(${wd},'${m.id}')">✕</button>
-        </div>
-        <div style="display:flex;gap:.35rem;align-items:center;margin-top:.3rem;flex-wrap:wrap">
-          <span style="font-size:.68rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">Logs:</span>
-          ${macroInput(m, 'calories', 'Cal', '64px')}
-          ${macroInput(m, 'protein', 'P', '46px')}
-          ${macroInput(m, 'carbs', 'C', '46px')}
-          ${macroInput(m, 'fat', 'F', '46px')}
-        </div>
-      </div>`).join('') || '<div style="font-size:.78rem;color:var(--text-muted);padding:.3rem 0">No meals.</div>';
-    return `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .8rem;margin-bottom:.6rem">
-      <div style="font-weight:700;margin-bottom:.3rem">${HEALTH_WEEKDAYS_LONG[wd]}</div>
-      ${rows}
-      <div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap">
-        <input type="text" id="hml-name-${wd}" class="form-input" placeholder="Meal" style="flex:1;min-width:120px;font-size:.82rem">
-        <input type="text" id="hml-note-${wd}" class="form-input" placeholder="Note (optional)" style="flex:1;min-width:120px;font-size:.82rem">
-        <input type="number" id="hml-cal-${wd}" class="form-input" placeholder="Cal" style="width:64px;font-size:.82rem;text-align:right">
-        <button class="btn btn-ghost btn-sm" onclick="healthAddMeal(${wd})">+ Add</button>
-      </div>
-    </div>`;
-  }).join('');
-  const mealEditor = healthCard('🍽️ Meal Plan', `<div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.5rem">Give a meal its calories/macros and checking it off on the Daily view auto-logs it to the food log. Leave Cal at 0 to just track the checkbox.</div>${mealCards}`);
-
   const rewardEditor = healthCard('🎁 Reward Schedule', `
     <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.5rem">Two rewards per weekday — an ☀️ AM and a 🌙 PM. Weekends have no rewards. Leave a slot blank for none.</div>
     ${[1, 2, 3, 4, 5].map(wd => {
@@ -14490,7 +14536,7 @@ function healthSetupHtml() {
   return `${goalsCard}${habitsEditor}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 1rem;align-items:start">
       <div>${workoutEditor}${rewardEditor}</div>
-      <div>${mealEditor}${foodDb}</div>
+      <div>${foodDb}</div>
     </div>`;
 }
 
@@ -14553,29 +14599,6 @@ async function healthAddExercise(wd) {
 async function healthDeleteExercise(wd, id) {
   const key = String(wd);
   state.health.workoutPlan[key] = (state.health.workoutPlan[key] || []).filter(e => e.id !== id);
-  await saveHealth(); _renderHealthHtml();
-}
-async function healthAddMeal(wd) {
-  const key = String(wd);
-  const name = (document.getElementById('hml-name-' + wd).value || '').trim();
-  if (!name) return;
-  const note = (document.getElementById('hml-note-' + wd).value || '').trim();
-  const cal = parseFloat((document.getElementById('hml-cal-' + wd) || {}).value) || 0;
-  if (!Array.isArray(state.health.mealPlan[key])) state.health.mealPlan[key] = [];
-  state.health.mealPlan[key].push({ id: hid(), name, note, calories: cal, protein: 0, carbs: 0, fat: 0 });
-  await saveHealth(); _renderHealthHtml();
-}
-async function healthUpdateMeal(wd, id, field, val) {
-  const meal = (state.health.mealPlan[String(wd)] || []).find(m => m.id === id);
-  if (!meal) return;
-  if (field === 'name') meal.name = String(val || '').slice(0, 120);
-  else if (field === 'note') meal.note = String(val || '').slice(0, 200);
-  else meal[field] = parseFloat(val) || 0;
-  await saveHealth();   // no re-render — preserve input focus while editing
-}
-async function healthDeleteMeal(wd, id) {
-  const key = String(wd);
-  state.health.mealPlan[key] = (state.health.mealPlan[key] || []).filter(m => m.id !== id);
   await saveHealth(); _renderHealthHtml();
 }
 async function healthSetRewardSched(wd, slot, val) {

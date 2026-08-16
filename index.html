@@ -13066,10 +13066,15 @@ const HEALTH_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const HEALTH_WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const HEALTH_REST_DAYS = new Set([0, 6]); // Sun + Sat
 const HEALTH_REWARD_DAYS = new Set([1, 2, 3, 4, 5]); // rewards only Mon–Fri (AM + PM)
+// Meal types — categorize foods so the Weekly planner's Meal Library can be
+// filtered (breakfast / lunch / dinner / snack) rather than showing everything.
+const HEALTH_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
+const HEALTH_MEAL_TYPE_LABELS = { breakfast: '🍳 Breakfast', lunch: '🥗 Lunch', dinner: '🍽️ Dinner', snack: '🍎 Snack' };
 
 let _healthView = localStorage.getItem('rentals_health_view') || 'daily';
 let _healthDate = null;      // selected calendar day (Daily view)
 let _healthWeekMon = null;   // Monday of the week shown in Weekly view
+let _healthLibType = localStorage.getItem('rentals_health_lib_type') || 'all';   // Meal Library filter
 let _healthEditFoodId = null;
 let _healthEditDbId = null;
 let _healthDemoOpen = new Set();   // exercise ids whose demo panel is expanded (UI-only)
@@ -13132,17 +13137,18 @@ function healthDefault() {
       rewardGated: false,   // when true, the daily reward unlocks only after hitting workout + calorie targets
     },
     foods: [
-      { id: 'f-shake-water', name: 'Protein Shake (whey + water)', calories: 130, protein: 25, carbs: 3, fat: 2, uses: 0 },
-      { id: 'f-shake-milk', name: 'Protein Shake (whey + milk)', calories: 250, protein: 32, carbs: 15, fat: 6, uses: 0 },
-      { id: 'f-factor', name: 'Factor 75 Meal (avg)', calories: 560, protein: 35, carbs: 28, fat: 32, uses: 0 },
-      { id: 'f-coffee', name: 'Black Coffee', calories: 5, protein: 0, carbs: 1, fat: 0, uses: 0 },
-      { id: 'f-redbull', name: 'Red Bull (sugar-free)', calories: 10, protein: 0, carbs: 2, fat: 0, uses: 0 },
-      { id: 'f-yogurt', name: 'Greek Yogurt (nonfat)', calories: 100, protein: 17, carbs: 6, fat: 0, uses: 0 },
-      { id: 'f-eggs2', name: 'Eggs (2 large)', calories: 140, protein: 12, carbs: 1, fat: 10, uses: 0 },
-      { id: 'f-banana', name: 'Banana', calories: 105, protein: 1, carbs: 27, fat: 0, uses: 0 },
-      { id: 'f-oatmeal', name: 'Oatmeal (1 cup cooked)', calories: 150, protein: 5, carbs: 27, fat: 3, uses: 0 },
-      { id: 'f-chicken', name: 'Grilled Chicken Breast (6 oz)', calories: 280, protein: 52, carbs: 0, fat: 6, uses: 0 },
+      { id: 'f-shake-water', name: 'Protein Shake (whey + water)', calories: 130, protein: 25, carbs: 3, fat: 2, uses: 0, mealType: 'snack' },
+      { id: 'f-shake-milk', name: 'Protein Shake (whey + milk)', calories: 250, protein: 32, carbs: 15, fat: 6, uses: 0, mealType: 'snack' },
+      { id: 'f-factor', name: 'Factor 75 Meal (avg)', calories: 560, protein: 35, carbs: 28, fat: 32, uses: 0, mealType: 'lunch' },
+      { id: 'f-coffee', name: 'Black Coffee', calories: 5, protein: 0, carbs: 1, fat: 0, uses: 0, mealType: 'breakfast' },
+      { id: 'f-redbull', name: 'Red Bull (sugar-free)', calories: 10, protein: 0, carbs: 2, fat: 0, uses: 0, mealType: 'snack' },
+      { id: 'f-yogurt', name: 'Greek Yogurt (nonfat)', calories: 100, protein: 17, carbs: 6, fat: 0, uses: 0, mealType: 'breakfast' },
+      { id: 'f-eggs2', name: 'Eggs (2 large)', calories: 140, protein: 12, carbs: 1, fat: 10, uses: 0, mealType: 'breakfast' },
+      { id: 'f-banana', name: 'Banana', calories: 105, protein: 1, carbs: 27, fat: 0, uses: 0, mealType: 'snack' },
+      { id: 'f-oatmeal', name: 'Oatmeal (1 cup cooked)', calories: 150, protein: 5, carbs: 27, fat: 3, uses: 0, mealType: 'breakfast' },
+      { id: 'f-chicken', name: 'Grilled Chicken Breast (6 oz)', calories: 280, protein: 52, carbs: 0, fat: 6, uses: 0, mealType: 'dinner' },
       ...healthFactorMealSeed(),
+      ...healthFastFoodSeed(),
     ],
     workoutPlan: {
       1: [ ex('mo-pu', 'Push-Ups', '5 sets × AMRAP — hardest work first while you’re fresh. Leave ~1 in reserve; add reps weekly'),
@@ -13203,6 +13209,7 @@ function healthNormFood(f) {
     calories: +f.calories || 0, protein: +f.protein || 0, carbs: +f.carbs || 0, fat: +f.fat || 0,
     uses: +f.uses || 0,
     tag: String(f.tag || '').slice(0, 24),   // e.g. "Factor 75" — shows a small brand pill
+    mealType: HEALTH_MEAL_TYPES.includes(f.mealType) ? f.mealType : '',   // '' = uncategorized
     ...(f.est ? { est: true } : {}),          // macros are an estimate (not Factor-published)
   };
 }
@@ -13213,7 +13220,7 @@ function healthNormFood(f) {
 // one-tap quick-adds; carry a "Factor 75" tag pill.
 function healthFactorMealSeed() {
   const F = (name, calories, protein, carbs, fat, est) =>
-    ({ id: hid(), name, calories, protein, carbs, fat, uses: 0, tag: 'Factor 75', ...(est ? { est: true } : {}) });
+    ({ id: hid(), name, calories, protein, carbs, fat, uses: 0, tag: 'Factor 75', mealType: 'lunch', ...(est ? { est: true } : {}) });
   // kcal/protein/carbs from Factor's published cards; fat is exact where the
   // full panel was available, else derived by Atwater (kcal−4P−4C)/9.
   return [
@@ -13229,6 +13236,25 @@ function healthFactorMealSeed() {
     F('Indian-Style Chicken Curry', 500, 29, 46, 22),
     F('Garlic-Parmesan Cream Shredded Beef', 490, 31, 33, 26),
     F('Mexican-Style Meatball Rice Bowl', 500, 27, 39, 26),
+  ];
+}
+
+// Common fast-food items (brand pill via `tag`), stats from each chain's
+// published nutrition. Seeded into the food DB as draggable/quick-add options.
+function healthFastFoodSeed() {
+  const M = (name, brand, mealType, calories, protein, carbs, fat) =>
+    ({ id: hid(), name, calories, protein, carbs, fat, uses: 0, tag: brand, mealType });
+  return [
+    M('Crunchwrap Supreme', 'Taco Bell', 'lunch', 530, 16, 71, 21),
+    M('Cheesy Gordita Crunch', 'Taco Bell', 'lunch', 500, 20, 41, 28),
+    M('Cheesy Bean & Rice Burrito', 'Taco Bell', 'lunch', 420, 9, 56, 17),
+    M('Bean Burrito', 'Taco Bell', 'lunch', 350, 14, 54, 9),
+    M('Whopper (no cheese)', 'Burger King', 'lunch', 670, 28, 51, 40),
+    M('Medium Fries (Burger King)', 'Burger King', 'snack', 380, 4, 53, 17),
+    M('Cheeseburger', "McDonald's", 'lunch', 300, 15, 32, 13),
+    M('Hamburger', "McDonald's", 'lunch', 250, 12, 31, 9),
+    M('Medium Fries (McDonald\'s)', "McDonald's", 'snack', 320, 4, 43, 15),
+    M('Chicken McNuggets (6 pc)', "McDonald's", 'snack', 250, 15, 16, 15),
   ];
 }
 
@@ -13355,6 +13381,28 @@ function healthNormalize(raw) {
     }
     profile.factorMealsV2 = true;
   }
+  // One-time: add the common fast-food items to the food database (by name).
+  if (!profile.fastFoodV1) {
+    const have = new Set(foods.map(f => f.name.toLowerCase()));
+    for (const item of healthFastFoodSeed()) {
+      if (!have.has(item.name.toLowerCase())) { foods.push(healthNormFood(item)); have.add(item.name.toLowerCase()); }
+    }
+    profile.fastFoodV1 = true;
+  }
+  // One-time: assign a meal type to existing foods so the Meal Library filter
+  // works. Factor meals → lunch; known defaults copy their seeded type; others
+  // stay uncategorized (shown only under "All").
+  if (!profile.mealTypeV1) {
+    const defById = {}, defByName = {};
+    for (const df of def.foods) { defById[df.id] = df.mealType; defByName[df.name.toLowerCase()] = df.mealType; }
+    for (const f of foods) {
+      if (f.mealType) continue;
+      if (f.tag === 'Factor 75') f.mealType = 'lunch';
+      else if (defById[f.id]) f.mealType = defById[f.id];
+      else if (defByName[f.name.toLowerCase()]) f.mealType = defByName[f.name.toLowerCase()];
+    }
+    profile.mealTypeV1 = true;
+  }
   return {
     profile,
     foods,
@@ -13374,7 +13422,7 @@ async function loadHealth() {
   const seeded = !raw || Object.keys(raw).length === 0;
   // Persist one-time migrations (e.g. Monday front-load) the first time we see a
   // record that predates them, so they don't re-run every load.
-  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1 && raw.profile.factorMealsV2);
+  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1 && raw.profile.factorMealsV2 && raw.profile.mealTypeV1 && raw.profile.fastFoodV1);
   state.health = healthNormalize(raw);
   if (seeded || needsMigrationSave) await saveHealth();
 }
@@ -14156,19 +14204,31 @@ function healthWeeklyHtml() {
       <button class="btn btn-ghost btn-sm" onclick="healthThisWeek()">This Week</button>
     </div></div>`;
 
-  // Meal library — every food in the database is a draggable object.
+  // Meal library — every food in the database is a draggable object, filterable
+  // by meal type so the list isn't overwhelming.
   const libFoods = [...state.health.foods].sort((a, b) =>
     (b.tag ? 1 : 0) - (a.tag ? 1 : 0) || (b.uses || 0) - (a.uses || 0) || a.name.localeCompare(b.name));
-  const libChips = libFoods.map(f => `<div draggable="true" ondragstart="healthDragStart(event,'${f.id}')" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F — drag onto a day')}"
+  const typeCount = tp => libFoods.filter(f => f.mealType === tp).length;
+  const filterBtn = (val, label, n) => `<button class="btn btn-sm ${_healthLibType === val ? 'btn-primary' : 'btn-ghost'}" onclick="healthSetLibType('${val}')" style="border-radius:999px;padding:.2rem .7rem;font-size:.75rem">${label}${n != null ? ` <span style="opacity:.6">${n}</span>` : ''}</button>`;
+  const filters = `<div style="display:flex;gap:.35rem;flex-wrap:wrap">
+      ${filterBtn('all', 'All', libFoods.length)}
+      ${HEALTH_MEAL_TYPES.map(tp => filterBtn(tp, HEALTH_MEAL_TYPE_LABELS[tp], typeCount(tp))).join('')}
+    </div>`;
+  const shownFoods = _healthLibType === 'all' ? libFoods : libFoods.filter(f => f.mealType === _healthLibType);
+  const libChips = shownFoods.map(f => `<div draggable="true" ondragstart="healthDragStart(event,'${f.id}')" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F — drag onto a day')}"
       style="cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:.35rem;background:var(--card-bg);border:1px solid var(--border);border-radius:999px;padding:.28rem .6rem;font-size:.78rem">
       <span style="opacity:.5">⠿</span><span style="font-weight:600">${escHtml(f.name)}</span>${healthFoodTag(f)}<span style="color:var(--text-muted);font-size:.7rem">${Math.round(f.calories)}</span>
     </div>`).join('');
+  const emptyMsg = libFoods.length
+    ? `<span style="color:var(--text-muted);font-size:.82rem">No ${HEALTH_MEAL_TYPE_LABELS[_healthLibType] || ''} foods yet — set a food's type in Setup → Food Database.</span>`
+    : '<span style="color:var(--text-muted);font-size:.82rem">No foods yet — add some under Setup → Food Database.</span>';
   const library = `<div class="card" style="margin-bottom:1rem">
       <div class="card-header" style="padding:.6rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap">
         <div class="card-title">🍱 Meal Library</div>
         <span style="font-size:.74rem;color:var(--text-muted)">Drag a meal onto a day →</span>
       </div>
-      <div style="padding:.7rem 1rem;display:flex;flex-wrap:wrap;gap:.4rem;max-height:172px;overflow:auto">${libChips || '<span style="color:var(--text-muted);font-size:.82rem">No foods yet — add some under Setup → Food Database.</span>'}</div>
+      <div style="padding:.5rem 1rem 0">${filters}</div>
+      <div style="padding:.7rem 1rem;display:flex;flex-wrap:wrap;gap:.4rem;max-height:172px;overflow:auto">${libChips || emptyMsg}</div>
     </div>`;
 
   // Day cards — big drop targets that build each date's plan.
@@ -14222,6 +14282,11 @@ function healthWeeklyHtml() {
 }
 
 // ── Weekly meal-plan drag & drop ─────────────────────────────────────────────
+function healthSetLibType(t) {
+  _healthLibType = HEALTH_MEAL_TYPES.includes(t) ? t : 'all';
+  try { localStorage.setItem('rentals_health_lib_type', _healthLibType); } catch (e) {}
+  _renderHealthHtml();
+}
 function healthDragStart(ev, foodId) {
   try { ev.dataTransfer.setData('text/plain', foodId); ev.dataTransfer.effectAllowed = 'copy'; } catch (e) {}
 }
@@ -14497,10 +14562,13 @@ function healthSetupHtml() {
 
   // Food database
   const foods = [...state.health.foods].sort((a, b) => a.name.localeCompare(b.name));
+  const typeOptions = (sel) => `<option value="">—</option>${HEALTH_MEAL_TYPES.map(tp => `<option value="${tp}" ${sel === tp ? 'selected' : ''}>${HEALTH_MEAL_TYPE_LABELS[tp]}</option>`).join('')}`;
+  const foodTypeSelect = (f) => `<select onchange="healthSetDbFoodType('${f.id}',this.value)" style="width:auto;font-size:.72rem;padding:.15rem .2rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text)">${typeOptions(f.mealType)}</select>`;
   const foodRows = foods.map(f => {
     if (_healthEditDbId === f.id) {
       return `<tr style="background:var(--bg)">
         <td style="padding:.3rem .5rem"><input type="text" id="hdb-name" class="form-input" value="${escAttr(f.name)}" style="width:100%;font-size:.82rem"></td>
+        <td style="padding:.3rem .3rem">${foodTypeSelect(f)}</td>
         <td style="padding:.3rem .3rem"><input type="number" id="hdb-cal" class="form-input" value="${f.calories}" style="width:64px;font-size:.82rem;text-align:right"></td>
         <td style="padding:.3rem .3rem"><input type="number" id="hdb-p" class="form-input" value="${f.protein}" style="width:48px;font-size:.82rem;text-align:right"></td>
         <td style="padding:.3rem .3rem"><input type="number" id="hdb-c" class="form-input" value="${f.carbs}" style="width:48px;font-size:.82rem;text-align:right"></td>
@@ -14510,6 +14578,7 @@ function healthSetupHtml() {
     }
     return `<tr>
       <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border)">${escHtml(f.name)}${healthFoodTag(f)}${f.uses ? ` <span style="font-size:.68rem;color:var(--text-muted)">·${f.uses}×</span>` : ''}</td>
+      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border)">${foodTypeSelect(f)}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right">${Math.round(f.calories)}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.protein)}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.carbs)}</td>
@@ -14520,12 +14589,13 @@ function healthSetupHtml() {
       </td>
     </tr>`;
   }).join('');
-  const foodDb = healthCard('🥗 Food Database', `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.85rem">
-      <thead><tr style="text-align:left;color:var(--text-muted);font-size:.72rem;text-transform:uppercase"><th style="padding:.3rem .5rem">Food</th><th style="padding:.3rem .3rem;text-align:right">Cal</th><th style="padding:.3rem .3rem;text-align:right">P</th><th style="padding:.3rem .3rem;text-align:right">C</th><th style="padding:.3rem .3rem;text-align:right">F</th><th></th></tr></thead>
+  const foodDb = healthCard('🥗 Food Database', `<div style="font-size:.72rem;color:var(--text-muted);margin-bottom:.5rem">A food's <strong>Type</strong> controls which filter it shows under in the Weekly planner's Meal Library.</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.85rem">
+      <thead><tr style="text-align:left;color:var(--text-muted);font-size:.72rem;text-transform:uppercase"><th style="padding:.3rem .5rem">Food</th><th style="padding:.3rem .3rem">Type</th><th style="padding:.3rem .3rem;text-align:right">Cal</th><th style="padding:.3rem .3rem;text-align:right">P</th><th style="padding:.3rem .3rem;text-align:right">C</th><th style="padding:.3rem .3rem;text-align:right">F</th><th></th></tr></thead>
       <tbody>${foodRows}</tbody>
     </table></div>
     <div style="margin-top:.75rem;padding-top:.7rem;border-top:1px solid var(--border);display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">
       <input type="text" id="hdb-new-name" class="form-input" placeholder="New food" style="flex:1;min-width:140px">
+      <select id="hdb-new-type" style="width:auto;font-size:.85rem;padding:.35rem .3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text)">${typeOptions('')}</select>
       <input type="number" id="hdb-new-cal" class="form-input" placeholder="Cal" style="width:72px">
       <input type="number" id="hdb-new-p" class="form-input" placeholder="P" style="width:56px">
       <input type="number" id="hdb-new-c" class="form-input" placeholder="C" style="width:56px">
@@ -14611,6 +14681,7 @@ async function healthSetRewardSched(wd, slot, val) {
 async function healthAddDbFood() {
   const name = (document.getElementById('hdb-new-name').value || '').trim();
   if (!name) return;
+  const mtEl = document.getElementById('hdb-new-type');
   state.health.foods.push({
     id: hid(), name,
     calories: parseFloat(document.getElementById('hdb-new-cal').value) || 0,
@@ -14618,7 +14689,14 @@ async function healthAddDbFood() {
     carbs: parseFloat(document.getElementById('hdb-new-c').value) || 0,
     fat: parseFloat(document.getElementById('hdb-new-f').value) || 0,
     uses: 0,
+    mealType: mtEl && HEALTH_MEAL_TYPES.includes(mtEl.value) ? mtEl.value : '',
   });
+  await saveHealth(); _renderHealthHtml();
+}
+async function healthSetDbFoodType(id, val) {
+  const f = state.health.foods.find(x => x.id === id);
+  if (!f) return;
+  f.mealType = HEALTH_MEAL_TYPES.includes(val) ? val : '';
   await saveHealth(); _renderHealthHtml();
 }
 function healthEditDbFood(id) { _healthEditDbId = id; _renderHealthHtml(); }

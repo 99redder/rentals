@@ -257,7 +257,23 @@ export function assessStockStickiesRefreshConsistency(
 
   for (const account of STOCK_STICKIES_ACCOUNT_IDS) {
     const navChange = currentAccounts[account] - previousAccounts[account];
-    const cashChange = currentCash[account] - previousCash[account];
+    const rawCashChange = currentCash[account] - previousCash[account];
+    // Securities trades are NAV-neutral: a sale moves value from holdings into
+    // cash and a buy the reverse. Net them out of the cash change so a
+    // sale-then-withdraw within one refresh window still exposes the external
+    // cash movement. Otherwise the sale's proceeds round-trip through cash and
+    // mask the withdrawal in the cash-vs-NAV alignment, leaving the account
+    // marked "ready" and booking the withdrawal as an investment loss.
+    const netTradeProceeds = (Array.isArray(transactions) ? transactions : [])
+      .filter(transaction => {
+        const type = String(transaction?.type || '').toLowerCase();
+        const flowDate = stockStickiesExternalFlowDate(transaction);
+        return transaction?.stockStickiesAccount === account &&
+          (type === 'buy' || type === 'sell') &&
+          flowDate >= previousDate && flowDate <= currentDate;
+      })
+      .reduce((sum, transaction) => sum + (-finiteNumber(transaction?.amount)), 0);
+    const cashChange = rawCashChange - netTradeProceeds;
     const materialThreshold = Math.max(250, Math.abs(previousAccounts[account]) * 0.005);
     const alignmentTolerance = Math.max(250, Math.abs(cashChange) * 0.2);
     if (Math.abs(navChange) < materialThreshold || Math.abs(cashChange) < materialThreshold ||
@@ -278,7 +294,9 @@ export function assessStockStickiesRefreshConsistency(
     discrepancies.push({
       account,
       navChange: roundMoney(navChange),
-      brokerageCashChange: roundMoney(cashChange),
+      brokerageCashChange: roundMoney(rawCashChange),
+      netTradeProceeds: roundMoney(netTradeProceeds),
+      externalCashChange: roundMoney(cashChange),
       recognizedExternalFlow: roundMoney(matchingFlowTotal),
     });
   }

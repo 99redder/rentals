@@ -456,6 +456,72 @@ test('refresh consistency hides an unexplained cash withdrawal until its transac
   assert.deepEqual(reconciled.provisionalAccounts, []);
 });
 
+test('refresh consistency flags a sale-then-withdraw that masks the cash movement', () => {
+  // Previous: holdings worth $3,994, no cash. Current: emptied to $0/$0 after
+  // selling the position and withdrawing the proceeds in the same window. The
+  // sale round-trips through cash, so raw cash barely moves and only NAV drops.
+  const previous = {
+    fetchedAt: '2026-08-10T20:00:00Z',
+    accounts: [{ accountId: 'individual', stockStickiesAccount: 'individual', currentBalance: 3_994 }],
+    positions: [{
+      accountId: 'individual', stockStickiesAccount: 'individual', ticker: 'ZEC',
+      institutionValue: 3_994,
+    }],
+  };
+  const current = {
+    fetchedAt: '2026-08-11T14:00:00Z',
+    accounts: [{ accountId: 'individual', stockStickiesAccount: 'individual', currentBalance: 0 }],
+    positions: [{
+      accountId: 'individual', stockStickiesAccount: 'individual', ticker: 'CUR:USD',
+      institutionValue: 0,
+    }],
+  };
+  const saleOnly = [{
+    stockStickiesAccount: 'individual', date: '2026-08-11', type: 'sell', subtype: 'sell',
+    amount: -3_994,
+  }];
+
+  // With only the sale published (withdrawal not yet in Plaid) the account must
+  // be hidden rather than booking the withdrawn proceeds as an investment loss.
+  const pending = assessStockStickiesRefreshConsistency(previous, current, saleOnly);
+  assert.equal(pending.status, 'provisional');
+  assert.deepEqual(pending.provisionalAccounts, ['individual']);
+
+  // Once the withdrawal transaction arrives it reconciles to coherent.
+  const reconciled = assessStockStickiesRefreshConsistency(previous, current, [
+    ...saleOnly,
+    { stockStickiesAccount: 'individual', date: '2026-08-11', subtype: 'withdrawal', amount: 3_994 },
+  ]);
+  assert.equal(reconciled.status, 'coherent');
+  assert.deepEqual(reconciled.provisionalAccounts, []);
+});
+
+test('refresh consistency does not flag a sale whose proceeds stay in cash', () => {
+  // Sold the position but left the cash in the account: NAV is unchanged, so
+  // there is no external movement to hide and nothing to flag.
+  const previous = {
+    fetchedAt: '2026-08-10T20:00:00Z',
+    accounts: [{ accountId: 'individual', stockStickiesAccount: 'individual', currentBalance: 3_994 }],
+    positions: [{
+      accountId: 'individual', stockStickiesAccount: 'individual', ticker: 'ZEC',
+      institutionValue: 3_994,
+    }],
+  };
+  const current = {
+    fetchedAt: '2026-08-11T14:00:00Z',
+    accounts: [{ accountId: 'individual', stockStickiesAccount: 'individual', currentBalance: 3_994 }],
+    positions: [{
+      accountId: 'individual', stockStickiesAccount: 'individual', ticker: 'CUR:USD',
+      institutionValue: 3_994,
+    }],
+  };
+  const sale = [{
+    stockStickiesAccount: 'individual', date: '2026-08-11', type: 'sell', subtype: 'sell',
+    amount: -3_994,
+  }];
+  assert.equal(assessStockStickiesRefreshConsistency(previous, current, sale).status, 'coherent');
+});
+
 test('refresh consistency does not confuse market movement with an external flow', () => {
   const previous = {
     fetchedAt: '2026-08-05T16:00:00Z',

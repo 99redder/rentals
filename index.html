@@ -13096,18 +13096,22 @@ function healthMondayOf(iso) {
 
 // ── Seed defaults ─────────────────────────────────────────────────────────────
 function healthDefaultMeals(kind) {
-  const m = (id, name, note) => ({ id, name, note });
-  const breakfast = m('b', 'Breakfast', 'Eggs + oatmeal or Greek yogurt');
-  const shake = m('s', 'Post-Workout Protein Shake', 'Recovery shake');
-  const dinner = m('d', 'Dinner', 'Lean protein + veg');
-  const snack = m('n', 'Snack', 'Fruit or yogurt');
-  if (kind === 'factor') return [breakfast, m('l', 'Lunch — Factor 75', 'Factor 75 meal service'), shake, dinner, snack];
-  if (kind === 'home') return [breakfast, m('l', 'Lunch — Home', 'Chicken + veg / salad'), shake, dinner, snack];
+  // macros: { calories, protein, carbs, fat } — checking a planned meal on the
+  // Daily view auto-logs these to the food log (0 = no auto-log, log manually).
+  const m = (id, name, note, macros) => ({ id, name, note, calories: 0, protein: 0, carbs: 0, fat: 0, ...(macros || {}) });
+  const breakfast = m('b', 'Breakfast', 'Eggs + oatmeal or Greek yogurt', { calories: 290, protein: 20, carbs: 28, fat: 12 });
+  const shake = m('s', 'Post-Workout Protein Shake', 'Recovery shake', { calories: 130, protein: 25, carbs: 3, fat: 2 });
+  const dinner = m('d', 'Dinner', 'Lean protein + veg', { calories: 450, protein: 42, carbs: 25, fat: 18 });
+  const snack = m('n', 'Snack', 'Fruit or yogurt', { calories: 150, protein: 10, carbs: 20, fat: 3 });
+  const factorLunch = m('l', 'Lunch — Factor 75', 'Factor 75 meal service', { calories: 560, protein: 35, carbs: 28, fat: 32 });
+  const homeLunch = m('l', 'Lunch — Home', 'Chicken + veg / salad', { calories: 400, protein: 45, carbs: 20, fat: 14 });
+  if (kind === 'factor') return [breakfast, factorLunch, shake, dinner, snack];
+  if (kind === 'home') return [breakfast, homeLunch, shake, dinner, snack];
   if (kind === 'fasting') return [
-    m('b', 'Breakfast (eat before 10 AM)', 'Protein + healthy fats to start the fast well-fed'),
+    m('b', 'Breakfast (eat before 10 AM)', 'Protein + healthy fats to start the fast well-fed', { calories: 400, protein: 30, carbs: 20, fat: 22 }),
     m('cutoff', '⛔ Kitchen closed at 10 AM', 'Fast until tomorrow morning — water, black coffee & sugar-free Red Bull are fine'),
   ];
-  return [breakfast, m('l', 'Lunch', 'Home lunch'), dinner, snack]; // rest day — no post-workout shake
+  return [breakfast, m('l', 'Lunch', 'Home lunch', { calories: 400, protein: 40, carbs: 25, fat: 15 }), dinner, snack]; // rest day — no post-workout shake
 }
 
 function healthDefault() {
@@ -13138,6 +13142,7 @@ function healthDefault() {
       { id: 'f-banana', name: 'Banana', calories: 105, protein: 1, carbs: 27, fat: 0, uses: 0 },
       { id: 'f-oatmeal', name: 'Oatmeal (1 cup cooked)', calories: 150, protein: 5, carbs: 27, fat: 3, uses: 0 },
       { id: 'f-chicken', name: 'Grilled Chicken Breast (6 oz)', calories: 280, protein: 52, carbs: 0, fat: 6, uses: 0 },
+      ...healthFactorMealSeed(),
     ],
     workoutPlan: {
       1: [ ex('mo-pu', 'Push-Ups', '5 sets × AMRAP — hardest work first while you’re fresh. Leave ~1 in reserve; add reps weekly'),
@@ -13197,7 +13202,35 @@ function healthNormFood(f) {
     name: String(f.name || '').slice(0, 120),
     calories: +f.calories || 0, protein: +f.protein || 0, carbs: +f.carbs || 0, fat: +f.fat || 0,
     uses: +f.uses || 0,
+    tag: String(f.tag || '').slice(0, 24),   // e.g. "Factor 75" — shows a small brand pill
+    ...(f.est ? { est: true } : {}),          // macros are an estimate (not Factor-published)
   };
+}
+
+// Factor 75 meals for the current rotation. Macros are per tray: official
+// figures where Factor publishes them, otherwise a close estimate flagged with
+// `est` (tweak in Setup → Food Database). Seeded into the food DB so they're
+// one-tap quick-adds; carry a "Factor 75" tag pill.
+function healthFactorMealSeed() {
+  const F = (name, calories, protein, carbs, fat, est) =>
+    ({ id: hid(), name, calories, protein, carbs, fat, uses: 0, tag: 'Factor 75', ...(est ? { est: true } : {}) });
+  return [
+    F('Homestyle Turkey & Gravy', 440, 28, 36, 21),
+    F('Tex-Mex Burger Bowl', 580, 35, 17, 43),
+    F('Cavatappi & Meatballs', 490, 28, 37, 27),
+    F('Currywurst Meatballs & Swiss Fondue Potatoes', 600, 30, 38, 36, true),
+    F('Ginger Teriyaki Burger', 500, 34, 34, 24, true),
+    F('Mexican-Style Green Chile Rice Bowl', 520, 34, 45, 22, true),
+    F('Cheddar & Poblano Shredded Beef Bowl', 490, 30, 40, 23),
+    F('Smoky Spanish-Style Meatballs & Piperade', 520, 30, 22, 34, true),
+  ];
+}
+
+// Small brand pill for a tagged food (e.g. Factor 75); "~est" marks an
+// estimated macro set the user can refine in Setup → Food Database.
+function healthFoodTag(f) {
+  if (!f || !f.tag) return '';
+  return `<span title="${f.est ? 'Macros are an estimate — adjust in Setup if your tray differs' : 'Factor 75 meal'}" style="display:inline-block;background:var(--primary-light);color:var(--primary);border:1px solid var(--primary);border-radius:999px;padding:0 .4rem;font-size:.6rem;font-weight:700;vertical-align:middle;margin-left:.3rem;white-space:nowrap">${escHtml(f.tag)}${f.est ? ' ~est' : ''}</span>`;
 }
 
 // Reward schedule: Mon–Fri only, each { am, pm }. Migrates the old single-string
@@ -13211,6 +13244,15 @@ function healthNormRewardSchedule(raw, defSched) {
     else out[wd] = { ...(defSched[wd] || { am: '', pm: '' }) };
   }
   return out;
+}
+
+function healthNormMeal(m) {
+  return {
+    id: m.id || hid(),
+    name: String(m.name || '').slice(0, 120),
+    note: String(m.note || '').slice(0, 200),
+    calories: +m.calories || 0, protein: +m.protein || 0, carbs: +m.carbs || 0, fat: +m.fat || 0,
+  };
 }
 
 function healthNormHabit(x) {
@@ -13266,9 +13308,36 @@ function healthNormalize(raw) {
     if (l && /Factor 75/.test(l.name || '')) mealPlan['3'] = def.mealPlan['3'].map(x => ({ ...x }));
     profile.wedFastingV1 = true;
   }
+  // Coerce every meal to carry numeric macro fields (calories/protein/carbs/fat).
+  for (const k of Object.keys(mealPlan)) mealPlan[k] = (Array.isArray(mealPlan[k]) ? mealPlan[k] : []).map(healthNormMeal);
+  // One-time: seed default macros onto existing plans that predate the
+  // meal→calorie link, matching each weekday's meals to the default by id and
+  // only filling meals that still have no macros (never clobber custom numbers).
+  if (!profile.mealMacrosV1) {
+    for (const k of Object.keys(mealPlan)) {
+      const defById = {};
+      for (const dm of (def.mealPlan[k] || [])) defById[dm.id] = dm;
+      for (const meal of mealPlan[k]) {
+        const dm = defById[meal.id];
+        const noMacros = !meal.calories && !meal.protein && !meal.carbs && !meal.fat;
+        if (dm && noMacros && dm.calories) { meal.calories = dm.calories; meal.protein = dm.protein; meal.carbs = dm.carbs; meal.fat = dm.fat; }
+      }
+    }
+    profile.mealMacrosV1 = true;
+  }
+  const foods = Array.isArray(h.foods) && h.foods.length ? h.foods.map(healthNormFood) : def.foods.map(healthNormFood);
+  // One-time: add the current Factor 75 meals to the food database (by name), so
+  // existing records pick them up without wiping any custom foods.
+  if (!profile.factorMealsV1) {
+    const have = new Set(foods.map(f => f.name.toLowerCase()));
+    for (const meal of healthFactorMealSeed()) {
+      if (!have.has(meal.name.toLowerCase())) foods.push(healthNormFood(meal));
+    }
+    profile.factorMealsV1 = true;
+  }
   return {
     profile,
-    foods: Array.isArray(h.foods) && h.foods.length ? h.foods.map(healthNormFood) : def.foods,
+    foods,
     workoutPlan,
     mealPlan,
     rewardSchedule: healthNormRewardSchedule(h.rewardSchedule, def.rewardSchedule),
@@ -13285,7 +13354,7 @@ async function loadHealth() {
   const seeded = !raw || Object.keys(raw).length === 0;
   // Persist one-time migrations (e.g. Monday front-load) the first time we see a
   // record that predates them, so they don't re-run every load.
-  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1);
+  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1);
   state.health = healthNormalize(raw);
   if (seeded || needsMigrationSave) await saveHealth();
 }
@@ -13452,11 +13521,25 @@ function healthCard(title, inner, extraHeader = '') {
   </div>`;
 }
 
-function healthCalRing(consumed, goal) {
+function healthCalRing(consumed, goal, proteinConsumed, proteinGoal) {
   const pct = goal > 0 ? Math.min(100, (consumed / goal) * 100) : 0;
   const over = consumed > goal;
-  const color = over ? 'var(--danger)' : 'var(--success)';
+  // green with room to spare · amber within the last 10% of the budget · red over.
+  const near = !over && goal > 0 && (goal - consumed) <= goal * 0.1;
+  const amber = '#f59e0b';
+  const color = over ? 'var(--danger)' : (near ? amber : 'var(--success)');
   const remaining = goal - consumed;
+  const remColor = over ? 'var(--danger)' : (near ? amber : 'var(--success)');
+  // Protein-left callout — the make-or-break macro on a cut.
+  let proteinChip = '';
+  if (proteinGoal != null && proteinGoal > 0) {
+    const pLeft = proteinGoal - (proteinConsumed || 0);
+    const pMet = pLeft <= 0;
+    proteinChip = `<div style="margin-top:.55rem;font-size:.82rem">
+      <span style="color:var(--text-muted);text-transform:uppercase;font-size:.68rem;font-weight:700">Protein ${pMet ? 'goal met' : 'to go'}</span>
+      <div style="font-weight:800;color:${pMet ? 'var(--success)' : '#3b82f6'};font-size:1.15rem;line-height:1.1">${pMet ? '✓ ' + Math.round(proteinConsumed) + ' g' : Math.round(pLeft) + ' g<span style="font-size:.78rem;font-weight:600;color:var(--text-muted)"> of ' + Math.round(proteinGoal) + '</span>'}</div>
+    </div>`;
+  }
   return `<div style="display:flex;align-items:center;gap:1.1rem;flex-wrap:wrap">
     <div style="width:130px;height:130px;border-radius:50%;background:conic-gradient(${color} ${pct}%, var(--border) ${pct}% 100%);display:flex;align-items:center;justify-content:center;flex-shrink:0">
       <div style="width:104px;height:104px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center">
@@ -13465,8 +13548,10 @@ function healthCalRing(consumed, goal) {
       </div>
     </div>
     <div style="flex:1;min-width:130px">
-      <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">${over ? 'Over by' : 'Remaining'}</div>
-      <div style="font-size:1.7rem;font-weight:800;color:${over ? 'var(--danger)' : 'var(--text)'};line-height:1.1">${Math.abs(Math.round(remaining))}<span style="font-size:.9rem;font-weight:600;color:var(--text-muted)"> kcal</span></div>
+      <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">${over ? 'Over budget by' : 'Calories left'}</div>
+      <div style="font-size:1.9rem;font-weight:800;color:${remColor};line-height:1.05">${Math.abs(Math.round(remaining))}<span style="font-size:.9rem;font-weight:600;color:var(--text-muted)"> kcal</span></div>
+      ${over ? '<div style="font-size:.72rem;color:var(--danger);font-weight:600">Over your target</div>' : (near ? '<div style="font-size:.72rem;color:' + amber + ';font-weight:600">Almost at your limit</div>' : '')}
+      ${proteinChip}
     </div>
   </div>`;
 }
@@ -13660,7 +13745,7 @@ function healthDailyHtml() {
   // Calories card
   const calCard = healthCard('Calories & Macros', `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.2rem;align-items:center">
-      <div>${healthCalRing(totals.calories, t.calories)}</div>
+      <div>${healthCalRing(totals.calories, t.calories, totals.protein, t.protein)}</div>
       <div>
         ${healthMacroBar('Protein', totals.protein, t.protein, '#3b82f6')}
         ${healthMacroBar('Carbs', totals.carbs, t.carbs, '#f59e0b')}
@@ -13698,19 +13783,26 @@ function healthDailyHtml() {
   const fastingNote = isFastingDay
     ? `<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:var(--radius);padding:.5rem .7rem;margin-bottom:.6rem;font-size:.8rem"><strong>⏳ Intermittent Fasting day.</strong> Eat breakfast, then <strong>stop eating by ${escHtml(fasting.cutoffLabel || '10 AM')}</strong> and fast until tomorrow morning. Water, black coffee, and <strong>sugar-free Red Bull</strong> are fine (no calories) — hence today’s Red Bull reward. Extra water goal today.</div>`
     : '';
-  const mealInner = fastingNote + (meals.length ? meals.map(m => `
+  const mealInner = fastingNote + (meals.length ? meals.map(m => {
+    const hasMacros = (+m.calories || +m.protein || +m.carbs || +m.fat);
+    const macroLine = hasMacros
+      ? `<span style="display:block;font-size:.72rem;color:var(--text-muted);margin-top:.1rem">${Math.round(+m.calories || 0)} kcal · ${Math.round(+m.protein || 0)}P / ${Math.round(+m.carbs || 0)}C / ${Math.round(+m.fat || 0)}F <span style="color:var(--success);font-weight:600">· ✓ logs to food log</span></span>`
+      : '';
+    return `
       <label style="display:flex;align-items:flex-start;gap:.6rem;padding:.5rem .2rem;border-bottom:1px solid var(--border);cursor:pointer">
         <input type="checkbox" ${day.mealsDone[m.id] ? 'checked' : ''} onchange="healthToggleMeal('${iso}','${m.id}')" style="width:auto;margin-top:.2rem">
         <span style="flex:1">
           <span style="font-weight:600;${day.mealsDone[m.id] ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(m.name)}</span>
           ${m.note ? `<span style="display:block;font-size:.76rem;color:var(--text-muted)">${escHtml(m.note)}</span>` : ''}
+          ${macroLine}
         </span>
-      </label>`).join('') : '<div style="color:var(--text-muted);font-size:.85rem">No meal plan for this day. Edit it under Setup.</div>');
+      </label>`;
+  }).join('') : '<div style="color:var(--text-muted);font-size:.85rem">No meal plan for this day. Edit it under Setup.</div>');
   const mealCard = healthCard('🍽️ Meal Plan', mealInner, `<span style="font-size:.8rem;color:var(--text-muted)">${mealsDone}/${meals.length} done</span>`);
 
   // Food log card
   const topFoods = [...state.health.foods].sort((a, b) => (b.uses || 0) - (a.uses || 0) || a.name.localeCompare(b.name)).slice(0, 8);
-  const chips = topFoods.map(f => `<button type="button" class="btn btn-ghost btn-sm" onclick="healthQuickLog('${iso}','${f.id}')" style="border-radius:999px;font-size:.75rem" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F')}">+ ${escHtml(f.name)}</button>`).join('');
+  const chips = topFoods.map(f => `<button type="button" class="btn btn-ghost btn-sm" onclick="healthQuickLog('${iso}','${f.id}')" style="border-radius:999px;font-size:.75rem" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F')}">+ ${escHtml(f.name)}${healthFoodTag(f)}</button>`).join('');
   const logRows = (day.foodLog || []).map(f => {
     if (_healthEditFoodId === f.id) {
       return `<tr style="background:var(--bg)">
@@ -13722,8 +13814,9 @@ function healthDailyHtml() {
         <td style="padding:.35rem .5rem;white-space:nowrap;text-align:right"><button class="btn btn-primary btn-sm" onclick="healthSaveLogged('${iso}','${f.id}')">Save</button> <button class="btn btn-ghost btn-sm" onclick="healthCancelLoggedEdit()">✕</button></td>
       </tr>`;
     }
+    const mealBadge = f.fromMeal ? `<span title="Logged from today's meal plan" style="display:inline-block;background:var(--card-bg);color:var(--text-muted);border:1px solid var(--border);border-radius:999px;padding:0 .4rem;font-size:.6rem;font-weight:700;margin-left:.3rem">🍽 plan</span>` : '';
     return `<tr>
-      <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border)">${escHtml(f.name)}</td>
+      <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border)">${escHtml(f.name)}${healthFoodTag(f)}${mealBadge}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right">${Math.round(f.calories)}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.protein)}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.carbs)}</td>
@@ -13792,7 +13885,8 @@ function healthDailyHtml() {
       <div style="font-size:.72rem;color:var(--text-muted);margin-top:.4rem">Defaults for ${HEALTH_WEEKDAYS_LONG[wd]}: AM ${escHtml(sched.am || '—')} · PM ${escHtml(sched.pm || '—')} · edit under Setup.</div>`);
   }
 
-  return `${nav}${weighCard}${streakStrip}
+  const projectionCard = healthCard('📉 Goal Projection', healthProjectionInner(true));
+  return `${nav}${weighCard}${streakStrip}${projectionCard}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 1rem;align-items:start">
       <div>${calCard}${workoutCard}${habitsCard}</div>
       <div>${mealCard}${foodCard}${rewardCard}</div>
@@ -13871,7 +13965,22 @@ async function healthToggleWorkout(iso, exId, ev) {
   await saveHealth(); _renderHealthHtml();
 }
 async function healthToggleMeal(iso, mealId) {
-  const d = healthEnsureDay(iso); d.mealsDone[mealId] = !d.mealsDone[mealId];
+  const d = healthEnsureDay(iso);
+  const now = !d.mealsDone[mealId];
+  d.mealsDone[mealId] = now;
+  // A planned meal carrying macros auto-logs to (and un-logs from) the food log
+  // so the calorie ring reflects the plan without re-typing it.
+  const wd = healthWeekday(iso);
+  const meal = (state.health.mealPlan[String(wd)] || []).find(m => m.id === mealId);
+  d.foodLog = d.foodLog || [];
+  if (now) {
+    const hasMacros = meal && (meal.calories || meal.protein || meal.carbs || meal.fat);
+    if (hasMacros && !d.foodLog.some(f => f.fromMeal === mealId)) {
+      d.foodLog.push({ id: hid(), name: meal.name, calories: +meal.calories || 0, protein: +meal.protein || 0, carbs: +meal.carbs || 0, fat: +meal.fat || 0, fromMeal: mealId });
+    }
+  } else {
+    d.foodLog = d.foodLog.filter(f => f.fromMeal !== mealId);
+  }
   await saveHealth(); _renderHealthHtml();
 }
 async function healthToggleReward(iso, slot) {
@@ -13943,7 +14052,7 @@ async function healthQuickLog(iso, foodId) {
   const food = state.health.foods.find(x => x.id === foodId);
   if (!food) return;
   const d = healthEnsureDay(iso);
-  d.foodLog.push({ id: hid(), name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, foodId: food.id });
+  d.foodLog.push({ id: hid(), name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, foodId: food.id, ...(food.tag ? { tag: food.tag } : {}), ...(food.est ? { est: true } : {}) });
   food.uses = (food.uses || 0) + 1;
   await saveHealth(); _renderHealthHtml();
 }
@@ -13964,6 +14073,8 @@ async function healthSaveLogged(iso, id) {
 }
 async function healthDeleteLogged(iso, id) {
   const d = healthEnsureDay(iso);
+  const row = (d.foodLog || []).find(x => x.id === id);
+  if (row && row.fromMeal && d.mealsDone) d.mealsDone[row.fromMeal] = false;   // keep the meal checkbox in sync
   d.foodLog = d.foodLog.filter(x => x.id !== id);
   await saveHealth(); _renderHealthHtml();
 }
@@ -14095,6 +14206,42 @@ function healthWeightChart(weighIns) {
   </svg>`;
 }
 
+// Projected goal date from the weigh-in trend: average weekly loss since the
+// program start, extrapolated to the goal weight.
+function healthWeightProjection(h) {
+  const start = h.profile.startDate, goal = h.profile.goalWeight;
+  const current = healthCurrentWeight(h);
+  const lbToGo = +(current - goal).toFixed(1);
+  const ins = [...(h.weighIns || [])].filter(w => !start || w.date >= start).sort((a, b) => a.date.localeCompare(b.date));
+  if (lbToGo <= 0) return { status: 'reached', current, goal, lbToGo: 0 };
+  if (ins.length < 2) return { status: 'need-data', current, goal, lbToGo, have: ins.length };
+  const first = ins[0], last = ins[ins.length - 1];
+  const weeks = (Date.parse(last.date + 'T12:00:00Z') - Date.parse(first.date + 'T12:00:00Z')) / (7 * 86400000);
+  const weeklyRate = weeks > 0 ? (first.weight - last.weight) / weeks : 0;
+  const targetRate = h.profile.ratePerWeek || 1;
+  if (weeklyRate <= 0.05) return { status: 'stalled', current, goal, lbToGo, weeklyRate, targetRate };
+  const weeksToGoal = lbToGo / weeklyRate;
+  const projDate = healthAddDays(appTodayIso(), Math.ceil(weeksToGoal * 7));
+  return { status: 'ok', current, goal, lbToGo, weeklyRate, targetRate, weeksToGoal, projDate, ahead: weeklyRate >= targetRate - 0.05 };
+}
+function healthProjectionInner(compact) {
+  const pr = healthWeightProjection(state.health);
+  const muted = 'color:var(--text-muted);font-size:.82rem';
+  if (pr.status === 'reached') return `<div style="font-weight:700;color:var(--success)">🎉 Goal reached — you're at or below ${pr.goal} lb. Time to maintain.</div>`;
+  if (pr.status === 'need-data') { const n = 2 - pr.have; return `<div style="${muted}">Log ${n} more weekly weigh-in${n === 1 ? '' : 's'} and your projected goal date will appear here.</div>`; }
+  if (pr.status === 'stalled') return `<div style="${muted}"><strong style="color:var(--text)">${pr.lbToGo.toFixed(1)} lb to go.</strong> No clear downward trend in your weigh-ins yet — projection paused. Keep logging.</div>`;
+  const d = new Date(pr.projDate + 'T12:00:00Z');
+  const dateLabel = isNaN(d.getTime()) ? pr.projDate : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const paceColor = pr.ahead ? 'var(--success)' : 'var(--warning)';
+  const paceMsg = pr.ahead ? `On/ahead of ${pr.targetRate} lb/wk goal` : `Behind ${pr.targetRate} lb/wk goal`;
+  const stat = (label, val, sub, color) => `<div><div style="font-size:.66rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">${label}</div><div style="font-size:${compact ? '1.2rem' : '1.35rem'};font-weight:800;${color ? 'color:' + color : ''};line-height:1.1">${val}</div>${sub ? `<div style="font-size:.68rem;color:var(--text-muted)">${sub}</div>` : ''}</div>`;
+  return `<div style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:flex-start">
+      ${stat('Projected goal', dateLabel, `at ${pr.weeklyRate.toFixed(1)} lb/wk`, 'var(--primary)')}
+      ${stat('To go', pr.lbToGo.toFixed(1) + ' lb', `≈ ${Math.ceil(pr.weeksToGoal)} wk left`)}
+      ${stat('Avg loss', pr.weeklyRate.toFixed(2) + ' lb/wk', paceMsg, paceColor)}
+    </div>`;
+}
+
 function healthHistoryHtml() {
   const h = state.health;
   const weighIns = [...h.weighIns].sort((a, b) => b.date.localeCompare(a.date));
@@ -14151,7 +14298,8 @@ function healthHistoryHtml() {
       <tbody>${dayRows || '<tr><td colspan="5" style="padding:.8rem .6rem;color:var(--text-muted)">No days closed out yet. Close a day from the Daily view to file it here.</td></tr>'}</tbody>
     </table></div>${closedDays.length > 90 ? `<div style="font-size:.74rem;color:var(--text-muted);margin-top:.5rem">Showing the 90 most recent of ${closedDays.length} closed days.</div>` : ''}`);
 
-  return `${progressCard}
+  const projectionCard = healthCard('📉 Goal Projection', healthProjectionInner(false));
+  return `${progressCard}${projectionCard}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 1rem;align-items:start"><div>${weighTable}</div><div>${daysTable}</div></div>`;
 }
 
@@ -14243,9 +14391,19 @@ function healthSetupHtml() {
 
   const mealCards = order.map(wd => {
     const meals = state.health.mealPlan[String(wd)] || [];
-    const rows = meals.map(m => `<div style="display:flex;align-items:flex-start;gap:.5rem;padding:.3rem 0;border-bottom:1px solid var(--border)">
-        <span style="flex:1"><strong style="font-size:.84rem">${escHtml(m.name)}</strong>${m.note ? `<span style="display:block;font-size:.74rem;color:var(--text-muted)">${escHtml(m.note)}</span>` : ''}</span>
-        <button class="btn btn-ghost btn-sm" style="padding:.1rem .35rem" onclick="healthDeleteMeal(${wd},'${m.id}')">✕</button>
+    const macroInput = (m, field, ph, w) => `<input type="number" class="form-input" value="${m[field] || ''}" placeholder="${ph}" onchange="healthUpdateMeal(${wd},'${m.id}','${field}',this.value)" style="width:${w};font-size:.78rem;text-align:right" title="${ph}">`;
+    const rows = meals.map(m => `<div style="padding:.35rem 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:flex-start;gap:.5rem">
+          <span style="flex:1"><strong style="font-size:.84rem">${escHtml(m.name)}</strong>${m.note ? `<span style="display:block;font-size:.74rem;color:var(--text-muted)">${escHtml(m.note)}</span>` : ''}</span>
+          <button class="btn btn-ghost btn-sm" style="padding:.1rem .35rem" onclick="healthDeleteMeal(${wd},'${m.id}')">✕</button>
+        </div>
+        <div style="display:flex;gap:.35rem;align-items:center;margin-top:.3rem;flex-wrap:wrap">
+          <span style="font-size:.68rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">Logs:</span>
+          ${macroInput(m, 'calories', 'Cal', '64px')}
+          ${macroInput(m, 'protein', 'P', '46px')}
+          ${macroInput(m, 'carbs', 'C', '46px')}
+          ${macroInput(m, 'fat', 'F', '46px')}
+        </div>
       </div>`).join('') || '<div style="font-size:.78rem;color:var(--text-muted);padding:.3rem 0">No meals.</div>';
     return `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .8rem;margin-bottom:.6rem">
       <div style="font-weight:700;margin-bottom:.3rem">${HEALTH_WEEKDAYS_LONG[wd]}</div>
@@ -14253,11 +14411,12 @@ function healthSetupHtml() {
       <div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap">
         <input type="text" id="hml-name-${wd}" class="form-input" placeholder="Meal" style="flex:1;min-width:120px;font-size:.82rem">
         <input type="text" id="hml-note-${wd}" class="form-input" placeholder="Note (optional)" style="flex:1;min-width:120px;font-size:.82rem">
+        <input type="number" id="hml-cal-${wd}" class="form-input" placeholder="Cal" style="width:64px;font-size:.82rem;text-align:right">
         <button class="btn btn-ghost btn-sm" onclick="healthAddMeal(${wd})">+ Add</button>
       </div>
     </div>`;
   }).join('');
-  const mealEditor = healthCard('🍽️ Meal Plan', mealCards);
+  const mealEditor = healthCard('🍽️ Meal Plan', `<div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.5rem">Give a meal its calories/macros and checking it off on the Daily view auto-logs it to the food log. Leave Cal at 0 to just track the checkbox.</div>${mealCards}`);
 
   const rewardEditor = healthCard('🎁 Reward Schedule', `
     <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:.5rem">Two rewards per weekday — an ☀️ AM and a 🌙 PM. Weekends have no rewards. Leave a slot blank for none.</div>
@@ -14284,7 +14443,7 @@ function healthSetupHtml() {
       </tr>`;
     }
     return `<tr>
-      <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border)">${escHtml(f.name)}${f.uses ? ` <span style="font-size:.68rem;color:var(--text-muted)">·${f.uses}×</span>` : ''}</td>
+      <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border)">${escHtml(f.name)}${healthFoodTag(f)}${f.uses ? ` <span style="font-size:.68rem;color:var(--text-muted)">·${f.uses}×</span>` : ''}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right">${Math.round(f.calories)}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.protein)}</td>
       <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.carbs)}</td>
@@ -14381,9 +14540,18 @@ async function healthAddMeal(wd) {
   const name = (document.getElementById('hml-name-' + wd).value || '').trim();
   if (!name) return;
   const note = (document.getElementById('hml-note-' + wd).value || '').trim();
+  const cal = parseFloat((document.getElementById('hml-cal-' + wd) || {}).value) || 0;
   if (!Array.isArray(state.health.mealPlan[key])) state.health.mealPlan[key] = [];
-  state.health.mealPlan[key].push({ id: hid(), name, note });
+  state.health.mealPlan[key].push({ id: hid(), name, note, calories: cal, protein: 0, carbs: 0, fat: 0 });
   await saveHealth(); _renderHealthHtml();
+}
+async function healthUpdateMeal(wd, id, field, val) {
+  const meal = (state.health.mealPlan[String(wd)] || []).find(m => m.id === id);
+  if (!meal) return;
+  if (field === 'name') meal.name = String(val || '').slice(0, 120);
+  else if (field === 'note') meal.note = String(val || '').slice(0, 200);
+  else meal[field] = parseFloat(val) || 0;
+  await saveHealth();   // no re-render — preserve input focus while editing
 }
 async function healthDeleteMeal(wd, id) {
   const key = String(wd);

@@ -1462,10 +1462,10 @@
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
       <button class="tp-header-btn health-btn active" id="health-btn" onclick="switchView('health')">❤️ Health</button>
-      <button class="tp-header-btn" id="properties-btn" onclick="switchToProperties()">🏠 Properties</button>
-      <button class="tp-header-btn" id="budget-btn" onclick="switchView('budget')">Monthly Budget</button>
       <button class="tp-header-btn" id="cash-flow-btn" onclick="switchView('cash-flow')">Cash Flow</button>
+      <button class="tp-header-btn" id="budget-btn" onclick="switchView('budget')">Monthly Budget</button>
       <button class="tp-header-btn" id="tax-planning-btn" onclick="switchView('tax-planning')">Tax Planning</button>
+      <button class="tp-header-btn" id="properties-btn" onclick="switchToProperties()">🏠 Properties</button>
       <details class="header-tools-menu" id="header-tools-menu">
         <summary class="tp-header-btn" id="header-tools-summary">More</summary>
         <div class="header-tools-panel">
@@ -9539,8 +9539,17 @@ function updateTaxUpdateBanner() {
   el.style.display = 'block';
 }
 
-function ackTaxUpdate() {
+async function ackTaxUpdate() {
+  // Immediate local suppression for a snappy dismiss…
   if (_taxUpdateFlag && _taxUpdateFlag.checkedAt) localStorage.setItem(TAX_UPDATE_ACK_KEY, _taxUpdateFlag.checkedAt);
+  updateTaxUpdateBanner();
+  // …then persist the acknowledged baseline server-side so the same page date
+  // never re-nags (and the dismissal carries across devices/browsers).
+  try {
+    const data = await callApi({ action: 'acknowledge_tax_update' });
+    if (data) _taxUpdateFlag = data;
+    tpLoadUpdateStatus();
+  } catch { /* offline/transient — local suppression above still applies */ }
   updateTaxUpdateBanner();
 }
 

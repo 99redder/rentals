@@ -292,8 +292,9 @@ async function handleDataApi(request, env) {
   if (action === 'save_mom_checklist') return handleSaveMomChecklist(env, body.data);
 
   // Tax guidance update check — global
-  if (action === 'check_tax_updates')    return jsonResponse(await runTaxUpdateCheck(env));
-  if (action === 'get_tax_update_check') return jsonResponse((await env.RENTALS.get(TAX_UPDATE_KEY, 'json')) || { checkedAt: null, hasChanges: false, sources: [] });
+  if (action === 'check_tax_updates')      return jsonResponse(await runTaxUpdateCheck(env));
+  if (action === 'acknowledge_tax_update') return jsonResponse(await acknowledgeTaxUpdate(env));
+  if (action === 'get_tax_update_check')   return jsonResponse((await env.RENTALS.get(TAX_UPDATE_KEY, 'json')) || { checkedAt: null, hasChanges: false, acknowledged: {}, sources: [] });
 
   // Savings — global
   if (action === 'get_savings')  return handleGetSavings(env);
@@ -2369,20 +2370,53 @@ async function fetchTaxSource(src) {
 
 async function runTaxUpdateCheck(env) {
   const prev = await env.RENTALS.get(TAX_UPDATE_KEY, 'json');
-  const prevMap = {};
-  if (prev && Array.isArray(prev.sources)) for (const s of prev.sources) prevMap[s.url] = s;
+  // The change baseline is the last ACKNOWLEDGED signature per source, NOT the
+  // previous check. This is deliberate: comparing to the previous check made a
+  // real change auto-clear after the next weekly run (whether or not the user
+  // reviewed it), and it re-nagged every time a noisy index page (e.g. IRS
+  // "Page Last Reviewed or Updated") ticked its date. With an acknowledged
+  // baseline, a detected change stays flagged until the user acknowledges it,
+  // and once acknowledged it stays quiet until the page actually changes again.
+  const acknowledged = (prev && prev.acknowledged && typeof prev.acknowledged === 'object') ? { ...prev.acknowledged } : {};
+  const firstRun = !prev || !prev.checkedAt;
   const sources = await Promise.all(TAX_UPDATE_SOURCES.map(fetchTaxSource));
   let hasChanges = false;
   for (const s of sources) {
-    const p = prevMap[s.url];
-    // Flag a change only when BOTH the prior and current checks have a non-empty
-    // content signature (page revision date, else title) and they differ. This
-    // ignores CDN Last-Modified churn and won't false-positive on the one-time
-    // schema upgrade from older records that lack a signature.
-    s.changed = !!(p && s.signature && p.signature && p.signature !== s.signature);
+    const ackSig = acknowledged[s.url];
+    if (firstRun || ackSig === undefined) {
+      // First check overall, or a source we've never seen (newly added, or the
+      // one-time upgrade from the old record shape that had no acknowledged
+      // baseline): adopt the current signature as the baseline so we never
+      // false-positive on it. Real changes from here on will flag.
+      if (s.signature) acknowledged[s.url] = s.signature;
+      s.changed = false;
+    } else {
+      // Flag only when the current signature differs from the acknowledged one,
+      // and both are non-empty (ignores CDN Last-Modified churn and transient
+      // fetch failures that yield no signature).
+      s.changed = !!(s.signature && ackSig && ackSig !== s.signature);
+    }
     if (s.changed) hasChanges = true;
   }
-  const record = { checkedAt: new Date().toISOString(), previousCheckedAt: prev ? (prev.checkedAt || null) : null, hasChanges, sources };
+  const record = { checkedAt: new Date().toISOString(), previousCheckedAt: prev ? (prev.checkedAt || null) : null, hasChanges, acknowledged, sources };
+  await env.RENTALS.put(TAX_UPDATE_KEY, JSON.stringify(record));
+  return record;
+}
+
+// Records the current source signatures as the acknowledged baseline and clears
+// the change flag. Called by the app's "Acknowledge" control so the dismissal
+// persists server-side (across devices) and the same date never re-nags.
+async function acknowledgeTaxUpdate(env) {
+  const rec = await env.RENTALS.get(TAX_UPDATE_KEY, 'json');
+  if (!rec) return { checkedAt: null, hasChanges: false, acknowledged: {}, sources: [] };
+  const acknowledged = { ...(rec.acknowledged || {}) };
+  if (Array.isArray(rec.sources)) {
+    for (const s of rec.sources) {
+      if (s && s.url && s.signature) acknowledged[s.url] = s.signature;
+      if (s) s.changed = false;
+    }
+  }
+  const record = { ...rec, acknowledged, hasChanges: false, acknowledgedAt: new Date().toISOString() };
   await env.RENTALS.put(TAX_UPDATE_KEY, JSON.stringify(record));
   return record;
 }

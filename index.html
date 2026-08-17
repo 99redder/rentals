@@ -13673,9 +13673,9 @@ function healthCalRing(consumed, goal, proteinConsumed, proteinGoal) {
         <div style="font-size:.64rem;color:var(--text-muted);margin-top:.1rem">of ${Math.round(goal)} kcal</div>
       </div>
     </div>
-    <div style="flex:1;min-width:130px">
-      <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">${over ? 'Over budget by' : 'Calories left'}</div>
-      <div style="font-size:1.9rem;font-weight:800;color:${remColor};line-height:1.05">${Math.abs(Math.round(remaining))}<span style="font-size:.9rem;font-weight:600;color:var(--text-muted)"> kcal</span></div>
+    <div style="flex:1;min-width:150px">
+      <div style="font-size:.85rem;color:var(--text-muted);text-transform:uppercase;font-weight:800;letter-spacing:.02em">${over ? 'Over budget by' : 'Calories left'}</div>
+      <div style="font-size:3.3rem;font-weight:900;color:${remColor};line-height:1">${Math.abs(Math.round(remaining))}<span style="font-size:1.1rem;font-weight:700;color:var(--text-muted)"> kcal</span></div>
       ${over ? '<div style="font-size:.72rem;color:var(--danger);font-weight:600">Over your target</div>' : (near ? '<div style="font-size:.72rem;color:' + amber + ';font-weight:600">Almost at your limit</div>' : '')}
       ${proteinChip}
     </div>

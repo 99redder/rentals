@@ -14243,7 +14243,115 @@ async function healthDeleteLogged(iso, id) {
   d.foodLog = d.foodLog.filter(x => x.id !== id);
   await saveHealth(); _renderHealthHtml();
 }
+// Build an achievement-style summary of a day: what was accomplished, a tier
+// that scales with how much, and per-goal badges.
+const HEALTH_TIERS = {
+  perfect: { emoji: '🏆', headline: 'Perfect Day!',            grad: 'linear-gradient(135deg,#f59e0b,#d97706)', confetti: 60, sub: 'You hit every goal today. That is elite discipline. 🔥' },
+  gold:    { emoji: '🥇', headline: 'Great day!',              grad: 'linear-gradient(135deg,#22c55e,#16a34a)', confetti: 40, sub: 'Almost everything checked off — you are crushing this.' },
+  silver:  { emoji: '🥈', headline: 'Solid effort!',           grad: 'linear-gradient(135deg,#3b82f6,#2563eb)', confetti: 24, sub: 'Real progress today. Grab one more goal tomorrow.' },
+  bronze:  { emoji: '🥉', headline: 'On the board',            grad: 'linear-gradient(135deg,#a855f7,#7c3aed)', confetti: 12, sub: 'You showed up and logged it. That is how it starts.' },
+  seed:    { emoji: '🌱', headline: 'Tomorrow’s a fresh start', grad: 'linear-gradient(135deg,#64748b,#475569)', confetti: 0,  sub: 'No perfect days required. Reset and go again.' },
+};
+function healthDaySummary(iso) {
+  const a = healthDayAdherence(iso);
+  const t = healthTargets(state.health);
+  const day = state.health.days[iso] || {};
+  const wd = healthWeekday(iso);
+  const totals = a.totals;
+  const proteinMet = t.protein > 0 && totals.protein >= t.protein;
+  const habitsList = state.health.profile.habits || [];
+  const dh = day.habits || {};
+  const habitsMet = habitsList.filter(hb => hb.type === 'counter' ? (dh[hb.id] || 0) >= healthHabitGoal(hb, wd) : (dh[hb.id] || 0) >= 1).length;
+  const rewardEarned = !!(day.rewardAm || day.rewardPm);
+
+  const ach = [];
+  ach.push(a.isRest
+    ? { icon: '😌', label: 'Rested & recovered', earned: true }
+    : { icon: '🏋️', label: `Workout complete (${a.wDone}/${a.wTotal})`, earned: a.workoutOk });
+  ach.push({ icon: '🍽️', label: a.calOk ? 'Ate on-target' : (a.hasFood ? (totals.calories > a.goal ? 'Over calories' : 'Logged your food') : 'No food logged'), earned: a.calOk });
+  ach.push({ icon: '💪', label: 'Protein goal', earned: proteinMet });
+  ach.push({ icon: '✅', label: `Habits (${habitsMet}/${habitsList.length})`, earned: habitsList.length > 0 && a.habitsOk });
+  if (HEALTH_REWARD_DAYS.has(wd)) ach.push({ icon: '🎁', label: 'Reward earned', earned: rewardEarned });
+
+  const possible = ach.length;
+  const earnedCount = ach.filter(x => x.earned).length;
+  let tier;
+  if (earnedCount >= possible) tier = 'perfect';
+  else if (earnedCount >= possible - 1) tier = 'gold';
+  else if (earnedCount >= Math.ceil(possible / 2)) tier = 'silver';
+  else if (earnedCount >= 1) tier = 'bronze';
+  else tier = 'seed';
+  const streak = healthStreak(x => x.workoutOk && x.calOk);
+  return { iso, a, t, totals, proteinMet, habitsMet, habitsTotal: habitsList.length, achievements: ach, possible, earnedCount, tier, streak };
+}
+
 async function healthCloseDay(iso) {
+  healthShowDaySummary(iso);   // surface the achievement summary; it confirms the close
+}
+function healthShowDaySummary(iso) {
+  const existing = document.getElementById('health-summary-overlay');
+  if (existing) existing.remove();
+  const s = healthDaySummary(iso);
+  const tier = HEALTH_TIERS[s.tier];
+  const totals = s.totals, t = s.t, a = s.a;
+  const calColor = a.calOk ? '#fff' : (totals.calories > a.goal ? '#fecaca' : '#fff');
+  const stat = (icon, label, val, sub, color) => `<div style="flex:1;min-width:96px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .5rem;text-align:center">
+      <div style="font-size:1rem;line-height:1">${icon}</div>
+      <div style="font-size:1.1rem;font-weight:800;color:${color || 'var(--text)'};line-height:1.15">${val}</div>
+      <div style="font-size:.6rem;color:var(--text-muted);text-transform:uppercase;font-weight:700">${label}</div>
+      ${sub ? `<div style="font-size:.6rem;color:var(--text-muted)">${sub}</div>` : ''}
+    </div>`;
+  const statsHtml = `<div style="display:flex;gap:.45rem;flex-wrap:wrap;margin:.9rem 0 .3rem">
+      ${stat('🔥', 'Calories', Math.round(totals.calories), 'of ' + Math.round(a.goal), a.calOk ? 'var(--success)' : (totals.calories > a.goal ? 'var(--danger)' : 'var(--text)'))}
+      ${stat('💪', 'Protein', Math.round(totals.protein) + 'g', 'of ' + Math.round(t.protein), s.proteinMet ? 'var(--success)' : 'var(--text)')}
+      ${a.isRest ? stat('😌', 'Training', 'Rest', 'recovery') : stat('🏋️', 'Workout', a.wDone + '/' + a.wTotal, 'exercises', a.workoutOk ? 'var(--success)' : 'var(--text)')}
+      ${stat('✅', 'Habits', s.habitsMet + '/' + s.habitsTotal, '', (s.habitsTotal > 0 && a.habitsOk) ? 'var(--success)' : 'var(--text)')}
+    </div>`;
+  const achHtml = s.achievements.map((x, i) => `<div style="display:flex;align-items:center;gap:.6rem;padding:.4rem .1rem;opacity:0;animation:hAchIn .45s cubic-bezier(.2,.8,.3,1) forwards;animation-delay:${(0.2 + i * 0.13).toFixed(2)}s">
+      <span style="font-size:1.35rem;${x.earned ? '' : 'filter:grayscale(1);opacity:.4'}">${x.icon}</span>
+      <span style="flex:1;font-weight:600;${x.earned ? '' : 'color:var(--text-muted)'}">${escHtml(x.label)}</span>
+      <span style="font-weight:800;font-size:1rem;color:${x.earned ? 'var(--success)' : 'var(--text-muted)'}">${x.earned ? '✓' : '—'}</span>
+    </div>`).join('');
+  const streakHtml = s.streak > 0 ? `<div style="text-align:center;margin-top:.6rem;font-weight:700;color:var(--warning)">🔥 ${s.streak}-day on-plan streak</div>` : '';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'health-summary-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:1rem';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<style>
+      @keyframes hAchIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+      @keyframes hSumPop{from{opacity:0;transform:scale(.92) translateY(10px)}to{opacity:1;transform:none}}
+    </style>
+    <div style="background:var(--surface);color:var(--text);border-radius:var(--radius-lg);max-width:420px;width:100%;max-height:88vh;overflow:auto;box-shadow:var(--shadow-lg);animation:hSumPop .3s ease both">
+      <div style="background:${tier.grad};color:#fff;padding:1.4rem 1.1rem;text-align:center">
+        <div style="font-size:3rem;line-height:1">${tier.emoji}</div>
+        <div style="font-size:1.5rem;font-weight:900;margin-top:.2rem">${tier.headline}</div>
+        <div style="font-size:.85rem;font-weight:600;opacity:.95;margin-top:.25rem">${escHtml(tier.sub)}</div>
+        <div style="font-size:.72rem;opacity:.85;margin-top:.4rem">${HEALTH_WEEKDAYS_LONG[healthWeekday(iso)]}, ${fmtDate(iso)} · ${s.earnedCount}/${s.possible} goals</div>
+      </div>
+      <div style="padding:1rem 1.1rem">
+        ${statsHtml}
+        <div style="font-weight:700;font-size:.72rem;text-transform:uppercase;color:var(--text-muted);margin:.7rem 0 .2rem">Today’s achievements</div>
+        ${achHtml}
+        ${streakHtml}
+        <div style="display:flex;gap:.5rem;margin-top:1.1rem">
+          <button class="btn btn-ghost" style="flex:0 0 auto" onclick="document.getElementById('health-summary-overlay').remove()">Not yet</button>
+          <button class="btn btn-primary" style="flex:1" onclick="healthConfirmCloseDay('${iso}')">✓ Close out day</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Celebrate proportionally to the tier.
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduce && tier.confetti > 0) {
+    if (navigator.vibrate) { try { navigator.vibrate(s.tier === 'perfect' ? [15, 45, 20] : 14); } catch (e) {} }
+    const cx = window.innerWidth / 2, cy = window.innerHeight * 0.3;
+    setTimeout(() => healthConfettiBurst(cx, cy, tier.confetti), 120);
+    if (s.tier === 'perfect') setTimeout(() => healthConfettiBurst(cx, cy, tier.confetti), 520);
+  }
+}
+async function healthConfirmCloseDay(iso) {
+  const ov = document.getElementById('health-summary-overlay'); if (ov) ov.remove();
   const d = healthEnsureDay(iso); d.closed = true; d.totals = healthDayTotals(d);
   await saveHealth(); _renderHealthHtml();
 }

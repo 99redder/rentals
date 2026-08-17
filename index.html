@@ -13890,10 +13890,13 @@ function healthDailyHtml() {
         const pips = states.map((on, i) => `<label style="display:inline-flex;align-items:center;gap:.25rem;cursor:pointer;font-size:.74rem;font-weight:600;color:${on ? 'var(--success)' : 'var(--text-muted)'}">
             <input type="checkbox" ${on ? 'checked' : ''} onchange="healthToggleSet('${iso}','${e.id}',${i},event)" style="width:auto">${total > 1 ? 'Set ' + (i + 1) : 'Done'}
           </label>`).join('');
-        return `<div style="padding:.5rem .2rem;border-bottom:1px solid var(--border)">
+        const rowStyle = exDone
+          ? 'padding:.55rem .65rem;margin:.4rem 0;background:rgba(34,197,94,.14);border:1px solid var(--success);border-radius:var(--radius)'
+          : 'padding:.5rem .2rem;border-bottom:1px solid var(--border)';
+        return `<div style="${rowStyle}">
           <div style="display:flex;align-items:flex-start;gap:.6rem">
             <span style="flex:1">
-              <span style="font-weight:600;${exDone ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(e.name)}</span>
+              <span style="font-weight:${exDone ? '700' : '600'};${exDone ? 'color:var(--success)' : ''}">${escHtml(e.name)}${exDone ? ' ✓' : ''}</span>
               <span style="display:block;font-size:.76rem;color:var(--text-muted)">${escHtml(e.detail || '')}</span>
             </span>
             <span style="font-size:.7rem;font-weight:800;white-space:nowrap;color:${exDone ? 'var(--success)' : 'var(--text-muted)'}">${sd}/${total}${exDone ? ' ✓' : ''}</span>

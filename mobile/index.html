@@ -680,7 +680,16 @@
 
     const goal=n(h.profile&&h.profile.goalWeight)||155,weighIns=(h.weighIns||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
     const weightRows=weighIns.slice(0,6).map((w,i)=>{const next=weighIns[i+1],chg=next?n(w.weight)-n(next.weight):null;return row(fmtDay(w.date),`${n(w.weight)} lb`,chg==null?'':`${chg<=0?'▼':'▲'} ${Math.abs(chg).toFixed(1)} lb`,chg==null?'':(chg<=0?'good':'bad'));}).join('');
-    const weightCard=`<section class="card"><div class="card-head"><div class="card-title">⚖️ Weight</div><span class="pill">Goal ${goal}</span></div><div style="padding:8px 12px 0">${healthWeightChart(h.weighIns,goal)}</div><div class="rows">${weightRows||'<div class="empty">No weigh-ins yet.</div>'}</div></section>`;
+    const startW=(function(){const s=h.profile&&h.profile.startDate;const inp=(h.weighIns||[]).filter(x=>!s||x.date>=s).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));return inp.length?n(inp[0].weight):(n(h.profile&&h.profile.startWeight)||185);})();
+    const curW=weighIns.length?n(weighIns[0].weight):startW,toGoW=curW-goal,lostW=startW-curW,totLose=startW-goal,pctW=totLose>0?Math.max(0,Math.min(100,lostW/totLose*100)):0;
+    const prW=hWeightProjection(h);let projLine='';
+    if(prW.status==='ok'){const dt=new Date(prW.proj+'T12:00:00Z');const lbl=isNaN(dt.getTime())?prW.proj:dt.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});projLine=`📉 On pace for <b>${goal} lb around ${lbl}</b> · ${prW.lbToGo.toFixed(1)} lb to go at ${prW.rate.toFixed(1)} lb/wk`;}
+    else if(prW.status==='reached')projLine='🎉 Goal reached — maintain!';
+    else if(prW.status==='need-data'){const nn=2-prW.have;projLine=`Log ${nn} more weekly weigh-in${nn===1?'':'s'} for a projected goal date.`;}
+    else if(prW.status==='stalled')projLine=`${prW.lbToGo.toFixed(1)} lb to go — no downward trend yet, keep going.`;
+    const wStat=(lbl,val,col)=>`<div><div style="font-size:.58rem;color:var(--muted);text-transform:uppercase;font-weight:800;letter-spacing:.03em">${lbl}</div><div style="font-size:1.1rem;font-weight:800;${col?'color:'+col:''}">${val}</div></div>`;
+    const progHtml=`<div style="padding:11px 12px 0"><div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:9px">${wStat('Start',startW+' lb')}${wStat('Current',curW+' lb','var(--green2)')}${wStat('Goal',goal+' lb','var(--good)')}${wStat('To Go',Math.max(0,toGoW).toFixed(1)+' lb')}</div><div style="height:9px;background:var(--line);border-radius:6px;overflow:hidden;margin-bottom:8px"><div style="width:${pctW}%;height:100%;background:linear-gradient(90deg,#43b9a1,#176b5b)"></div></div>${projLine?`<div style="font-size:.78rem;color:var(--muted);line-height:1.4">${projLine}</div>`:''}</div>`;
+    const weightCard=`<section class="card"><div class="card-head"><div class="card-title">⚖️ Weight</div><span class="pill">Goal ${goal}</span></div>${progHtml}<div style="padding:8px 12px 0">${healthWeightChart(h.weighIns,goal)}</div><div class="rows">${weightRows||'<div class="empty">No weigh-ins yet.</div>'}</div></section>`;
 
     let rewardCard;
     if(!(wd>=1&&wd<=5))rewardCard=`<section class="card"><div class="card-head"><div class="card-title">🎁 Rewards</div></div><div class="rows"><div class="empty">Mon–Fri only — enjoy the weekend. 😌</div></div></section>`;

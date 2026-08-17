@@ -13604,6 +13604,7 @@ function _renderHealthHtml() {
   let body = '';
   if (_healthView === 'daily') body = healthDailyHtml();
   else if (_healthView === 'weekly') body = healthWeeklyHtml();
+  else if (_healthView === 'weight') body = healthWeightHtml();
   else if (_healthView === 'history') body = healthHistoryHtml();
   else body = healthSetupHtml();
 
@@ -13617,7 +13618,7 @@ function _renderHealthHtml() {
         <div style="font-size:.8rem;color:var(--text-muted)">Workouts · diet & calories · weight loss · rewards</div>
       </div>
       <div style="display:flex;gap:.4rem;flex-wrap:wrap">
-        ${tab('daily', 'Daily')}${tab('weekly', 'Weekly')}${tab('history', 'History')}${tab('setup', 'Setup')}
+        ${tab('daily', 'Daily')}${tab('weekly', 'Weekly')}${tab('weight', '⚖️ Weight')}${tab('history', 'History')}${tab('setup', 'Setup')}
       </div>
     </div>
     ${body}`;
@@ -13804,20 +13805,21 @@ function healthDailyHtml() {
         : `<button class="btn btn-primary btn-sm" onclick="healthCloseDay('${iso}')">Close Day →</button>`}
     </div></div>`;
 
-  // Weigh-in prompt (Mondays)
+  // Weigh-in prompt — Mondays only, and only until it's recorded. Once logged it
+  // disappears (no lingering "Update"); corrections + all trends live on ⚖️ Weight.
   const monday = healthMondayOf(iso);
   const weighIn = healthWeighInFor(monday);
   let weighCard = '';
-  if (wd === 1) {
-    weighCard = `<div class="card" style="margin-bottom:1rem;border:1px solid ${weighIn ? 'var(--border)' : '#ef4444'};${weighIn ? '' : 'background:rgba(239,68,68,.13)'}">
+  if (wd === 1 && !weighIn) {
+    weighCard = `<div class="card" style="margin-bottom:1rem;border:1px solid #ef4444;background:rgba(239,68,68,.13)">
       <div style="padding:.85rem 1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">
         <div style="font-size:1.4rem">⚖️</div>
         <div style="flex:1;min-width:150px">
-          <div style="font-weight:700">Monday Weigh-In${weighIn ? '' : ' — required'}</div>
-          <div style="font-size:.78rem;color:var(--text-muted)">${weighIn ? `Recorded: <strong>${weighIn.weight} lb</strong>` : 'Weigh in first thing this morning (one measurement per week).'}</div>
+          <div style="font-weight:700">Monday Weigh-In — required</div>
+          <div style="font-size:.78rem;color:var(--text-muted)">Weigh in first thing this morning (one measurement per week). See trends on the ⚖️ Weight tab.</div>
         </div>
-        <input type="number" step="0.1" inputmode="decimal" id="h-weighin-input" class="form-input" placeholder="lb" value="${weighIn ? weighIn.weight : ''}" style="width:100px">
-        <button class="btn btn-primary btn-sm" onclick="healthSaveWeighIn('${monday}')">${weighIn ? 'Update' : 'Save'}</button>
+        <input type="number" step="0.1" inputmode="decimal" id="h-weighin-input" class="form-input" placeholder="lb" style="width:100px">
+        <button class="btn btn-primary btn-sm" onclick="healthSaveWeighIn('${monday}')">Save</button>
       </div></div>`;
   }
 
@@ -14019,8 +14021,7 @@ function healthDailyHtml() {
       <div style="font-size:.72rem;color:var(--text-muted);margin-top:.4rem">Defaults for ${HEALTH_WEEKDAYS_LONG[wd]}: AM ${escHtml(sched.am || '—')} · PM ${escHtml(sched.pm || '—')} · edit under Setup.</div>`);
   }
 
-  const projectionCard = healthCard('📉 Goal Projection', healthProjectionInner(true));
-  return `${nav}${weighCard}${streakStrip}${projectionCard}
+  return `${nav}${weighCard}${streakStrip}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 1rem;align-items:start">
       <div>${calCard}${workoutCard}${habitsCard}</div>
       <div>${mealCard}${foodCard}${rewardCard}</div>
@@ -14658,7 +14659,8 @@ function healthProjectionInner(compact) {
     </div>`;
 }
 
-function healthHistoryHtml() {
+// ── Weight view (dedicated) ───────────────────────────────────────────────────
+function healthWeightHtml() {
   const h = state.health;
   const weighIns = [...h.weighIns].sort((a, b) => b.date.localeCompare(a.date));
   const start = healthStartWeight(h), goal = h.profile.goalWeight;
@@ -14690,6 +14692,7 @@ function healthHistoryHtml() {
   }).join('');
   const thisMon = healthMondayOf(appTodayIso());
   const thisWeighIn = healthWeighInFor(thisMon);
+  // Correction/entry input lives here (the Daily card only prompts an initial entry).
   const weighInput = `<div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-bottom:.75rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)">
       <span style="font-size:1.3rem">⚖️</span>
       <div style="flex:1;min-width:140px;font-size:.82rem"><strong>This week</strong> · ${fmtDate(thisMon)}${thisWeighIn ? ` — <span style="color:var(--text-muted)">${thisWeighIn.weight} lb logged</span>` : '<span style="color:var(--text-muted)"> — not recorded yet</span>'}</div>
@@ -14698,9 +14701,14 @@ function healthHistoryHtml() {
     </div>`;
   const weighTable = healthCard('⚖️ Weigh-In Log', `${weighInput}<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.85rem">
       <thead><tr style="text-align:left;color:var(--text-muted);font-size:.72rem;text-transform:uppercase"><th style="padding:.3rem .6rem">Week Of</th><th style="padding:.3rem .6rem;text-align:right">Weight</th><th style="padding:.3rem .6rem;text-align:right">Change</th></tr></thead>
-      <tbody>${weighRows || '<tr><td colspan="3" style="padding:.8rem .6rem;color:var(--text-muted)">No weigh-ins yet.</td></tr>'}</tbody>
+      <tbody>${weighRows || '<tr><td colspan="3" style="padding:.8rem .6rem;color:var(--text-muted)">No weigh-ins yet. Record one on the Daily tab (Mondays) or here.</td></tr>'}</tbody>
     </table></div>`);
+  const projectionCard = healthCard('📉 Goal Projection', healthProjectionInner(false));
+  return `${progressCard}${projectionCard}${weighTable}`;
+}
 
+function healthHistoryHtml() {
+  const h = state.health;
   const closedDays = Object.entries(h.days).filter(([, d]) => d.closed).sort((a, b) => b[0].localeCompare(a[0]));
   const t = healthTargets(h);
   const dayRows = closedDays.slice(0, 90).map(([iso, d]) => {
@@ -14722,9 +14730,7 @@ function healthHistoryHtml() {
       <tbody>${dayRows || '<tr><td colspan="5" style="padding:.8rem .6rem;color:var(--text-muted)">No days closed out yet. Close a day from the Daily view to file it here.</td></tr>'}</tbody>
     </table></div>${closedDays.length > 90 ? `<div style="font-size:.74rem;color:var(--text-muted);margin-top:.5rem">Showing the 90 most recent of ${closedDays.length} closed days.</div>` : ''}`);
 
-  const projectionCard = healthCard('📉 Goal Projection', healthProjectionInner(false));
-  return `${progressCard}${projectionCard}
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 1rem;align-items:start"><div>${weighTable}</div><div>${daysTable}</div></div>`;
+  return daysTable;
 }
 
 // ── Setup view ────────────────────────────────────────────────────────────────

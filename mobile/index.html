@@ -704,12 +704,13 @@
     }
 
     const habits=(h.profile&&h.profile.habits)||[];
+    const habitBox='background:var(--mint);border:1px solid var(--green2);border-radius:12px;padding:12px;margin:6px 0';
     const habitRows=habits.map(hb=>{
       const v=n(day.habits[hb.id]);
       if(hb.type==='counter'){const g=healthHabitGoal(h,hb,wd),met=v>=g;
-        return `<div class="h-row"><span style="font-size:1.2rem">${esc(hb.icon)}</span><div><div class="h-name">${esc(hb.name)} ${met?'<span class="good">✓</span>':''}</div><div class="h-sub">${v} of ${g}${hb.unit?' '+esc(hb.unit):''}</div></div><div style="display:flex;gap:8px;align-items:center"><button class="h-step" onclick="hBumpHabit('${hb.id}',-1)">−</button><span class="h-count">${v}</span><button class="h-step" onclick="hBumpHabit('${hb.id}',1,event)">+</button></div></div>`;}
+        return `<div class="h-row" style="${met?habitBox:''}"><span style="font-size:1.2rem">${esc(hb.icon)}</span><div><div class="h-name" style="${met?'color:var(--good)':''}">${esc(hb.name)} ${met?'<span class="good">✓</span>':''}</div><div class="h-sub">${v} of ${g}${hb.unit?' '+esc(hb.unit):''}</div></div><div style="display:flex;gap:8px;align-items:center"><button class="h-step" onclick="hBumpHabit('${hb.id}',-1)">−</button><span class="h-count">${v}</span><button class="h-step" onclick="hBumpHabit('${hb.id}',1,event)">+</button></div></div>`;}
       const done=v>=1;
-      return `<label class="h-row ${done?'h-done':''}"><input type="checkbox" class="h-check" ${done?'checked':''} onchange="hToggleHabit('${hb.id}',event)"><div><div class="h-name">${esc(hb.icon)} ${esc(hb.name)}</div>${hb.note?`<div class="h-sub">${esc(hb.note)}</div>`:''}</div><span></span></label>`;
+      return `<label class="h-row" style="${done?habitBox:''}"><input type="checkbox" class="h-check" ${done?'checked':''} onchange="hToggleHabit('${hb.id}',event)"><div><div class="h-name" style="${done?'color:var(--good);font-weight:700':''}">${esc(hb.icon)} ${esc(hb.name)}${done?' ✓':''}</div>${hb.note?`<div class="h-sub">${esc(hb.note)}</div>`:''}</div><span></span></label>`;
     }).join('');
     const habitsCard=habits.length?`<section class="card"><div class="card-head"><div class="card-title">✅ Daily Habits</div></div><div class="rows">${habitRows}</div></section>`:'';
 

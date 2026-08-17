@@ -13492,6 +13492,38 @@ function healthMealsForDate(iso) {
   const day = state.health.days[iso];
   return (day && Array.isArray(day.meals)) ? day.meals : [];
 }
+
+// ── Workout sets ──────────────────────────────────────────────────────────────
+// Each exercise is broken into individually checkable sets so a workout can be
+// split across the day. Set count = explicit e.sets, else parsed from the detail
+// ("4 × 8–12" → 4, "5 sets × AMRAP" → 5, "Plank 3 × 45 sec" → 3), default 1.
+function healthExerciseSets(e) {
+  if (e && Number(e.sets) > 0) return Math.min(12, Math.round(Number(e.sets)));
+  const d = String((e && e.detail) || '');
+  // "5 sets × AMRAP" → 5, else "4 × 8–12" / "3 x 20" → the count before the ×/x.
+  const m = d.match(/(\d+)\s*sets?\b/i) || d.match(/(\d+)\s*[×x]/i);
+  const n = m ? parseInt(m[1], 10) : 1;
+  return Math.min(12, Math.max(1, n));
+}
+// Per-set completion as a boolean[] of length = set count. day.workoutsDone[id]
+// may be a boolean (legacy: whole exercise), a boolean array (per-set), or a
+// count — all are read here, so old records keep working.
+function healthExerciseSetStates(day, e) {
+  const total = healthExerciseSets(e);
+  const arr = new Array(total).fill(false);
+  const v = day && day.workoutsDone ? day.workoutsDone[e.id] : undefined;
+  if (v === true) arr.fill(true);
+  else if (Array.isArray(v)) for (let i = 0; i < total; i++) arr[i] = !!v[i];
+  else if (Number(v) > 0) { const n = Math.min(total, Math.round(Number(v))); for (let i = 0; i < n; i++) arr[i] = true; }
+  return arr;
+}
+function healthExerciseDone(day, e) {
+  const s = healthExerciseSetStates(day, e);
+  return s.length > 0 && s.every(Boolean);
+}
+function healthExerciseAnyDone(day, e) {
+  return healthExerciseSetStates(day, e).some(Boolean);
+}
 function healthWeighInFor(mondayIso) {
   return (state.health.weighIns || []).find(w => w.date === mondayIso) || null;
 }
@@ -13513,14 +13545,15 @@ function healthDayAdherence(iso) {
   const t = healthTargets(state.health);
   const totals = day ? healthDayTotals(day) : { calories: 0 };
   const exs = isRest ? [] : (state.health.workoutPlan[String(wd)] || []);
-  const wDone = day ? exs.filter(e => day.workoutsDone && day.workoutsDone[e.id]).length : 0;
+  const wDone = day ? exs.filter(e => healthExerciseDone(day, e)).length : 0;
+  const anyWorkout = !!day && exs.some(e => healthExerciseAnyDone(day, e));
   const workoutOk = isRest ? true : (exs.length > 0 && wDone === exs.length);
   const hasFood = totals.calories > 0;
   const calOk = hasFood && totals.calories <= t.calories;
   const dh = (day && day.habits) || {};
   const habitsList = state.health.profile.habits || [];
   const habitsOk = habitsList.every(hb => hb.type === 'counter' ? (dh[hb.id] || 0) >= healthHabitGoal(hb, wd) : (dh[hb.id] || 0) >= 1);
-  const hasData = !!day && (hasFood || wDone > 0 || Object.values(dh).some(v => v) || day.rewardAm || day.rewardPm || day.rewardEarned);
+  const hasData = !!day && (hasFood || anyWorkout || Object.values(dh).some(v => v) || day.rewardAm || day.rewardPm || day.rewardEarned);
   return { isRest, workoutOk, calOk, habitsOk, hasFood, hasData, wDone, wTotal: exs.length, totals, goal: t.calories };
 }
 // Reward "unlocks" when the day's workout + calorie targets are met.
@@ -13831,24 +13864,35 @@ function healthDailyHtml() {
 
   // Workout card
   const exercises = isRest ? [] : (state.health.workoutPlan[String(wd)] || []);
-  const doneCount = exercises.filter(e => day.workoutsDone[e.id]).length;
+  const doneCount = exercises.filter(e => healthExerciseDone(day, e)).length;
   const mondayNote = (wd === 1 && !isRest)
     ? `<div style="background:rgba(239,68,68,.13);border:1px solid #ef4444;border-radius:var(--radius);padding:.5rem .7rem;margin-bottom:.6rem;font-size:.8rem"><strong>💪 Weekend Reset — front-loaded day.</strong> You’re fresh after two rest days, so Monday is the toughest: hit the hard compounds first, then the extra core and a longer walk to offset the weekend. No reward today — earn it back through the week.</div>`
     : '';
   const workoutInner = isRest
     ? `<div style="text-align:center;padding:1rem;color:var(--text-muted)"><div style="font-size:1.6rem">😌</div><div style="font-weight:700;color:var(--text);margin-top:.3rem">Rest & Recovery Day</div><div style="font-size:.82rem;margin-top:.25rem">No training today. An easy 20–30 min walk is fine if you feel up to it. Recovery is where a 43-year-old body makes its gains.</div></div>`
-    : mondayNote + exercises.map(e => `
-        <div style="padding:.5rem .2rem;border-bottom:1px solid var(--border)">
-          <label style="display:flex;align-items:flex-start;gap:.6rem;cursor:pointer;margin:0">
-            <input type="checkbox" ${day.workoutsDone[e.id] ? 'checked' : ''} onchange="healthToggleWorkout('${iso}','${e.id}',event)" style="width:auto;margin-top:.2rem">
+    : mondayNote + exercises.map(e => {
+        const states = healthExerciseSetStates(day, e);
+        const total = states.length;
+        const sd = states.filter(Boolean).length;
+        const exDone = sd === total;
+        const pips = states.map((on, i) => `<label style="display:inline-flex;align-items:center;gap:.25rem;cursor:pointer;font-size:.74rem;font-weight:600;color:${on ? 'var(--success)' : 'var(--text-muted)'}">
+            <input type="checkbox" ${on ? 'checked' : ''} onchange="healthToggleSet('${iso}','${e.id}',${i},event)" style="width:auto">${total > 1 ? 'Set ' + (i + 1) : 'Done'}
+          </label>`).join('');
+        return `<div style="padding:.5rem .2rem;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:flex-start;gap:.6rem">
             <span style="flex:1">
-              <span style="font-weight:600;${day.workoutsDone[e.id] ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(e.name)}</span>
+              <span style="font-weight:600;${exDone ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${escHtml(e.name)}</span>
               <span style="display:block;font-size:.76rem;color:var(--text-muted)">${escHtml(e.detail || '')}</span>
             </span>
-          </label>
+            <span style="font-size:.7rem;font-weight:800;white-space:nowrap;color:${exDone ? 'var(--success)' : 'var(--text-muted)'}">${sd}/${total}${exDone ? ' ✓' : ''}</span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .7rem;margin-top:.4rem">${pips}</div>
           ${healthExerciseDemoHtml(e)}
-        </div>`).join('');
-  const workoutHeader = isRest ? '' : `<span style="font-size:.8rem;color:var(--text-muted)">${doneCount}/${exercises.length} done</span>`;
+        </div>`;
+      }).join('');
+  const totalSets = exercises.reduce((s, e) => s + healthExerciseSets(e), 0);
+  const doneSets = exercises.reduce((s, e) => s + healthExerciseSetStates(day, e).filter(Boolean).length, 0);
+  const workoutHeader = isRest ? '' : `<span style="font-size:.8rem;color:var(--text-muted)">${doneCount}/${exercises.length} done · ${doneSets}/${totalSets} sets</span>`;
   const workoutCard = healthCard(`🏋️ Workout · ${HEALTH_WEEKDAYS[wd]}`, workoutInner, workoutHeader);
 
   // Meal plan card
@@ -14037,6 +14081,27 @@ async function healthToggleWorkout(iso, exId, ev) {
     const exs = state.health.workoutPlan[String(wd)] || [];
     const allDone = exs.length > 0 && exs.every(e => d.workoutsDone[e.id]);
     healthCelebrate(ev, { message: allDone ? '🎉 Workout complete!' : healthCheer(), big: allDone });
+  }
+  await saveHealth(); _renderHealthHtml();
+}
+// Check/uncheck one set of an exercise. Stored compactly: `true` when every set
+// is done, `false` when none, otherwise the per-set boolean array.
+async function healthToggleSet(iso, exId, setIdx, ev) {
+  const d = healthEnsureDay(iso);
+  const wd = healthWeekday(iso);
+  const exs = state.health.workoutPlan[String(wd)] || [];
+  const e = exs.find(x => x.id === exId);
+  if (!e) return;
+  const arr = healthExerciseSetStates(d, e);
+  if (setIdx < 0 || setIdx >= arr.length) return;
+  const becoming = !arr[setIdx];
+  arr[setIdx] = becoming;
+  const all = arr.every(Boolean), any = arr.some(Boolean);
+  d.workoutsDone[exId] = all ? true : (any ? arr : false);
+  if (becoming) {
+    const workoutDone = exs.length > 0 && exs.every(x => healthExerciseDone(d, x));
+    if (workoutDone) healthCelebrate(ev, { message: '🎉 Workout complete!', big: true });
+    else if (all) healthCelebrate(ev, { message: healthCheer(), big: false });
   }
   await saveHealth(); _renderHealthHtml();
 }
@@ -14462,7 +14527,7 @@ function healthHistoryHtml() {
     const wd = healthWeekday(iso);
     const totals = d.totals || healthDayTotals(d);
     const exs = HEALTH_REST_DAYS.has(wd) ? [] : (h.workoutPlan[String(wd)] || []);
-    const wDone = exs.filter(e => d.workoutsDone && d.workoutsDone[e.id]).length;
+    const wDone = exs.filter(e => healthExerciseDone(d, e)).length;
     const over = totals.calories > t.calories;
     return `<tr>
       <td style="padding:.4rem .6rem;border-bottom:1px solid var(--border);white-space:nowrap"><button class="btn btn-ghost btn-sm" style="padding:.05rem .35rem" onclick="healthSetView('daily');healthSetDate('${iso}')">${fmtDate(iso)}</button></td>

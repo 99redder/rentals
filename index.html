@@ -14249,6 +14249,16 @@ const HEALTH_TIERS = {
   bronze:  { emoji: '🥉', headline: 'On the board',            grad: 'linear-gradient(135deg,#a855f7,#7c3aed)', confetti: 12, sub: 'You showed up and logged it. That is how it starts.' },
   seed:    { emoji: '🌱', headline: 'Tomorrow’s a fresh start', grad: 'linear-gradient(135deg,#64748b,#475569)', confetti: 0,  sub: 'No perfect days required. Reset and go again.' },
 };
+// Encouraging, week-aware guidance on when strength work starts showing —
+// neural gains first (feel it), then firmness, then visible definition as fat drops.
+function healthStrengthOutlook(weekNum) {
+  const w = Math.max(1, weekNum);
+  if (w < 2) return `You're in week ${w}. Early gains are <strong>neural</strong> — you'll feel stronger (more reps, steadier form) before you see it. Physical changes usually start around <strong>weeks 4–6</strong>.`;
+  if (w < 4) return `Week ${w}. Strength is climbing fast right now. Firmness and better pumps show first; visible <strong>definition tends to appear around weeks 4–8</strong>.`;
+  if (w < 8) return `Week ${w}. This is when <strong>definition starts to show</strong>, especially as body-fat drops — you'll likely notice it in the mirror before anyone else does.`;
+  if (w < 12) return `Week ${w}. Noticeable muscle definition should be emerging — changes often become <strong>visible to others around weeks 10–12</strong>.`;
+  return `Week ${w}. You're past the point where consistent training shows clearly. Keep adding reps/resistance (progressive overload) to keep building.`;
+}
 function healthDaySummary(iso) {
   const a = healthDayAdherence(iso);
   const t = healthTargets(state.health);
@@ -14311,6 +14321,22 @@ function healthShowDaySummary(iso) {
     </div>`).join('');
   const streakHtml = s.streak > 0 ? `<div style="text-align:center;margin-top:.6rem;font-weight:700;color:var(--warning)">🔥 ${s.streak}-day on-plan streak</div>` : '';
 
+  // Forward-looking outlook: projected goal-weight date + strength timeline.
+  const startIso = state.health.profile.startDate || iso;
+  const weekNum = Math.max(1, Math.floor((Date.parse(iso + 'T12:00:00Z') - Date.parse(startIso + 'T12:00:00Z')) / (7 * 86400000)) + 1);
+  const pr = healthWeightProjection(state.health);
+  let weightMsg;
+  if (pr.status === 'reached') weightMsg = `You've reached ${pr.goal} lb — <strong>goal met!</strong> 🎉 Shift to maintaining.`;
+  else if (pr.status === 'need-data') { const n = 2 - pr.have; weightMsg = `${pr.lbToGo.toFixed(1)} lb to go to ${pr.goal} lb. Log ${n} more weekly weigh-in${n === 1 ? '' : 's'} for a projected date.`; }
+  else if (pr.status === 'stalled') weightMsg = `${pr.lbToGo.toFixed(1)} lb to go to ${pr.goal} lb — no clear downward trend yet, keep going.`;
+  else { const d = new Date(pr.projDate + 'T12:00:00Z'); const lbl = isNaN(d.getTime()) ? pr.projDate : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); weightMsg = `On pace for <strong>${pr.goal} lb around ${lbl}</strong> — ${pr.lbToGo.toFixed(1)} lb to go at ${pr.weeklyRate.toFixed(1)} lb/wk.`; }
+  const outlookRow = (icon, html) => `<div style="display:flex;gap:.6rem;align-items:flex-start;padding:.35rem 0"><span style="font-size:1.2rem;line-height:1.3">${icon}</span><div style="flex:1;font-size:.82rem;line-height:1.35">${html}</div></div>`;
+  const outlookHtml = `<div style="margin-top:.9rem;border-top:1px solid var(--border);padding-top:.6rem">
+      <div style="font-weight:700;font-size:.72rem;text-transform:uppercase;color:var(--text-muted);margin-bottom:.2rem">Your outlook</div>
+      ${outlookRow('🎯', weightMsg)}
+      ${outlookRow('💪', healthStrengthOutlook(weekNum))}
+    </div>`;
+
   const overlay = document.createElement('div');
   overlay.id = 'health-summary-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:1rem';
@@ -14331,6 +14357,7 @@ function healthShowDaySummary(iso) {
         <div style="font-weight:700;font-size:.72rem;text-transform:uppercase;color:var(--text-muted);margin:.7rem 0 .2rem">Today’s achievements</div>
         ${achHtml}
         ${streakHtml}
+        ${outlookHtml}
         <div style="display:flex;gap:.5rem;margin-top:1.1rem">
           <button class="btn btn-ghost" style="flex:0 0 auto" onclick="document.getElementById('health-summary-overlay').remove()">Not yet</button>
           <button class="btn btn-primary" style="flex:1" onclick="healthConfirmCloseDay('${iso}')">✓ Close out day</button>

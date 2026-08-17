@@ -13886,13 +13886,14 @@ function healthDailyHtml() {
             </span>
             <span style="font-size:.7rem;font-weight:800;white-space:nowrap;color:${exDone ? 'var(--success)' : 'var(--text-muted)'}">${sd}/${total}${exDone ? ' ✓' : ''}</span>
           </div>
-          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .7rem;margin-top:.4rem">${pips}</div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .7rem;margin-top:.4rem">${pips}${total > 1 ? `<button class="btn btn-ghost btn-sm" style="padding:0 .45rem;font-size:.68rem" onclick="healthMarkAllSets('${iso}','${e.id}',event)" title="${exDone ? 'Clear all sets' : 'Mark all sets done'}">${exDone ? 'clear' : 'all'}</button>` : ''}</div>
           ${healthExerciseDemoHtml(e)}
         </div>`;
       }).join('');
   const totalSets = exercises.reduce((s, e) => s + healthExerciseSets(e), 0);
   const doneSets = exercises.reduce((s, e) => s + healthExerciseSetStates(day, e).filter(Boolean).length, 0);
-  const workoutHeader = isRest ? '' : `<span style="font-size:.8rem;color:var(--text-muted)">${doneCount}/${exercises.length} done · ${doneSets}/${totalSets} sets</span>`;
+  const allExDone = exercises.length > 0 && doneCount === exercises.length;
+  const workoutHeader = isRest ? '' : `<span style="display:inline-flex;align-items:center;gap:.5rem;flex-wrap:wrap"><span style="font-size:.8rem;color:var(--text-muted)">${doneCount}/${exercises.length} done · ${doneSets}/${totalSets} sets</span><button class="btn btn-ghost btn-sm" style="padding:.15rem .55rem;font-size:.72rem" onclick="healthMarkWholeWorkout('${iso}',event)" title="${allExDone ? 'Clear the whole workout' : 'Mark every set done'}">${allExDone ? 'Clear all' : '✓ Mark all'}</button></span>`;
   const workoutCard = healthCard(`🏋️ Workout · ${HEALTH_WEEKDAYS[wd]}`, workoutInner, workoutHeader);
 
   // Meal plan card
@@ -14103,6 +14104,30 @@ async function healthToggleSet(iso, exId, setIdx, ev) {
     if (workoutDone) healthCelebrate(ev, { message: '🎉 Workout complete!', big: true });
     else if (all) healthCelebrate(ev, { message: healthCheer(), big: false });
   }
+  await saveHealth(); _renderHealthHtml();
+}
+// Mark every set of one exercise done (or clear it if already fully done).
+async function healthMarkAllSets(iso, exId, ev) {
+  const d = healthEnsureDay(iso);
+  const exs = state.health.workoutPlan[String(healthWeekday(iso))] || [];
+  const e = exs.find(x => x.id === exId);
+  if (!e) return;
+  const wasDone = healthExerciseDone(d, e);
+  d.workoutsDone[exId] = wasDone ? false : true;
+  if (!wasDone) {
+    const workoutDone = exs.length > 0 && exs.every(x => healthExerciseDone(d, x));
+    healthCelebrate(ev, { message: workoutDone ? '🎉 Workout complete!' : healthCheer(), big: workoutDone });
+  }
+  await saveHealth(); _renderHealthHtml();
+}
+// Mark the whole day's workout done (or clear it if already fully done).
+async function healthMarkWholeWorkout(iso, ev) {
+  const d = healthEnsureDay(iso);
+  const exs = state.health.workoutPlan[String(healthWeekday(iso))] || [];
+  if (!exs.length) return;
+  const allDone = exs.every(e => healthExerciseDone(d, e));
+  for (const e of exs) d.workoutsDone[e.id] = allDone ? false : true;
+  if (!allDone) healthCelebrate(ev, { message: '🎉 Workout complete!', big: true });
   await saveHealth(); _renderHealthHtml();
 }
 async function healthToggleMeal(iso, mealId) {

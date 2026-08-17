@@ -13491,7 +13491,8 @@ function healthEnsureDay(iso) {
 }
 function healthDayTotals(day) {
   return (day.foodLog || []).reduce((t, f) => {
-    t.calories += +f.calories || 0; t.protein += +f.protein || 0; t.carbs += +f.carbs || 0; t.fat += +f.fat || 0; return t;
+    const q = Math.max(1, +f.qty || 1);
+    t.calories += (+f.calories || 0) * q; t.protein += (+f.protein || 0) * q; t.carbs += (+f.carbs || 0) * q; t.fat += (+f.fat || 0) * q; return t;
   }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
 // The meal plan for a specific date — the meals dragged onto it in the Weekly
@@ -13943,12 +13944,18 @@ function healthDailyHtml() {
       </tr>`;
     }
     const mealBadge = f.fromMeal ? `<span title="Logged from today's meal plan" style="display:inline-block;background:var(--card-bg);color:var(--text-muted);border:1px solid var(--border);border-radius:999px;padding:0 .4rem;font-size:.6rem;font-weight:700;margin-left:.3rem">🍽 plan</span>` : '';
+    const qty = Math.max(1, +f.qty || 1);
+    const stepper = `<span style="display:inline-flex;align-items:center;gap:.1rem;margin-right:.5rem;vertical-align:middle">
+      <button class="btn btn-ghost btn-sm" style="padding:0 .4rem;font-size:.9rem;line-height:1.3" onclick="healthSetFoodQty('${iso}','${f.id}',-1)" title="Fewer">−</button>
+      <span style="min-width:1.5rem;text-align:center;font-weight:800;font-size:.78rem">×${qty}</span>
+      <button class="btn btn-ghost btn-sm" style="padding:0 .4rem;font-size:.9rem;line-height:1.3" onclick="healthSetFoodQty('${iso}','${f.id}',1)" title="More">+</button>
+    </span>`;
     return `<tr>
-      <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border)">${escHtml(f.name)}${healthFoodTag(f)}${mealBadge}</td>
-      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right">${Math.round(f.calories)}</td>
-      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.protein)}</td>
-      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.carbs)}</td>
-      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.fat)}</td>
+      <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border)">${stepper}${escHtml(f.name)}${healthFoodTag(f)}${mealBadge}</td>
+      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right">${Math.round(f.calories * qty)}</td>
+      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.protein * qty)}</td>
+      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.carbs * qty)}</td>
+      <td style="padding:.4rem .3rem;border-bottom:1px solid var(--border);text-align:right;color:var(--text-muted)">${Math.round(f.fat * qty)}</td>
       <td style="padding:.4rem .5rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
         <button class="btn btn-ghost btn-sm" onclick="healthEditLogged('${iso}','${f.id}')" style="padding:.15rem .4rem">✏️</button>
         <button class="btn btn-ghost btn-sm" onclick="healthDeleteLogged('${iso}','${f.id}')" style="padding:.15rem .4rem">✕</button>
@@ -14225,6 +14232,13 @@ async function healthQuickLog(iso, foodId) {
   const d = healthEnsureDay(iso);
   d.foodLog.push({ id: hid(), name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, foodId: food.id, ...(food.tag ? { tag: food.tag } : {}), ...(food.est ? { est: true } : {}) });
   food.uses = (food.uses || 0) + 1;
+  await saveHealth(); _renderHealthHtml();
+}
+async function healthSetFoodQty(iso, id, delta) {
+  const d = healthEnsureDay(iso);
+  const f = (d.foodLog || []).find(x => x.id === id);
+  if (!f) return;
+  f.qty = Math.max(1, Math.max(1, +f.qty || 1) + delta);
   await saveHealth(); _renderHealthHtml();
 }
 function healthEditLogged(iso, id) { _healthEditFoodId = id; _renderHealthHtml(); }

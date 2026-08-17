@@ -555,7 +555,7 @@
   function hMarkWorkout(ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),exs=(h.workoutPlan&&h.workoutPlan[healthWeekday(iso)])||[];if(!exs.length)return;const all=exs.every(e=>healthExDone(d,e));exs.forEach(e=>d.workoutsDone[e.id]=all?false:true);if(!all)hCelebrate(ev,'🎉 Workout complete!',true);});}
   // ── Close Day: achievement summary (mirrors desktop) ──
   function hAddDays(iso,delta){const [y,m,dd]=String(iso).split('-').map(Number);return new Date(Date.UTC(y,m-1,dd+delta)).toISOString().slice(0,10);}
-  function hDayTotals(day){return (day.foodLog||[]).reduce((t,f)=>{t.calories+=n(f.calories);t.protein+=n(f.protein);t.carbs+=n(f.carbs);t.fat+=n(f.fat);return t;},{calories:0,protein:0,carbs:0,fat:0});}
+  function hDayTotals(day){return (day.foodLog||[]).reduce((t,f)=>{const q=Math.max(1,n(f.qty)||1);t.calories+=n(f.calories)*q;t.protein+=n(f.protein)*q;t.carbs+=n(f.carbs)*q;t.fat+=n(f.fat)*q;return t;},{calories:0,protein:0,carbs:0,fat:0});}
   function hDayAdherence(h,iso){const wd=healthWeekday(iso),isRest=wd===0||wd===6,d=(h.days&&h.days[iso])||null,t=healthTargets(h);const totals=d?hDayTotals(d):{calories:0,protein:0};const exs=isRest?[]:((h.workoutPlan&&h.workoutPlan[wd])||[]);const wDone=d?exs.filter(e=>healthExDone(d,e)).length:0;const anyW=!!d&&exs.some(e=>healthExAny(d,e));const workoutOk=isRest?true:(exs.length>0&&wDone===exs.length);const hasFood=totals.calories>0,calOk=hasFood&&totals.calories<=t.calories;const list=(h.profile&&h.profile.habits)||[],dh=(d&&d.habits)||{};const habitsMet=list.filter(hb=>hb.type==='counter'?n(dh[hb.id])>=healthHabitGoal(h,hb,wd):n(dh[hb.id])>=1).length;const habitsOk=list.length>0&&habitsMet===list.length;const proteinMet=t.protein>0&&totals.protein>=t.protein;const hasData=!!d&&(hasFood||anyW||Object.values(dh).some(v=>v)||d.rewardAm||d.rewardPm);return{wd,isRest,workoutOk,calOk,habitsOk,habitsMet,habitsTotal:list.length,proteinMet,hasData,wDone,wTotal:exs.length,totals,goal:t.calories,t};}
   function hStreak(h){let d=healthActiveISO(h),streak=0,first=true;const start=(h.profile&&h.profile.startDate)||HEALTH_DEFAULT_START;for(let i=0;i<400;i++){if(start&&d<start)break;const a=hDayAdherence(h,d);if(a.workoutOk&&a.calOk)streak++;else if(first&&!a.hasData){}else break;first=false;d=hAddDays(d,-1);}return streak;}
   function hWeightProjection(h){const start=(h.profile&&h.profile.startDate)||HEALTH_DEFAULT_START,goal=n(h.profile&&h.profile.goalWeight)||155;const w=(h.weighIns||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));const cur=w.length?n(w[0].weight):(n(h.profile&&h.profile.startWeight)||185);const lbToGo=+(cur-goal).toFixed(1);const ins=(h.weighIns||[]).filter(x=>!start||x.date>=start).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));if(lbToGo<=0)return{status:'reached',goal,lbToGo:0};if(ins.length<2)return{status:'need-data',goal,lbToGo,have:ins.length};const f=ins[0],l=ins[ins.length-1];const weeks=(Date.parse(l.date+'T12:00:00Z')-Date.parse(f.date+'T12:00:00Z'))/(7*86400000);const rate=weeks>0?(n(f.weight)-n(l.weight))/weeks:0;const target=n(h.profile&&h.profile.ratePerWeek)||1;if(rate<=0.05)return{status:'stalled',goal,lbToGo,rate};const weeksToGoal=lbToGo/rate;return{status:'ok',goal,lbToGo,rate,proj:hAddDays(healthTodayISO(),Math.ceil(weeksToGoal*7)),weeksToGoal,target};}
@@ -611,6 +611,7 @@
   function hToggleHabit(id,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),nowDone=n(d.habits[id])<1;d.habits[id]=nowDone?1:0;
     if(nowDone){const all=hAllHabits(h,iso);hCelebrate(ev,all?'🌟 All habits done!':hCheer(),all);}});}
   function hDeleteFood(logId){healthMutate(h=>{const d=healthDay(h,healthActiveISO(h));d.foodLog=d.foodLog.filter(f=>f.id!==logId);});}
+  function hSetFoodQty(logId,delta){healthMutate(h=>{const d=healthDay(h,healthActiveISO(h)),f=(d.foodLog||[]).find(x=>x.id===logId);if(f)f.qty=Math.max(1,Math.max(1,n(f.qty)||1)+delta);});}
   function hQuickFood(foodId){healthMutate(h=>{const food=(h.foods||[]).find(f=>f.id===foodId);if(!food)return;const d=healthDay(h,healthActiveISO(h));
     d.foodLog.push({id:hid(),name:food.name,calories:n(food.calories),protein:n(food.protein),carbs:n(food.carbs),fat:n(food.fat),foodId:food.id});food.uses=n(food.uses)+1;});}
   function hAddFood(){
@@ -641,7 +642,8 @@
     const iso=healthActiveISO(h),wd=healthWeekday(iso),day=healthDay(h,iso),t=healthTargets(h);
     const notStarted=iso>healthTodayISO();
     const startBanner=notStarted?`<div class="h-banner">🗓️ Your program starts ${H_WD_LONG[wd]}, ${fmtDay(iso)} — showing your first day.</div>`:'';
-    const consumed=sum(day.foodLog,f=>n(f.calories)),proteinC=sum(day.foodLog,f=>n(f.protein)),remaining=t.calories-consumed,over=consumed>t.calories;
+    const fQty=f=>Math.max(1,n(f.qty)||1);
+    const consumed=sum(day.foodLog,f=>n(f.calories)*fQty(f)),proteinC=sum(day.foodLog,f=>n(f.protein)*fQty(f)),remaining=t.calories-consumed,over=consumed>t.calories;
 
     const isRest=wd===0||wd===6,exs=(h.workoutPlan&&h.workoutPlan[wd])||[],wDone=exs.filter(e=>healthExDone(day,e)).length;
     const totalSets=exs.reduce((s,e)=>s+healthExerciseSets(e),0),doneSets=exs.reduce((s,e)=>s+healthSetStates(day,e).filter(Boolean).length,0);
@@ -662,7 +664,9 @@
         <div class="h-nums" style="margin-top:8px"><input id="h-ef-cal" type="number" inputmode="numeric" value="${n(f.calories)}" placeholder="Cal"><input id="h-ef-p" type="number" value="${n(f.protein)}" placeholder="P"><input id="h-ef-c" type="number" value="${n(f.carbs)}" placeholder="C"><input id="h-ef-f" type="number" value="${n(f.fat)}" placeholder="F"></div>
         <div style="display:flex;gap:8px;margin-top:10px"><button class="primary" style="margin:0;flex:1" onclick="hSaveFood('${f.id}')">Save</button><button class="h-mini" onclick="hCancelFood()">Cancel</button></div>
       </div><span></span></div>`;
-      return `<div class="h-row"><span></span><div><div class="h-name">${esc(f.name)}</div><div class="h-sub">${Math.round(n(f.calories))} cal · ${Math.round(n(f.protein))}p ${Math.round(n(f.carbs))}c ${Math.round(n(f.fat))}f</div></div><div style="display:flex;gap:2px"><button class="h-del" onclick="hEditFood('${f.id}')">✎</button><button class="h-del" onclick="hDeleteFood('${f.id}')">✕</button></div></div>`;
+      const q=Math.max(1,n(f.qty)||1);
+      const step=`<div style="display:flex;flex-direction:column;align-items:center;gap:3px;margin-right:4px"><button class="h-step" onclick="hSetFoodQty('${f.id}',1)">+</button><span style="font-weight:800;font-size:.8rem;min-width:24px;text-align:center">×${q}</span><button class="h-step" onclick="hSetFoodQty('${f.id}',-1)">−</button></div>`;
+      return `<div class="h-row">${step}<div><div class="h-name">${esc(f.name)}</div><div class="h-sub">${Math.round(n(f.calories)*q)} cal · ${Math.round(n(f.protein)*q)}p ${Math.round(n(f.carbs)*q)}c ${Math.round(n(f.fat)*q)}f</div></div><div style="display:flex;gap:2px"><button class="h-del" onclick="hEditFood('${f.id}')">✎</button><button class="h-del" onclick="hDeleteFood('${f.id}')">✕</button></div></div>`;
     }).join('');
     const foodCard=`<section class="card"><div class="card-head"><div class="card-title">📋 Food Log</div><span class="pill">${Math.round(consumed)} cal</span></div>
       ${chips?`<div class="h-chips">${chips}</div>`:''}

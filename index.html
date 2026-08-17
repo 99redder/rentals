@@ -13922,8 +13922,6 @@ function healthDailyHtml() {
   const mealCard = healthCard('🍽️ Meal Plan', mealInner, `<span style="font-size:.8rem;color:var(--text-muted)">${mealsDone}/${meals.length} done</span>`);
 
   // Food log card
-  const topFoods = [...state.health.foods].sort((a, b) => (b.uses || 0) - (a.uses || 0) || a.name.localeCompare(b.name)).slice(0, 8);
-  const chips = topFoods.map(f => `<button type="button" class="btn btn-ghost btn-sm" onclick="healthQuickLog('${iso}','${f.id}')" style="border-radius:999px;font-size:.75rem" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F')}">+ ${escHtml(f.name)}${healthFoodTag(f)}</button>`).join('');
   const logRows = (day.foodLog || []).map(f => {
     if (_healthEditFoodId === f.id) {
       return `<tr style="background:var(--bg)">
@@ -13949,7 +13947,6 @@ function healthDailyHtml() {
     </tr>`;
   }).join('');
   const foodInner = `
-    ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.75rem">${chips}</div>` : ''}
     <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:.85rem">
       <thead><tr style="text-align:left;color:var(--text-muted);font-size:.72rem;text-transform:uppercase">

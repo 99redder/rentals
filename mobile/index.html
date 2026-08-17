@@ -515,7 +515,7 @@
   function healthHabitGoal(h,hb,wd){const f=h.profile&&h.profile.fasting;if(f&&f.weekday===wd&&hb.id==='water'&&n(f.waterGoal)>0)return n(f.waterGoal);return n(hb.goal)||1;}
   function hUnlocked(h,iso){
     const wd=healthWeekday(iso),d=healthDay(h,iso),exs=(h.workoutPlan&&h.workoutPlan[wd])||[],isRest=wd===0||wd===6;
-    const wDone=exs.filter(e=>d.workoutsDone[e.id]).length,workoutOk=isRest?true:(exs.length>0&&wDone===exs.length);
+    const wDone=exs.filter(e=>healthExDone(d,e)).length,workoutOk=isRest?true:(exs.length>0&&wDone===exs.length);
     const consumed=sum(d.foodLog,x=>n(x.calories));return workoutOk&&consumed>0&&consumed<=healthTargets(h).calories;
   }
   async function healthMutate(fn){
@@ -527,16 +527,17 @@
   const hCheer=()=>H_CHEERS[Math.floor(Math.random()*H_CHEERS.length)];
   function hAllHabits(h,iso){const wd=healthWeekday(iso),d=healthDay(h,iso),list=(h.profile&&h.profile.habits)||[];return list.length>0&&list.every(hb=>hb.type==='counter'?n(d.habits[hb.id])>=healthHabitGoal(h,hb,wd):n(d.habits[hb.id])>=1);}
   function hFxLayer(){let l=document.getElementById('h-fx-layer');if(!l){l=document.createElement('div');l.id='h-fx-layer';l.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:9999;overflow:hidden';document.body.appendChild(l);}return l;}
+  function hConfetti(x,y,count){const layer=hFxLayer(),colors=['#43b9a1','#53d3b1','#e9b85f','#2563eb','#a855f7','#ff837b','#ec4899'];
+    for(let i=0;i<count;i++){const p=document.createElement('div');const size=6+Math.random()*7,ang=Math.random()*Math.PI*2,dist=50+Math.random()*100;
+      const dx=Math.cos(ang)*dist,dy=Math.sin(ang)*dist-(50+Math.random()*70),fall=140+Math.random()*150;
+      p.style.cssText='position:absolute;left:'+x+'px;top:'+y+'px;width:'+size.toFixed(1)+'px;height:'+(size*0.6).toFixed(1)+'px;background:'+colors[i%colors.length]+';border-radius:2px;transform:translate(-50%,-50%)';layer.appendChild(p);
+      p.animate([{transform:'translate(-50%,-50%) translate(0,0) rotate(0deg)',opacity:1},{transform:'translate(-50%,-50%) translate('+dx.toFixed(1)+'px,'+dy.toFixed(1)+'px) rotate(200deg)',opacity:1,offset:.35},{transform:'translate(-50%,-50%) translate('+(dx*1.15).toFixed(1)+'px,'+(dy+fall).toFixed(1)+'px) rotate(520deg)',opacity:0}],{duration:950+Math.random()*550,easing:'cubic-bezier(.2,.7,.3,1)'}).onfinish=function(){p.remove();};}}
   function hCelebrate(ev,message,big){
     if(navigator.vibrate){try{navigator.vibrate(big?[15,45,20]:14);}catch(e){}}
     const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let x=window.innerWidth/2,y=window.innerHeight*0.4;const el=ev&&(ev.currentTarget||ev.target);
     if(el&&el.getBoundingClientRect){const r=el.getBoundingClientRect();if(r.width||r.height){x=r.left+r.width/2;y=r.top+r.height/2;}}
-    if(!reduce){const layer=hFxLayer(),colors=['#43b9a1','#53d3b1','#e9b85f','#2563eb','#a855f7','#ff837b','#ec4899'];
-      for(let i=0;i<(big?36:18);i++){const p=document.createElement('div');const size=6+Math.random()*7,ang=Math.random()*Math.PI*2,dist=50+Math.random()*100;
-        const dx=Math.cos(ang)*dist,dy=Math.sin(ang)*dist-(50+Math.random()*70),fall=140+Math.random()*150;
-        p.style.cssText='position:absolute;left:'+x+'px;top:'+y+'px;width:'+size.toFixed(1)+'px;height:'+(size*0.6).toFixed(1)+'px;background:'+colors[i%colors.length]+';border-radius:2px;transform:translate(-50%,-50%)';layer.appendChild(p);
-        p.animate([{transform:'translate(-50%,-50%) translate(0,0) rotate(0deg)',opacity:1},{transform:'translate(-50%,-50%) translate('+dx.toFixed(1)+'px,'+dy.toFixed(1)+'px) rotate(200deg)',opacity:1,offset:.35},{transform:'translate(-50%,-50%) translate('+(dx*1.15).toFixed(1)+'px,'+(dy+fall).toFixed(1)+'px) rotate(520deg)',opacity:0}],{duration:950+Math.random()*550,easing:'cubic-bezier(.2,.7,.3,1)'}).onfinish=function(){p.remove();};}}
+    if(!reduce)hConfetti(x,y,big?36:18);
     const t=document.createElement('div');t.textContent=message;
     t.style.cssText='position:fixed;left:50%;top:'+(big?'38%':'42%')+';z-index:10000;background:var(--green);color:#fff;font-weight:800;padding:'+(big?'11px 20px':'8px 15px')+';border-radius:999px;box-shadow:0 12px 30px rgba(0,0,0,.4);font-size:'+(big?'1.05rem':'.9rem')+';pointer-events:none;white-space:nowrap;transform:translate(-50%,-50%)';document.body.appendChild(t);
     const frames=reduce?[{opacity:0},{opacity:1,offset:.15},{opacity:1,offset:.75},{opacity:0}]:[{opacity:0,transform:'translate(-50%,-50%) scale(.7)'},{opacity:1,transform:'translate(-50%,-50%) scale(1.06)',offset:.2},{opacity:1,transform:'translate(-50%,-50%) scale(1)',offset:.7},{opacity:0,transform:'translate(-50%,-50%) scale(.95) translateY(-16px)'}];
@@ -544,6 +545,65 @@
   }
   function hToggleWorkout(exId,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),nowDone=!d.workoutsDone[exId];d.workoutsDone[exId]=nowDone;
     if(nowDone){const exs=(h.workoutPlan&&h.workoutPlan[healthWeekday(iso)])||[],all=exs.length>0&&exs.every(e=>d.workoutsDone[e.id]);hCelebrate(ev,all?'🎉 Workout complete!':hCheer(),all);}});}
+  // ── Per-set workout tracking (mirrors desktop) ──
+  function healthExerciseSets(e){if(e&&n(e.sets)>0)return Math.min(12,Math.round(n(e.sets)));const d=String((e&&e.detail)||'');const m=d.match(/(\d+)\s*sets?\b/i)||d.match(/(\d+)\s*[×x]/i);return Math.min(12,Math.max(1,m?parseInt(m[1],10):1));}
+  function healthSetStates(day,e){const total=healthExerciseSets(e),arr=new Array(total).fill(false),v=day&&day.workoutsDone?day.workoutsDone[e.id]:undefined;if(v===true)arr.fill(true);else if(Array.isArray(v))for(let i=0;i<total;i++)arr[i]=!!v[i];else if(n(v)>0){const k=Math.min(total,Math.round(n(v)));for(let i=0;i<k;i++)arr[i]=true;}return arr;}
+  function healthExDone(day,e){const s=healthSetStates(day,e);return s.length>0&&s.every(Boolean);}
+  function healthExAny(day,e){return healthSetStates(day,e).some(Boolean);}
+  function hToggleSet(exId,idx,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),exs=(h.workoutPlan&&h.workoutPlan[healthWeekday(iso)])||[],e=exs.find(x=>x.id===exId);if(!e)return;const arr=healthSetStates(d,e);if(idx<0||idx>=arr.length)return;const becoming=!arr[idx];arr[idx]=becoming;const all=arr.every(Boolean),any=arr.some(Boolean);d.workoutsDone[exId]=all?true:(any?arr:false);if(becoming){const wDone=exs.length>0&&exs.every(x=>healthExDone(d,x));if(wDone)hCelebrate(ev,'🎉 Workout complete!',true);else if(all)hCelebrate(ev,hCheer(),false);}});}
+  function hMarkAllSets(exId,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),exs=(h.workoutPlan&&h.workoutPlan[healthWeekday(iso)])||[],e=exs.find(x=>x.id===exId);if(!e)return;const was=healthExDone(d,e);d.workoutsDone[exId]=was?false:true;if(!was){const wDone=exs.length>0&&exs.every(x=>healthExDone(d,x));hCelebrate(ev,wDone?'🎉 Workout complete!':hCheer(),wDone);}});}
+  function hMarkWorkout(ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),exs=(h.workoutPlan&&h.workoutPlan[healthWeekday(iso)])||[];if(!exs.length)return;const all=exs.every(e=>healthExDone(d,e));exs.forEach(e=>d.workoutsDone[e.id]=all?false:true);if(!all)hCelebrate(ev,'🎉 Workout complete!',true);});}
+  // ── Close Day: achievement summary (mirrors desktop) ──
+  function hAddDays(iso,delta){const [y,m,dd]=String(iso).split('-').map(Number);return new Date(Date.UTC(y,m-1,dd+delta)).toISOString().slice(0,10);}
+  function hDayTotals(day){return (day.foodLog||[]).reduce((t,f)=>{t.calories+=n(f.calories);t.protein+=n(f.protein);t.carbs+=n(f.carbs);t.fat+=n(f.fat);return t;},{calories:0,protein:0,carbs:0,fat:0});}
+  function hDayAdherence(h,iso){const wd=healthWeekday(iso),isRest=wd===0||wd===6,d=(h.days&&h.days[iso])||null,t=healthTargets(h);const totals=d?hDayTotals(d):{calories:0,protein:0};const exs=isRest?[]:((h.workoutPlan&&h.workoutPlan[wd])||[]);const wDone=d?exs.filter(e=>healthExDone(d,e)).length:0;const anyW=!!d&&exs.some(e=>healthExAny(d,e));const workoutOk=isRest?true:(exs.length>0&&wDone===exs.length);const hasFood=totals.calories>0,calOk=hasFood&&totals.calories<=t.calories;const list=(h.profile&&h.profile.habits)||[],dh=(d&&d.habits)||{};const habitsMet=list.filter(hb=>hb.type==='counter'?n(dh[hb.id])>=healthHabitGoal(h,hb,wd):n(dh[hb.id])>=1).length;const habitsOk=list.length>0&&habitsMet===list.length;const proteinMet=t.protein>0&&totals.protein>=t.protein;const hasData=!!d&&(hasFood||anyW||Object.values(dh).some(v=>v)||d.rewardAm||d.rewardPm);return{wd,isRest,workoutOk,calOk,habitsOk,habitsMet,habitsTotal:list.length,proteinMet,hasData,wDone,wTotal:exs.length,totals,goal:t.calories,t};}
+  function hStreak(h){let d=healthActiveISO(h),streak=0,first=true;const start=(h.profile&&h.profile.startDate)||HEALTH_DEFAULT_START;for(let i=0;i<400;i++){if(start&&d<start)break;const a=hDayAdherence(h,d);if(a.workoutOk&&a.calOk)streak++;else if(first&&!a.hasData){}else break;first=false;d=hAddDays(d,-1);}return streak;}
+  function hWeightProjection(h){const start=(h.profile&&h.profile.startDate)||HEALTH_DEFAULT_START,goal=n(h.profile&&h.profile.goalWeight)||155;const w=(h.weighIns||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));const cur=w.length?n(w[0].weight):(n(h.profile&&h.profile.startWeight)||185);const lbToGo=+(cur-goal).toFixed(1);const ins=(h.weighIns||[]).filter(x=>!start||x.date>=start).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));if(lbToGo<=0)return{status:'reached',goal,lbToGo:0};if(ins.length<2)return{status:'need-data',goal,lbToGo,have:ins.length};const f=ins[0],l=ins[ins.length-1];const weeks=(Date.parse(l.date+'T12:00:00Z')-Date.parse(f.date+'T12:00:00Z'))/(7*86400000);const rate=weeks>0?(n(f.weight)-n(l.weight))/weeks:0;const target=n(h.profile&&h.profile.ratePerWeek)||1;if(rate<=0.05)return{status:'stalled',goal,lbToGo,rate};const weeksToGoal=lbToGo/rate;return{status:'ok',goal,lbToGo,rate,proj:hAddDays(healthTodayISO(),Math.ceil(weeksToGoal*7)),weeksToGoal,target};}
+  function hStrengthOutlook(week){const w=Math.max(1,week);if(w<2)return `You're in week ${w}. Early gains are <b>neural</b> — you'll feel stronger before you see it. Physical changes usually start around <b>weeks 4–6</b>.`;if(w<4)return `Week ${w}. Strength is climbing fast. Firmness and better pumps show first; visible <b>definition tends to appear around weeks 4–8</b>.`;if(w<8)return `Week ${w}. This is when <b>definition starts to show</b>, especially as body-fat drops — you'll notice it in the mirror before others do.`;if(w<12)return `Week ${w}. Noticeable definition should be emerging — changes often become <b>visible to others around weeks 10–12</b>.`;return `Week ${w}. Keep adding reps/resistance (progressive overload) to keep building.`;}
+  const H_TIERS={perfect:{emoji:'🏆',head:'Perfect Day!',grad:'linear-gradient(135deg,#e9b85f,#c68a2e)',conf:60,sub:'You hit every goal today. Elite discipline. 🔥'},gold:{emoji:'🥇',head:'Great day!',grad:'linear-gradient(135deg,#43b9a1,#176b5b)',conf:40,sub:'Almost everything checked off — you are crushing this.'},silver:{emoji:'🥈',head:'Solid effort!',grad:'linear-gradient(135deg,#4a8fe0,#2563eb)',conf:24,sub:'Real progress today. Grab one more goal tomorrow.'},bronze:{emoji:'🥉',head:'On the board',grad:'linear-gradient(135deg,#a855f7,#7c3aed)',conf:12,sub:'You showed up and logged it. That is how it starts.'},seed:{emoji:'🌱',head:'Tomorrow’s a fresh start',grad:'linear-gradient(135deg,#5b6b82,#3a4759)',conf:0,sub:'No perfect days required. Reset and go again.'}};
+  function hDaySummary(h,iso){const a=hDayAdherence(h,iso),d=healthDay(h,iso),wd=a.wd,totals=a.totals;const ach=[];ach.push(a.isRest?{icon:'😌',label:'Rested & recovered',earned:true}:{icon:'🏋️',label:`Workout complete (${a.wDone}/${a.wTotal})`,earned:a.workoutOk});ach.push({icon:'🍽️',label:a.calOk?'Ate on-target':(totals.calories>0?(totals.calories>a.goal?'Over calories':'Logged your food'):'No food logged'),earned:a.calOk});ach.push({icon:'💪',label:'Protein goal',earned:a.proteinMet});ach.push({icon:'✅',label:`Habits (${a.habitsMet}/${a.habitsTotal})`,earned:a.habitsTotal>0&&a.habitsOk});if(wd>=1&&wd<=5)ach.push({icon:'🎁',label:'Reward earned',earned:!!(d.rewardAm||d.rewardPm)});const possible=ach.length,earned=ach.filter(x=>x.earned).length;let tier;if(earned>=possible)tier='perfect';else if(earned>=possible-1)tier='gold';else if(earned>=Math.ceil(possible/2))tier='silver';else if(earned>=1)tier='bronze';else tier='seed';return{a,ach,possible,earned,tier,streak:hStreak(h)};}
+  function hCloseDay(){const h=state.data.health;if(h)hShowDaySummary(healthActiveISO(h));}
+  function hReopenDay(){healthMutate(h=>{healthDay(h,healthActiveISO(h)).closed=false;});}
+  function hCloseSummary(){document.getElementById('h-summary')?.remove();}
+  function hConfirmClose(){document.getElementById('h-summary')?.remove();healthMutate(h=>{const d=healthDay(h,healthActiveISO(h));d.closed=true;d.totals=hDayTotals(d);});}
+  function hShowDaySummary(iso){document.getElementById('h-summary')?.remove();const h=state.data.health;if(!h)return;const s=hDaySummary(h,iso),tier=H_TIERS[s.tier],a=s.a,t=a.t,totals=a.totals;
+    const stat=(icon,label,val,sub,color)=>`<div style="flex:1;min-width:70px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:8px 6px;text-align:center"><div style="font-size:1rem">${icon}</div><div style="font-size:1.05rem;font-weight:800;color:${color||'var(--ink)'};line-height:1.2">${val}</div><div style="font-size:.58rem;color:var(--muted);text-transform:uppercase;font-weight:800;letter-spacing:.03em">${label}</div>${sub?`<div style="font-size:.58rem;color:var(--muted)">${sub}</div>`:''}</div>`;
+    const stats=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin:12px 0 4px">${stat('🔥','Cal',Math.round(totals.calories),'of '+Math.round(a.goal),a.calOk?'var(--good)':(totals.calories>a.goal?'var(--bad)':'var(--ink)'))}${stat('💪','Protein',Math.round(totals.protein)+'g','of '+Math.round(t.protein),a.proteinMet?'var(--good)':'var(--ink)')}${a.isRest?stat('😌','Train','Rest','recovery'):stat('🏋️','Workout',a.wDone+'/'+a.wTotal,'exercises',a.workoutOk?'var(--good)':'var(--ink)')}${stat('✅','Habits',a.habitsMet+'/'+a.habitsTotal,'',(a.habitsTotal>0&&a.habitsOk)?'var(--good)':'var(--ink)')}</div>`;
+    const achHtml=s.ach.map((x,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 2px;opacity:0;animation:hAchIn .45s ease forwards;animation-delay:${(0.2+i*0.13).toFixed(2)}s"><span style="font-size:1.3rem;${x.earned?'':'filter:grayscale(1);opacity:.4'}">${x.icon}</span><span style="flex:1;font-weight:700;${x.earned?'':'color:var(--muted)'}">${esc(x.label)}</span><span style="font-weight:800;color:${x.earned?'var(--good)':'var(--muted)'}">${x.earned?'✓':'—'}</span></div>`).join('');
+    const streakHtml=s.streak>0?`<div style="text-align:center;margin-top:8px;font-weight:800;color:var(--amber)">🔥 ${s.streak}-day on-plan streak</div>`:'';
+    const startIso=(h.profile&&h.profile.startDate)||iso;const weekNum=Math.max(1,Math.floor((Date.parse(iso+'T12:00:00Z')-Date.parse(startIso+'T12:00:00Z'))/(7*86400000))+1);
+    const pr=hWeightProjection(h);let wMsg;
+    if(pr.status==='reached')wMsg=`You've reached ${pr.goal} lb — <b>goal met!</b> 🎉 Shift to maintaining.`;
+    else if(pr.status==='need-data'){const nn=2-pr.have;wMsg=`${pr.lbToGo.toFixed(1)} lb to go to ${pr.goal} lb. Log ${nn} more weekly weigh-in${nn===1?'':'s'} for a projected date.`;}
+    else if(pr.status==='stalled')wMsg=`${pr.lbToGo.toFixed(1)} lb to go to ${pr.goal} lb — no clear downward trend yet, keep going.`;
+    else{const dt=new Date(pr.proj+'T12:00:00Z');const lbl=isNaN(dt.getTime())?pr.proj:dt.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});wMsg=`On pace for <b>${pr.goal} lb around ${lbl}</b> — ${pr.lbToGo.toFixed(1)} lb to go at ${pr.rate.toFixed(1)} lb/wk.`;}
+    const orow=(icon,html)=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:5px 0"><span style="font-size:1.15rem;line-height:1.3">${icon}</span><div style="flex:1;font-size:.82rem;line-height:1.4;color:var(--ink)">${html}</div></div>`;
+    const outlook=`<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:9px"><div style="font-weight:800;font-size:.62rem;text-transform:uppercase;color:var(--muted);letter-spacing:.04em;margin-bottom:2px">Your outlook</div>${orow('🎯',wMsg)}${orow('💪',hStrengthOutlook(weekNum))}</div>`;
+    const ov=document.createElement('div');ov.id='h-summary';
+    ov.style.cssText='position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center';
+    ov.onclick=e=>{if(e.target===ov)ov.remove();};
+    ov.innerHTML=`<style>@keyframes hAchIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}@keyframes hSumUp{from{transform:translateY(100%)}to{transform:none}}</style>
+      <div style="background:var(--card);color:var(--ink);width:100%;max-width:460px;max-height:92vh;overflow:auto;border-radius:20px 20px 0 0;box-shadow:var(--shadow);animation:hSumUp .3s cubic-bezier(.2,.8,.3,1) both">
+        <div style="background:${tier.grad};color:#fff;padding:22px 16px 20px;text-align:center;border-radius:20px 20px 0 0">
+          <div style="font-size:3rem;line-height:1">${tier.emoji}</div>
+          <div style="font-size:1.5rem;font-weight:900;margin-top:4px">${tier.head}</div>
+          <div style="font-size:.85rem;font-weight:600;opacity:.95;margin-top:4px">${esc(tier.sub)}</div>
+          <div style="font-size:.7rem;opacity:.85;margin-top:6px">${H_WD_LONG[a.wd]}, ${fmtDay(iso)} · ${s.earned}/${s.possible} goals</div>
+        </div>
+        <div style="padding:14px 16px 18px">
+          ${stats}
+          <div style="font-weight:800;font-size:.62rem;text-transform:uppercase;color:var(--muted);letter-spacing:.04em;margin:10px 0 2px">Today’s achievements</div>
+          ${achHtml}${streakHtml}${outlook}
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button onclick="hCloseSummary()" style="flex:0 0 auto;padding:12px 16px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--muted);font-weight:700">Not yet</button>
+            <button onclick="hConfirmClose()" style="flex:1;padding:12px;border-radius:12px;border:none;background:var(--green);color:#fff;font-weight:800">✓ Close out day</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(!reduce&&tier.conf>0){if(navigator.vibrate){try{navigator.vibrate(s.tier==='perfect'?[15,45,20]:14);}catch(e){}}const cx=window.innerWidth/2,cy=window.innerHeight*0.3;setTimeout(()=>hConfetti(cx,cy,tier.conf),120);if(s.tier==='perfect')setTimeout(()=>hConfetti(cx,cy,tier.conf),520);}
+  }
   function hToggleReward(slot){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),key=slot==='pm'?'rewardPm':'rewardAm';
     if(!d[key]&&slot==='pm'&&h.profile&&h.profile.rewardGated&&!hUnlocked(h,iso))return;d[key]=!d[key];});}
   function hBumpHabit(id,delta,ev){healthMutate(h=>{const iso=healthActiveISO(h),d=healthDay(h,iso),before=n(d.habits[id]);d.habits[id]=Math.max(0,before+delta);
@@ -583,10 +643,16 @@
     const startBanner=notStarted?`<div class="h-banner">🗓️ Your program starts ${H_WD_LONG[wd]}, ${fmtDay(iso)} — showing your first day.</div>`:'';
     const consumed=sum(day.foodLog,f=>n(f.calories)),proteinC=sum(day.foodLog,f=>n(f.protein)),remaining=t.calories-consumed,over=consumed>t.calories;
 
-    const isRest=wd===0||wd===6,exs=(h.workoutPlan&&h.workoutPlan[wd])||[],wDone=exs.filter(e=>day.workoutsDone[e.id]).length;
+    const isRest=wd===0||wd===6,exs=(h.workoutPlan&&h.workoutPlan[wd])||[],wDone=exs.filter(e=>healthExDone(day,e)).length;
+    const totalSets=exs.reduce((s,e)=>s+healthExerciseSets(e),0),doneSets=exs.reduce((s,e)=>s+healthSetStates(day,e).filter(Boolean).length,0);
+    const setPip=(exId,on,i,tot)=>`<label style="display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:999px;border:1px solid ${on?'var(--green2)':'var(--line)'};background:${on?'var(--mint)':'transparent'};color:${on?'var(--good)':'var(--muted)'};font-size:.8rem;font-weight:700"><input type="checkbox" ${on?'checked':''} onchange="hToggleSet('${exId}',${i},event)" style="width:19px;height:19px;accent-color:var(--green2);margin:0">${tot>1?'Set '+(i+1):'Done'}</label>`;
     const workoutRows=isRest?`<div class="empty">😌 Rest & recovery day. An easy walk is fine.</div>`
-      :(exs.length?exs.map(e=>`<label class="h-row ${day.workoutsDone[e.id]?'h-done':''}"><input type="checkbox" class="h-check" ${day.workoutsDone[e.id]?'checked':''} onchange="hToggleWorkout('${e.id}',event)"><div><div class="h-name">${esc(e.name)}</div>${e.detail?`<div class="h-sub">${esc(e.detail)}</div>`:''}</div><span></span></label>`).join(''):'<div class="empty">No workout set for today.</div>');
-    const workoutCard=`<section class="card"><div class="card-head"><div class="card-title">🏋️ Workout · ${H_WD[wd]}</div>${isRest?'':`<span class="pill">${wDone}/${exs.length} done</span>`}</div><div class="rows">${workoutRows}</div></section>`;
+      :(exs.length?exs.map(e=>{const st=healthSetStates(day,e),tot=st.length,sd=st.filter(Boolean).length,exDone=sd===tot;
+        const pips=st.map((on,i)=>setPip(e.id,on,i,tot)).join('')+(tot>1?`<button onclick="hMarkAllSets('${e.id}',event)" style="padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:.8rem;font-weight:700">${exDone?'clear':'all'}</button>`:'');
+        return `<div class="h-row"><div style="width:100%"><div class="h-name" style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><span style="${exDone?'text-decoration:line-through;color:var(--muted)':''}">${esc(e.name)}</span><span class="${exDone?'good':''}" style="font-weight:800;white-space:nowrap;font-size:.85rem">${sd}/${tot}${exDone?' ✓':''}</span></div>${e.detail?`<div class="h-sub">${esc(e.detail)}</div>`:''}<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">${pips}</div></div></div>`;
+      }).join(''):'<div class="empty">No workout set for today.</div>');
+    const allExDone=exs.length>0&&wDone===exs.length;
+    const workoutCard=`<section class="card"><div class="card-head"><div class="card-title">🏋️ Workout · ${H_WD[wd]}</div>${isRest?'':`<span class="pill">${wDone}/${exs.length} · ${doneSets}/${totalSets} sets</span>`}</div>${isRest||!exs.length?'':`<div style="padding:0 12px 6px"><button onclick="hMarkWorkout(event)" style="width:100%;padding:10px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--ink);font-weight:800;font-size:.9rem">${allExDone?'Clear all':'✓ Mark all done'}</button></div>`}<div class="rows">${workoutRows}</div></section>`;
 
     const topFoods=(h.foods||[]).slice().sort((a,b)=>n(b.uses)-n(a.uses)||String(a.name).localeCompare(String(b.name))).slice(0,6);
     const chips=topFoods.map(f=>`<button class="h-chip" onclick="hQuickFood('${f.id}')">+ ${esc(f.name)}</button>`).join('');
@@ -636,8 +702,11 @@
     const fasting=h.profile&&h.profile.fasting&&h.profile.fasting.weekday===wd;
     const fastBanner=fasting?`<div class="h-banner">⏳ Intermittent fasting day — eat breakfast, stop by ${esc(h.profile.fasting.cutoffLabel||'10 AM')}, fast until tomorrow morning. Water, black coffee &amp; sugar-free Red Bull are fine.</div>`:'';
 
+    const closeCard=`<section class="card"><div style="padding:12px">${day.closed
+      ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span style="font-weight:800;color:var(--good)">✓ Day closed</span><button onclick="hReopenDay()" style="padding:9px 14px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);font-weight:700">Reopen</button></div>`
+      : `<button onclick="hCloseDay()" style="width:100%;padding:13px;border-radius:12px;border:none;background:var(--green);color:#fff;font-weight:800;font-size:1rem">Close Day →</button>`}</div></section>`;
     return `<div class="hero"><div class="hero-label">${H_WD_LONG[wd]} · ${over?'Over by':'Calories left'}</div><div class="hero-value">${over?'−':''}${Math.abs(Math.round(remaining))}</div><div class="hero-note">${Math.round(consumed)} eaten of ${t.calories} kcal · ${Math.round(proteinC)}/${t.protein}g protein</div></div>
-      ${startBanner}${fastBanner}${workoutCard}${foodCard}${weightCard}${rewardCard}${habitsCard}`;
+      ${startBanner}${fastBanner}${workoutCard}${foodCard}${weightCard}${rewardCard}${habitsCard}${closeCard}`;
   }
 
   function render(){

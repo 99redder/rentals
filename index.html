@@ -13802,7 +13802,7 @@ function healthDailyHtml() {
       ${day.closed ? '<span style="background:var(--success-light);color:var(--success);border:1px solid var(--success);border-radius:999px;padding:.15rem .6rem;font-size:.72rem;font-weight:700">✓ Closed</span>' : ''}
       ${day.closed
         ? `<button class="btn btn-ghost btn-sm" onclick="healthReopenDay('${iso}')">Reopen</button>`
-        : `<button class="btn btn-primary btn-sm" onclick="healthCloseDay('${iso}')">Close Day →</button>`}
+        : `<button class="btn btn-primary" onclick="healthCloseDay('${iso}')" style="font-size:1rem;font-weight:700;padding:.6rem 1.3rem">Close Day →</button>`}
     </div></div>`;
 
   // Weigh-in prompt — Mondays only, and only until it's recorded. Once logged it

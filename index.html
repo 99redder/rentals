@@ -14843,10 +14843,10 @@ function healthSetupHtml() {
       return `<tr style="background:var(--bg)">
         <td style="padding:.3rem .5rem"><input type="text" id="hdb-name" class="form-input" value="${escAttr(f.name)}" style="width:100%;font-size:.82rem"></td>
         <td style="padding:.3rem .3rem">${foodTypeSelect(f)}</td>
-        <td style="padding:.3rem .3rem"><input type="number" id="hdb-cal" class="form-input" value="${f.calories}" style="width:64px;font-size:.82rem;text-align:right"></td>
-        <td style="padding:.3rem .3rem"><input type="number" id="hdb-p" class="form-input" value="${f.protein}" style="width:48px;font-size:.82rem;text-align:right"></td>
-        <td style="padding:.3rem .3rem"><input type="number" id="hdb-c" class="form-input" value="${f.carbs}" style="width:48px;font-size:.82rem;text-align:right"></td>
-        <td style="padding:.3rem .3rem"><input type="number" id="hdb-f" class="form-input" value="${f.fat}" style="width:48px;font-size:.82rem;text-align:right"></td>
+        <td style="padding:.3rem .3rem"><input type="number" step="any" inputmode="decimal" id="hdb-cal" class="form-input" value="${f.calories}" style="width:78px;font-size:.85rem;text-align:right"></td>
+        <td style="padding:.3rem .3rem"><input type="number" step="any" inputmode="decimal" id="hdb-p" class="form-input" value="${f.protein}" style="width:62px;font-size:.85rem;text-align:right"></td>
+        <td style="padding:.3rem .3rem"><input type="number" step="any" inputmode="decimal" id="hdb-c" class="form-input" value="${f.carbs}" style="width:62px;font-size:.85rem;text-align:right"></td>
+        <td style="padding:.3rem .3rem"><input type="number" step="any" inputmode="decimal" id="hdb-f" class="form-input" value="${f.fat}" style="width:62px;font-size:.85rem;text-align:right"></td>
         <td style="padding:.3rem .5rem;text-align:right;white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="healthSaveDbFood('${f.id}')">Save</button> <button class="btn btn-ghost btn-sm" onclick="healthCancelDbEdit()">✕</button></td>
       </tr>`;
     }
@@ -14867,14 +14867,19 @@ function healthSetupHtml() {
       <thead><tr style="text-align:left;color:var(--text-muted);font-size:.72rem;text-transform:uppercase"><th style="padding:.3rem .5rem">Food</th><th style="padding:.3rem .3rem">Type</th><th style="padding:.3rem .3rem;text-align:right">Cal</th><th style="padding:.3rem .3rem;text-align:right">P</th><th style="padding:.3rem .3rem;text-align:right">C</th><th style="padding:.3rem .3rem;text-align:right">F</th><th></th></tr></thead>
       <tbody>${foodRows}</tbody>
     </table></div>
-    <div style="margin-top:.75rem;padding-top:.7rem;border-top:1px solid var(--border);display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">
-      <input type="text" id="hdb-new-name" class="form-input" placeholder="New food" style="flex:1;min-width:140px">
-      <select id="hdb-new-type" style="width:auto;font-size:.85rem;padding:.35rem .3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg);color:var(--text)">${typeOptions('')}</select>
-      <input type="number" id="hdb-new-cal" class="form-input" placeholder="Cal" style="width:72px">
-      <input type="number" id="hdb-new-p" class="form-input" placeholder="P" style="width:56px">
-      <input type="number" id="hdb-new-c" class="form-input" placeholder="C" style="width:56px">
-      <input type="number" id="hdb-new-f" class="form-input" placeholder="F" style="width:56px">
-      <button class="btn btn-primary btn-sm" onclick="healthAddDbFood()">+ Add</button>
+    <div style="margin-top:1rem;padding:1rem;border-top:1px solid var(--border);background:var(--card-bg);border-radius:var(--radius)">
+      <div style="font-weight:700;font-size:.9rem;margin-bottom:.75rem">➕ Add New Food</div>
+      <input type="text" id="hdb-new-name" class="form-input" placeholder="Food name" style="width:100%;font-size:.95rem;padding:.6rem .75rem;margin-bottom:.7rem">
+      <div style="display:flex;gap:.7rem;flex-wrap:wrap;align-items:flex-end">
+        ${[['hdb-new-type', 'Meal type', 'select', '150px'], ['hdb-new-cal', 'Calories', 'num', '96px'], ['hdb-new-p', 'Protein', 'num', '90px'], ['hdb-new-c', 'Carbs', 'num', '90px'], ['hdb-new-f', 'Fat', 'num', '90px']].map(([id, lbl, kind, w]) =>
+          `<label style="display:flex;flex-direction:column;gap:.25rem;${kind === 'select' ? 'flex:1;min-width:130px' : `width:${w}`}">
+            <span style="font-size:.68rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;letter-spacing:.02em">${lbl}</span>
+            ${kind === 'select'
+              ? `<select id="${id}" class="form-input" style="width:100%;font-size:.92rem;padding:.55rem .5rem">${typeOptions('')}</select>`
+              : `<input type="number" step="any" inputmode="decimal" id="${id}" class="form-input" placeholder="0" style="width:100%;font-size:.95rem;padding:.55rem .6rem;text-align:right">`}
+          </label>`).join('')}
+        <button class="btn btn-primary" onclick="healthAddDbFood()" style="font-size:.95rem;font-weight:700;padding:.6rem 1.5rem">+ Add Food</button>
+      </div>
     </div>`);
 
   return `${goalsCard}${habitsEditor}

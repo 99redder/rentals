@@ -13161,25 +13161,19 @@ function healthDefault() {
            ex('mo-bike', 'Bicycle Crunch', '3 × 20'),
            ex('mo-walk', 'Brisk Walk', '35–40 min — burn off the weekend') ],
       2: [ ex('tu-lpd', 'Lat Pull-Down', '4 × 8–12'),
-           ex('tu-row', 'Resistance Band Bent-Over Row', '3 × 12–15'),
            ex('tu-curl', 'Resistance Band Biceps Curl', '3 × 12–15'),
-           ex('tu-face', 'Band Face Pull', '3 × 15 — shoulder health'),
            ex('tu-bike', 'Bicycle Crunch', '3 × 20'),
            ex('tu-walk', 'Brisk Walk', '25–30 min') ],
       3: [ ex('we-walk', 'Long Steady Walk', '40–45 min — active recovery'),
            ex('we-roll', 'Ab Roller', '3 × 8–12'),
            ex('we-db', 'Dead Bug', '3 × 10 / side'),
-           ex('we-lr', 'Lying Leg Raise', '3 × 12–15'),
-           ex('we-band', 'Band Pull-Apart + Mobility', '2 × 20') ],
+           ex('we-lr', 'Lying Leg Raise', '3 × 12–15') ],
       4: [ ex('th-pu', 'Push-Ups (incline or decline)', '4 × AMRAP — RIR 1–2'),
            ex('th-cp', 'Chest Press Machine', '3 × 10–12'),
-           ex('th-tri', 'Band Triceps Push-Down', '3 × 12–15'),
-           ex('th-ohp', 'Band Overhead Press', '3 × 10–12'),
            ex('th-roll', 'Ab Roller', '3 × 8–12'),
            ex('th-twist', 'Russian Twist', '3 × 20'),
            ex('th-walk', 'Brisk Walk', '25–30 min') ],
       5: [ ex('fr-lpd', 'Lat Pull-Down', '4 × 8–12'),
-           ex('fr-row', 'Resistance Band Row', '3 × 12–15'),
            ex('fr-curl', 'Band Biceps Curl', '3 × 12–15'),
            ex('fr-pu', 'Push-Ups (finisher)', '3 × AMRAP'),
            ex('fr-lr', 'Lying Leg Raise', '3 × 15'),
@@ -13340,6 +13334,18 @@ function healthNormalize(raw) {
     }
     profile.bandFlyRemovedV1 = true;
   }
+  // One-time: remove all remaining band exercises except biceps curls. This is
+  // intentionally a straight deletion—do not replace the removed movements.
+  if (!profile.bandExercisesPrunedV1) {
+    for (const k of Object.keys(workoutPlan)) {
+      if (!Array.isArray(workoutPlan[k])) continue;
+      workoutPlan[k] = workoutPlan[k].filter(e => {
+        const name = String((e && e.name) || '');
+        return !/band/i.test(name) || /biceps curl/i.test(name);
+      });
+    }
+    profile.bandExercisesPrunedV1 = true;
+  }
   // One-time: make Wednesday the intermittent-fasting meal plan — only if it's
   // still the original default Wed plan (breakfast/Factor lunch/shake/dinner/snack).
   const mealPlan = (h.mealPlan && Object.keys(h.mealPlan).length) ? h.mealPlan : def.mealPlan;
@@ -13439,7 +13445,7 @@ async function loadHealth() {
   const seeded = !raw || Object.keys(raw).length === 0;
   // Persist one-time migrations (e.g. Monday front-load) the first time we see a
   // record that predates them, so they don't re-run every load.
-  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1 && raw.profile.factorMealsV2 && raw.profile.mealTypeV1 && raw.profile.fastFoodV1 && raw.profile.fastFoodV2 && raw.profile.bandFlyRemovedV1);
+  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1 && raw.profile.factorMealsV2 && raw.profile.mealTypeV1 && raw.profile.fastFoodV1 && raw.profile.fastFoodV2 && raw.profile.bandFlyRemovedV1 && raw.profile.bandExercisesPrunedV1);
   state.health = healthNormalize(raw);
   if (seeded || needsMigrationSave) await saveHealth();
 }

@@ -13523,7 +13523,20 @@ function healthDayTotals(day) {
 // dragging meals in, so there are never placeholder meals to delete.
 function healthMealsForDate(iso) {
   const day = state.health.days[iso];
-  return (day && Array.isArray(day.meals)) ? day.meals : [];
+  if (!day || !Array.isArray(day.meals)) return [];
+  const rank = { breakfast: 0, lunch: 1, dinner: 2, snack: 4 };
+  const mealType = meal => {
+    if (HEALTH_MEAL_TYPES.includes(meal.mealType)) return meal.mealType;
+    const linkedFood = meal.foodId && state.health.foods.find(f => f.id === meal.foodId);
+    if (linkedFood && HEALTH_MEAL_TYPES.includes(linkedFood.mealType)) return linkedFood.mealType;
+    const name = String(meal.name || '').toLowerCase();
+    if (/\bbreakfast\b/.test(name)) return 'breakfast';
+    if (/\blunch\b/.test(name)) return 'lunch';
+    if (/\bdinner\b/.test(name)) return 'dinner';
+    if (/\bsnack\b/.test(name)) return 'snack';
+    return '';
+  };
+  return [...day.meals].sort((a, b) => (rank[mealType(a)] ?? 3) - (rank[mealType(b)] ?? 3));
 }
 
 // ── Workout sets ──────────────────────────────────────────────────────────────
@@ -14678,7 +14691,7 @@ async function healthPlanAddMeal(iso, foodId) {
   const food = state.health.foods.find(f => f.id === foodId);
   if (!food) return;
   const d = healthPlanEnsureExplicit(iso);
-  d.meals.push({ id: hid(), name: food.name, calories: +food.calories || 0, protein: +food.protein || 0, carbs: +food.carbs || 0, fat: +food.fat || 0, note: '', foodId: food.id, ...(food.tag ? { tag: food.tag } : {}) });
+  d.meals.push({ id: hid(), name: food.name, calories: +food.calories || 0, protein: +food.protein || 0, carbs: +food.carbs || 0, fat: +food.fat || 0, note: '', foodId: food.id, mealType: HEALTH_MEAL_TYPES.includes(food.mealType) ? food.mealType : '', ...(food.tag ? { tag: food.tag } : {}) });
   await saveHealth(); _renderHealthHtml();
 }
 async function healthPlanRemoveMeal(iso, mealId) {

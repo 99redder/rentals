@@ -13947,10 +13947,11 @@ function healthDailyHtml() {
   const fastingNote = isFastingDay
     ? `<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:var(--radius);padding:.5rem .7rem;margin-bottom:.6rem;font-size:.8rem"><strong>⏳ Intermittent Fasting day.</strong> Eat breakfast, then <strong>stop eating by ${escHtml(fasting.cutoffLabel || '10 AM')}</strong> and fast until tomorrow morning. Water, black coffee, and <strong>sugar-free Red Bull</strong> are fine (no calories) — hence today’s Red Bull reward. Extra water goal today.</div>`
     : '';
-  const mealInner = fastingNote + (meals.length ? meals.map(m => {
+  const mealLogNote = meals.length ? `<div style="color:var(--success);font-size:.76rem;font-weight:700;margin-bottom:.6rem">✓ Checking a meal automatically logs it to the Food Log.</div>` : '';
+  const mealInner = mealLogNote + fastingNote + (meals.length ? meals.map(m => {
     const hasMacros = (+m.calories || +m.protein || +m.carbs || +m.fat);
     const macroLine = hasMacros
-      ? `<span style="display:block;font-size:.72rem;color:var(--text-muted);margin-top:.1rem">${Math.round(+m.calories || 0)} kcal · ${Math.round(+m.protein || 0)}P / ${Math.round(+m.carbs || 0)}C / ${Math.round(+m.fat || 0)}F <span style="color:var(--success);font-weight:600">· ✓ logs to food log</span></span>`
+      ? `<span style="display:block;font-size:.72rem;color:var(--text-muted);margin-top:.1rem">${Math.round(+m.calories || 0)} kcal · ${Math.round(+m.protein || 0)}P / ${Math.round(+m.carbs || 0)}C / ${Math.round(+m.fat || 0)}F</span>`
       : '';
     return `
       <label style="display:flex;align-items:flex-start;gap:.6rem;padding:.5rem .2rem;border-bottom:1px solid var(--border);cursor:pointer">

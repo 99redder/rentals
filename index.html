@@ -13075,6 +13075,7 @@ let _healthView = localStorage.getItem('rentals_health_view') || 'daily';
 let _healthDate = null;      // selected calendar day (Daily view)
 let _healthWeekMon = null;   // Monday of the week shown in Weekly view
 let _healthLibType = localStorage.getItem('rentals_health_lib_type') || 'all';   // Meal Library filter
+let _healthLibSearch = '';   // Meal Library search (UI-only; retained while Health is open)
 let _healthLibOpen = new Set();   // expanded source groups in the Meal Library (UI-only; start all collapsed)
 let _healthEditFoodId = null;
 let _healthEditDbId = null;
@@ -14456,7 +14457,11 @@ function healthWeeklyHtml() {
       ${HEALTH_MEAL_TYPES.map(tp => filterBtn(tp, HEALTH_MEAL_TYPE_LABELS[tp], typeCount(tp))).join('')}
     </div>`;
   const shownFoods = _healthLibType === 'all' ? libFoods : libFoods.filter(f => f.mealType === _healthLibType);
-  const chip = f => `<div draggable="true" ondragstart="healthDragStart(event,'${f.id}')" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F — drag onto a day')}"
+  const searchQuery = _healthLibSearch.trim().toLowerCase();
+  const searchText = f => `${f.name || ''} ${f.tag || ''} ${f.mealType || ''}`.toLowerCase();
+  const searchMatches = f => !searchQuery || searchText(f).includes(searchQuery);
+  const chip = f => `<div draggable="true" data-health-lib-food data-search="${escAttr(searchText(f))}" ondragstart="healthDragStart(event,'${f.id}')" title="${escAttr(f.calories + ' kcal · ' + f.protein + 'P ' + f.carbs + 'C ' + f.fat + 'F — drag onto a day')}"
+      ${searchMatches(f) ? '' : 'hidden'}
       style="cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:.35rem;background:var(--card-bg);border:1px solid var(--border);border-radius:999px;padding:.28rem .6rem;font-size:.78rem">
       <span style="opacity:.5">⠿</span><span style="font-weight:600">${escHtml(f.name)}</span>${healthFoodTag(f)}<span style="color:var(--text-muted);font-size:.7rem">${Math.round(f.calories)}</span>
     </div>`;
@@ -14469,7 +14474,7 @@ function healthWeeklyHtml() {
   const groupKeys = Object.keys(groups).sort((a, b) => srcRank(a) - srcRank(b) || a.localeCompare(b));
   // Collapsible source groups, collapsed by default. Open state is tracked in
   // _healthLibOpen (via <details> ontoggle) so a drop's re-render keeps them open.
-  const libInner = groupKeys.map(k => `<details ${_healthLibOpen.has(k) ? 'open' : ''} data-libgroup="${escAttr(k)}" ontoggle="healthLibGroupToggled(this)" class="h-lib-group" style="margin-bottom:.15rem">
+  const libInner = groupKeys.map(k => `<details ${_healthLibOpen.has(k) || (searchQuery && groups[k].some(searchMatches)) ? 'open' : ''} data-libgroup="${escAttr(k)}" ontoggle="healthLibGroupToggled(this)" class="h-lib-group" ${groups[k].some(searchMatches) ? '' : 'hidden'} style="margin-bottom:.15rem">
       <summary style="cursor:pointer;display:flex;align-items:center;gap:.4rem;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);padding:.3rem .1rem;user-select:none">
         <span class="h-lib-caret">▸</span>${escHtml(k)} <span style="opacity:.55">${groups[k].length}</span>
       </summary>
@@ -14483,8 +14488,15 @@ function healthWeeklyHtml() {
         <div class="card-title">🍱 Meal Library</div>
         <span style="font-size:.74rem;color:var(--text-muted)">Drag a meal onto a day →</span>
       </div>
-      <div style="padding:.5rem 1rem 0">${filters}</div>
-      <div class="h-plan-lib-scroll" style="padding:.7rem 1rem;overflow:auto">${libInner || emptyMsg}</div>
+      <div style="padding:.5rem 1rem 0">
+        <div style="position:relative;margin-bottom:.55rem">
+          <span aria-hidden="true" style="position:absolute;left:.7rem;top:50%;transform:translateY(-50%);color:var(--text-muted)">⌕</span>
+          <input type="search" class="form-input" value="${escAttr(_healthLibSearch)}" oninput="healthSetLibSearch(this.value)" aria-label="Search meal library" placeholder="Search meals or brands…" style="width:100%;padding-left:2rem;padding-right:2rem">
+          <button type="button" data-health-lib-clear onclick="healthClearLibSearch()" aria-label="Clear meal search" title="Clear search" ${searchQuery ? '' : 'hidden'} style="position:absolute;right:.45rem;top:50%;transform:translateY(-50%);border:0;background:none;color:var(--text-muted);cursor:pointer;font-size:1rem;padding:.2rem">×</button>
+        </div>
+        ${filters}
+      </div>
+      <div class="h-plan-lib-scroll" style="padding:.7rem 1rem;overflow:auto">${libInner || emptyMsg}<div data-health-lib-empty ${shownFoods.length && !shownFoods.some(searchMatches) ? '' : 'hidden'} style="color:var(--text-muted);font-size:.82rem">No meals match your search.</div></div>
     </div>`;
 
   // Day cards — big drop targets that build each date's plan.
@@ -14499,6 +14511,8 @@ function healthWeeklyHtml() {
     const dayP = meals.reduce((s, m) => s + (+m.protein || 0), 0);
     const isToday = iso === today;
     const overGoal = dayCal > t.calories;
+    const caloriesLeft = Math.round(t.calories - dayCal);
+    const calorieStatus = caloriesLeft >= 0 ? `${caloriesLeft} kcal left` : `${Math.abs(caloriesLeft)} kcal over`;
     const mealRows = meals.length ? meals.map(m => `<div style="display:flex;align-items:center;gap:.4rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.3rem .45rem">
         <span style="flex:1;font-size:.8rem;font-weight:600;line-height:1.2">${escHtml(m.name)}${m.tag ? healthFoodTag(m) : ''}</span>
         <span style="font-size:.64rem;color:var(--text-muted);white-space:nowrap">${Math.round(+m.calories || 0)}</span>
@@ -14508,7 +14522,7 @@ function healthWeeklyHtml() {
         style="border:1px solid ${isToday ? 'var(--primary)' : 'var(--border)'};background:${isToday ? 'var(--primary-light)' : 'var(--surface)'};border-radius:var(--radius);padding:.85rem;display:flex;flex-direction:column;gap:.5rem;min-height:290px;transition:outline .1s">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.4rem">
           <button type="button" onclick="healthSetView('daily');healthSetDate('${iso}')" title="Open this day" style="background:none;border:none;padding:0;cursor:pointer;color:var(--text);font-weight:800;font-size:.92rem;text-align:left">${HEALTH_WEEKDAYS_LONG[wd]} <span style="font-weight:500;color:var(--text-muted);font-size:.72rem">${iso.slice(5)}</span></button>
-          <span style="font-size:.72rem;font-weight:800;color:${dayCal === 0 ? 'var(--text-muted)' : (overGoal ? 'var(--danger)' : 'var(--success)')}">${dayCal ? Math.round(dayCal) + ' kcal' : ''}</span>
+          <span title="${Math.round(dayCal)} planned of ${Math.round(t.calories)} kcal" style="font-size:.72rem;font-weight:800;color:${dayCal === 0 ? 'var(--text-muted)' : (overGoal ? 'var(--danger)' : 'var(--success)')};white-space:nowrap">${calorieStatus}</span>
         </div>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;font-size:.64rem">
           ${isToday ? '<span style="color:var(--primary);font-weight:700">● Today</span>' : ''}
@@ -14533,6 +14547,7 @@ function healthWeeklyHtml() {
       </div>
     </div>
     <style>
+      .h-plan-lib [hidden]{display:none!important}
       .h-plan-lib{position:sticky;top:4.5rem}
       .h-plan-lib > .card{margin-bottom:0}
       .h-plan-lib-scroll{max-height:calc(100vh - 15rem)}
@@ -14555,6 +14570,27 @@ function healthSetLibType(t) {
   _healthLibType = HEALTH_MEAL_TYPES.includes(t) ? t : 'all';
   try { localStorage.setItem('rentals_health_lib_type', _healthLibType); } catch (e) {}
   _renderHealthHtml();
+}
+function healthSetLibSearch(value) {
+  _healthLibSearch = String(value || '');
+  const query = _healthLibSearch.trim().toLowerCase();
+  const foods = [...document.querySelectorAll('[data-health-lib-food]')];
+  foods.forEach(el => { el.hidden = !!query && !(el.dataset.search || '').includes(query); });
+  document.querySelectorAll('[data-libgroup]').forEach(group => {
+    const hasMatch = [...group.querySelectorAll('[data-health-lib-food]')].some(el => !el.hidden);
+    group.hidden = !hasMatch;
+    if (query && hasMatch) group.open = true;
+  });
+  const empty = document.querySelector('[data-health-lib-empty]');
+  if (empty) empty.hidden = !query || !foods.length || foods.some(el => !el.hidden);
+  const clear = document.querySelector('[data-health-lib-clear]');
+  if (clear) clear.hidden = !query;
+}
+function healthClearLibSearch() {
+  const input = document.querySelector('input[aria-label="Search meal library"]');
+  if (input) input.value = '';
+  healthSetLibSearch('');
+  if (input) input.focus();
 }
 // Track which Meal Library source groups are expanded (native <details> handles
 // the show/hide; we just remember it so a re-render doesn't collapse them).

@@ -13905,6 +13905,15 @@ function healthDailyHtml() {
     : '';
 
   // Calories card
+  const projectedMeals = healthMealsForDate(iso);
+  const uncheckedMeals = projectedMeals.filter(m => !(day.mealsDone || {})[m.id]);
+  const uncheckedMealCalories = uncheckedMeals.reduce((sum, m) => sum + (+m.calories || 0), 0);
+  const projectedCalories = totals.calories + uncheckedMealCalories;
+  const projectedLeft = Math.round(t.calories - projectedCalories);
+  const projectedOver = projectedLeft < 0;
+  const projectionDetail = uncheckedMeals.length
+    ? `${Math.round(totals.calories)} logged + ${Math.round(uncheckedMealCalories)} from ${uncheckedMeals.length} unchecked meal${uncheckedMeals.length === 1 ? '' : 's'}`
+    : `${Math.round(totals.calories)} logged · no unchecked meal calories remaining`;
   const calCard = healthCard('Calories & Macros', `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.2rem;align-items:center">
       <div>${healthCalRing(totals.calories, t.calories, totals.protein, t.protein)}</div>
@@ -13913,6 +13922,16 @@ function healthDailyHtml() {
         ${healthMacroBar('Carbs', totals.carbs, t.carbs, '#f59e0b')}
         ${healthMacroBar('Fat', totals.fat, t.fat, '#a855f7')}
       </div>
+    </div>
+    <div style="margin-top:1rem;padding:.75rem .85rem;border:1px solid ${projectedOver ? 'var(--danger)' : 'var(--success)'};background:${projectedOver ? 'rgba(239,68,68,.09)' : 'rgba(34,197,94,.09)'};border-radius:var(--radius)">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.8rem;flex-wrap:wrap">
+        <div>
+          <div style="font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">Projected Calories</div>
+          <div style="font-size:1.45rem;font-weight:900;line-height:1.2;color:${projectedOver ? 'var(--danger)' : 'var(--success)'}">${Math.round(projectedCalories)} <span style="font-size:.72rem;font-weight:700;color:var(--text-muted)">of ${Math.round(t.calories)} kcal</span></div>
+        </div>
+        <div style="font-size:.78rem;font-weight:800;color:${projectedOver ? 'var(--danger)' : 'var(--success)'};text-align:right">${projectedOver ? `${Math.abs(projectedLeft)} kcal over if all planned meals are eaten` : `${projectedLeft} kcal available for snacks or extras`}</div>
+      </div>
+      <div style="font-size:.7rem;color:var(--text-muted);margin-top:.35rem">${projectionDetail}</div>
     </div>`);
 
   // Workout card
@@ -13953,7 +13972,7 @@ function healthDailyHtml() {
   const workoutCard = healthCard(`🏋️ Workout · ${HEALTH_WEEKDAYS[wd]}`, workoutInner, workoutHeader);
 
   // Meal plan card
-  const meals = healthMealsForDate(iso);
+  const meals = projectedMeals;
   const mealsDone = meals.filter(m => day.mealsDone[m.id]).length;
   const fasting = state.health.profile.fasting;
   const isFastingDay = fasting && fasting.weekday === wd;

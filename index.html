@@ -1461,8 +1461,8 @@
       <button class="prop-tab" data-prop="4781MC">4781MC</button>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
-      <button class="tp-header-btn health-btn active" id="health-btn" onclick="switchView('health')">❤️ Health</button>
-      <button class="tp-header-btn" id="cash-flow-btn" onclick="switchView('cash-flow')">Cash Flow</button>
+      <button class="tp-header-btn health-btn" id="health-btn" onclick="switchView('health')">❤️ Health</button>
+      <button class="tp-header-btn active" id="cash-flow-btn" onclick="switchView('cash-flow')">Cash Flow</button>
       <button class="tp-header-btn" id="budget-btn" onclick="switchView('budget')">Monthly Budget</button>
       <button class="tp-header-btn" id="tax-planning-btn" onclick="switchView('tax-planning')">Tax Planning</button>
       <button class="tp-header-btn" id="properties-btn" onclick="switchToProperties()">🏠 Properties</button>
@@ -2194,7 +2194,7 @@ const MAINT_SEED_COUNTS = Object.freeze({
 
 const state = {
   currentProperty: '6AL',
-  currentView: 'health',   // Health is the landing view; Properties button opens the per-property tabs
+  currentView: 'cash-flow',   // Cash Flow is the landing view; Properties button opens the per-property tabs
   password: '', // legacy only; runtime auth uses HttpOnly session cookie
   data: {
     '6AL':   { transactions: null, summaries: null, defaults: null, depreciation: null, maintenance: null, investment: null, moveInPurchases: null, moveInCategories: null, laterList: null, laterCategories: null },
@@ -13127,7 +13127,7 @@ function healthDefault() {
     profile: {
       heightIn: 65, age: 43, sex: 'male',
       startWeight: 185, goalWeight: 155,
-      startDate: '2026-08-17',   // program begins Monday Aug 17, 2026 (weeks run Mon→Sun)
+      startDate: '2026-09-07',   // program begins Monday Sep 7, 2026 (weeks run Mon→Sun)
       fasting: { weekday: 3, cutoffLabel: '10 AM', waterGoal: 12 },   // Wed = intermittent-fasting day (eat AM, stop by 10, fast to next morning); higher water goal
       activityFactor: 1.375, ratePerWeek: 1,   // light activity (walking); ~1 lb/week
       calorieGoal: null, macros: { protein: null, carbs: null, fat: null }, // null = auto
@@ -13426,14 +13426,24 @@ function healthNormalize(raw) {
     }
     profile.mealTypeV1 = true;
   }
+  let days = (h.days && typeof h.days === 'object') ? h.days : {};
+  let weighIns = Array.isArray(h.weighIns) ? h.weighIns : [];
+  // One-time Sep 2026 restart: preserve the reusable Health setup and food
+  // library, but begin all date-specific planning and tracking from scratch.
+  if (!profile.sept2026ResetV1) {
+    profile.startDate = '2026-09-07';
+    days = {};
+    weighIns = [];
+    profile.sept2026ResetV1 = true;
+  }
   return {
     profile,
     foods,
     workoutPlan,
     mealPlan,
     rewardSchedule: healthNormRewardSchedule(h.rewardSchedule, def.rewardSchedule),
-    days: (h.days && typeof h.days === 'object') ? h.days : {},
-    weighIns: Array.isArray(h.weighIns) ? h.weighIns : [],
+    days,
+    weighIns,
   };
 }
 
@@ -13445,7 +13455,7 @@ async function loadHealth() {
   const seeded = !raw || Object.keys(raw).length === 0;
   // Persist one-time migrations (e.g. Monday front-load) the first time we see a
   // record that predates them, so they don't re-run every load.
-  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1 && raw.profile.factorMealsV2 && raw.profile.mealTypeV1 && raw.profile.fastFoodV1 && raw.profile.fastFoodV2 && raw.profile.bandFlyRemovedV1 && raw.profile.bandExercisesPrunedV1);
+  const needsMigrationSave = !seeded && !(raw.profile && raw.profile.mondayFrontloadedV1 && raw.profile.wedFastingV1 && raw.profile.stretchNoteV1 && raw.profile.mealMacrosV1 && raw.profile.factorMealsV1 && raw.profile.factorMealsV2 && raw.profile.mealTypeV1 && raw.profile.fastFoodV1 && raw.profile.fastFoodV2 && raw.profile.bandFlyRemovedV1 && raw.profile.bandExercisesPrunedV1 && raw.profile.sept2026ResetV1);
   state.health = healthNormalize(raw);
   if (seeded || needsMigrationSave) await saveHealth();
 }

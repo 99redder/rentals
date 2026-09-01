@@ -1336,25 +1336,19 @@ async function handleSaveCashFlow(env, year, data) {
     dismissedAuto: sanitizeDismissed(s?.dismissedAuto),
   });
 
-  // Cash Flow carries two independent scenarios ('sell' = 6AL sells as scheduled,
-  // 'nosale' = 6AL doesn't sell). Legacy payloads sent income/expenses/dismissedAuto
-  // at the top level — treat that as the 'sell' scenario. The top-level fields are
-  // ALSO mirrored from 'sell' below so the read-only mobile PWA (which reads the flat
-  // shape) keeps showing the primary scenario without needing an update.
+  // Cash Flow now has one canonical plan. During migration, preserve the former
+  // primary/sell scenario and flatten it into the stored record.
   const rawScenarios = (data.scenarios && typeof data.scenarios === 'object') ? data.scenarios : null;
-  const sell = sanitizeScenario(rawScenarios ? rawScenarios.sell : data);
-  const nosale = rawScenarios ? sanitizeScenario(rawScenarios.nosale) : sanitizeScenario(data);
+  const primary = sanitizeScenario(rawScenarios ? rawScenarios.sell : data);
 
   const saved = {
     year: Number(year),
     robinhoodChecking: (typeof data.robinhoodChecking === 'number' && isFinite(data.robinhoodChecking) && data.robinhoodChecking >= 0)
       ? data.robinhoodChecking
       : 0,
-    scenarios: { sell, nosale },
-    // Backward-compat mirror of the 'sell' scenario for the read-only mobile PWA.
-    income: sell.income,
-    expenses: sell.expenses,
-    dismissedAuto: sell.dismissedAuto,
+    income: primary.income,
+    expenses: primary.expenses,
+    dismissedAuto: primary.dismissedAuto,
   };
   await env.RENTALS.put(`cash_flow:${year}`, JSON.stringify(saved));
   return jsonResponse({ success: true, data: saved });

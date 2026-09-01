@@ -10962,43 +10962,20 @@ let _cfExpenseSort = 'date'; // 'amount' | 'date' — default soonest-first
 const _cfExpandedIncome = new Set();
 let _cfDetailsPromise = null;
 
-// Cash Flow supports two side-by-side scenarios: 'sell' (6AL sells as scheduled —
-// the original behavior) and 'nosale' (6AL does NOT sell). Each scenario carries
-// its own independent manual income/expense lists and dismissed-auto set, so
-// deleting a line in one tab never touches the other. The only structural
-// difference in the auto-derived lines is 6AL: in 'nosale' 6AL is treated as not
-// selling, so its projected sale-proceeds income disappears and the sale-tax
-// reserves fall back to 95EB-only. Scenario choice is UI state (persisted in
-// localStorage), not part of the saved record's math.
-const CF_SCENARIOS = ['sell', 'nosale'];
-const CF_SCENARIO_LABELS = { sell: '6AL Sells', nosale: "6AL Doesn't Sell" };
-const CF_SCENARIO_SALE_PROP = '6AL'; // the property whose sale is conditional
-let _cfScenario = (localStorage.getItem('rentals_cash_flow_scenario') === 'nosale') ? 'nosale' : 'sell';
+// Cash Flow has one canonical plan. The former "6AL Doesn't Sell" alternative
+// is retired now that the 6AL sale is final.
+const CF_SCENARIO_SALE_PROP = '6AL';
 
-// The active scenario's manual lists ({ income, expenses, dismissedAuto }).
+// The active Cash Flow record ({ income, expenses, dismissedAuto }).
 function cfActive() {
   const cf = state.cashFlow;
   const empty = { income: [], expenses: [], dismissedAuto: [] };
   if (!cf) return empty;
-  if (!cf.scenarios) return cf; // pre-migration safety (shouldn't happen after normalize)
-  return cf.scenarios[_cfScenario] || cf.scenarios.sell || empty;
+  return cf;
 }
 
-// Properties whose sale is "active" in the current scenario. 6AL drops out of the
-// no-sale scenario; every other auto-proceeds property behaves the same in both.
 function cfScenarioSaleProps() {
-  return _cfScenario === 'nosale'
-    ? CASH_FLOW_AUTO_PROCEEDS_PROPS.filter(p => p !== CF_SCENARIO_SALE_PROP)
-    : CASH_FLOW_AUTO_PROCEEDS_PROPS;
-}
-
-function cfSetScenario(key) {
-  const next = CF_SCENARIOS.includes(key) ? key : 'sell';
-  if (next === _cfScenario) return;
-  _cfScenario = next;
-  localStorage.setItem('rentals_cash_flow_scenario', _cfScenario);
-  _cfEdit = null; // cancel any in-progress add/edit when switching tabs
-  _renderCashFlowHtml();
+  return CASH_FLOW_AUTO_PROCEEDS_PROPS;
 }
 
 function cfNewId(prefix = 'cf') {
@@ -11034,20 +11011,15 @@ function normalizeCashFlow(raw) {
     dismissedAuto: Array.isArray(s?.dismissedAuto) ? s.dismissedAuto.filter(x => typeof x === 'string') : []
   });
 
-  // Migration: records saved before the two-scenario split store income/expenses/
-  // dismissedAuto at the top level. Those become the 'sell' scenario, and 'nosale'
-  // is seeded as a copy (duplicated once, then edited independently going forward).
+  // Migration: preserve the former primary/sell scenario, then flatten it into
+  // the single canonical Cash Flow record.
   const rawScenarios = (raw && typeof raw.scenarios === 'object' && raw.scenarios) ? raw.scenarios : null;
-  const legacy = normalizeScenario(raw);
-  const sell = rawScenarios ? normalizeScenario(rawScenarios.sell) : legacy;
-  const nosale = rawScenarios
-    ? normalizeScenario(rawScenarios.nosale)
-    : JSON.parse(JSON.stringify(legacy));
+  const primary = normalizeScenario(rawScenarios ? rawScenarios.sell : raw);
 
   return {
     year: CASH_FLOW_YEAR,
     robinhoodChecking: tpN(raw?.robinhoodChecking),
-    scenarios: { sell, nosale }
+    ...primary
   };
 }
 
@@ -11133,12 +11105,20 @@ function cfTotals(autoIncome = [], autoExpenses = []) {
 }
 
 function cfAutoIncomeItems() {
-  // A finalized sale's proceeds land in the linked bank balance (pinned income),
-  // so don't also project them here — that would double-count. Only unsold
-  // (draft/estimate) properties contribute a projected proceeds line.
+  // Keep a finalized sale visible through its scheduled settlement date. After
+  // that date the linked checking balance is assumed to contain the proceeds,
+  // so the auto line drops out to avoid double-counting the same cash.
   return cfScenarioSaleProps()
-    .filter(prop => !state.data[prop]?.investment?.saleCloseout?.closedAt)
+    .filter(prop => !cfSaleProceedsAlreadyInChecking(prop))
     .map(prop => cfPropertySaleProceedsItem(prop));
+}
+
+function cfSaleProceedsAlreadyInChecking(prop) {
+  const closeout = state.data[prop]?.investment?.saleCloseout;
+  if (!closeout?.closedAt) return false;
+  const saleDate = String(closeout.saleDate || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate)) return true;
+  return saleDate < appTodayIso();
 }
 
 // Finalized sales instead contribute their estimated sale tax as an expense —
@@ -11151,22 +11131,13 @@ function cfAutoExpenseItems() {
   return items.filter(item => !dismissed.has(item.id));
 }
 
-// Sale-tax reserve lines. The CF_COMBINED_SALE_TAX_PROPS sales (6AL projected +
-// 95EB actual) are rolled into one combined Federal + State line once at least one
-// is a *projected* sale; the amounts are the INCREMENTAL federal / MD tax those
-// sales add to the return, computed via cfComputeCombinedSaleTax (stored in
-// state.cfSaleTax during loadCashFlowDetails). Otherwise each finalized sale keeps
-// its own independent per-property line.
+// Sale-tax reserve lines. The 6AL + 95EB sales stay combined so Cash Flow uses the
+// same full-return federal/MD calculation and safe-harbor logic as Tax Planning.
 function cfSaleTaxExpenseItems() {
   const saleProps = cfScenarioSaleProps();
-  // The combined 6AL+95EB line only exists when 6AL is selling — i.e. the sell
-  // scenario. In the no-sale scenario 6AL is dropped, leaving 95EB (and any other
-  // finalized sale) to emit its own independent per-property sale-tax lines.
-  const combinedActive = _cfScenario !== 'nosale';
   const otherProps = saleProps.filter(p => !CF_COMBINED_SALE_TAX_PROPS.includes(p));
   const st = state.cfSaleTax;
-  if (!combinedActive || !st || !st.parts?.some(p => p.projected)) {
-    // No projected combined sale — independent per-property lines (closed sales only).
+  if (!st?.parts?.length) {
     return saleProps.flatMap(prop => cfPropertySaleTaxItems(prop));
   }
   return [...cfCombinedSaleTaxItems(), ...otherProps.flatMap(prop => cfPropertySaleTaxItems(prop))];
@@ -11183,8 +11154,10 @@ function cfComputeCombinedSaleTax(tp, rentalRows) {
   const parts = CF_COMBINED_SALE_TAX_PROPS.map(prop => {
     const d = calcPropertySaleTaxDetails(prop);
     if (!d) return null;
-    const closed = !!state.data[prop]?.investment?.saleCloseout?.closedAt;
-    return { prop, projected: !closed, taxableGain: Number(d.taxableGain) || 0, recapture: Math.max(0, Number(d.depreciationRecapture) || 0) };
+    const closeout = state.data[prop]?.investment?.saleCloseout;
+    const closed = !!closeout?.closedAt;
+    const saleDate = closed ? (closeout.saleDate || '') : (loadSaleCloseoutDraft(prop)?.date || '');
+    return { prop, projected: !closed, saleDate, taxableGain: Number(d.taxableGain) || 0, recapture: Math.max(0, Number(d.depreciationRecapture) || 0) };
   }).filter(Boolean);
   if (!parts.length) return null;
 
@@ -11223,8 +11196,7 @@ function cfComputeCombinedSaleTax(tp, rentalRows) {
   const mdSep15 = mdOwed < 500 ? 0 : Math.min(mdOwed, Math.max(0, mdSafe - mdPaid));
   const mdApril = Math.max(0, mdOwed - mdSep15);
 
-  const projectedPart = parts.find(p => p.projected);
-  const sep15Date = estimatedTaxDueDate(projectedPart ? (loadSaleCloseoutDraft(projectedPart.prop)?.date || '') : '') || '2026-09-15';
+  const sep15Date = parts.map(p => estimatedTaxDueDate(p.saleDate)).filter(Boolean).sort().at(-1) || '2026-09-15';
   return {
     parts, sep15Date, filingDate: `${CURRENT_YEAR + 1}-04-15`, agiWith: r.agi, factorPct: priorAgi > TP_SAFE_HARBOR_AGI ? '110%' : '100%',
     fedSep15, fedApril, fedTax, fedPaid, fedSafe, fedOwed,
@@ -11407,21 +11379,6 @@ function cfPropertySaleProceedsItem(prop) {
   };
 }
 
-function cfScenarioTabsHtml() {
-  const tab = key => {
-    const active = _cfScenario === key;
-    return `<button class="btn btn-sm" onclick="cfSetScenario('${key}')"
-      style="padding:.4rem .85rem;font-weight:700;font-size:.82rem;border-radius:999px;border:1px solid ${active ? 'var(--primary)' : 'var(--border)'};background:${active ? 'var(--primary)' : 'transparent'};color:${active ? '#fff' : 'var(--text-muted)'};box-shadow:${active ? '0 2px 8px rgba(37,99,235,.28)' : 'none'}">${CF_SCENARIO_LABELS[key]}</button>`;
-  };
-  return `<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem">
-    <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-right:.15rem">Scenario</span>
-    ${CF_SCENARIOS.map(tab).join('')}
-    <span style="font-size:.75rem;color:var(--text-muted);margin-left:.25rem">${_cfScenario === 'nosale'
-      ? '6AL treated as not sold — no 6AL sale proceeds or sale taxes. Income & expenses are independent from the other tab.'
-      : '6AL sells as scheduled. Income & expenses are independent from the other tab.'}</span>
-  </div>`;
-}
-
 function _renderCashFlowHtml() {
   const cf = cfActive();
   const autoIncome = cfAutoIncomeItems();
@@ -11443,7 +11400,6 @@ function _renderCashFlowHtml() {
         <div style="font-size:.8rem;color:var(--text-muted)">Track expected income and expense events, then see what is left over.</div>
       </div>
     </div>
-    ${cfScenarioTabsHtml()}
     ${bankSyncBannerHtml()}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.85rem;margin-bottom:1rem">
       ${stat('Income Events', totals.income, 'var(--success)', `1 pinned + ${autoIncome.length} auto + ${cf.income.length} manual`)}
@@ -11718,7 +11674,7 @@ async function cfDelete(type, id) {
   showBrandedNotice({
     title: 'Delete Cash Flow Event',
     type: 'danger',
-    message: `"${item.name}" (${fmt(item.amount || 0)}) will be removed from ${CASH_FLOW_YEAR} ${type} in the ${CF_SCENARIO_LABELS[_cfScenario]} scenario.`,
+    message: `"${item.name}" (${fmt(item.amount || 0)}) will be removed from ${CASH_FLOW_YEAR} ${type}.`,
     confirmLabel: 'Delete',
     onConfirm: async () => {
       active[type] = active[type].filter(x => x.id !== id);
@@ -11818,7 +11774,7 @@ function constructionCashToClose(prop) {
   const label = cfg.cashToCloseLabel.trim().toLowerCase();
   // Anchor to the primary 'sell' scenario (falling back to the legacy flat shape)
   // so build funding doesn't shift when the user is viewing the no-sale tab.
-  const expenses = state.cashFlow?.scenarios?.sell?.expenses || state.cashFlow?.expenses || [];
+  const expenses = state.cashFlow?.expenses || state.cashFlow?.scenarios?.sell?.expenses || [];
   const item = expenses.find(e => String(e.name || '').trim().toLowerCase() === label);
   return { amount: item ? tpN(item.amount) : 0, live: !!item, label: cfg.cashToCloseLabel };
 }
@@ -12008,10 +11964,10 @@ function nwSetAssetSort(sort) {
 }
 
 function nwBuildPropertyAssets() {
-  // A finalized sale's net proceeds land in the linked bank balance (counted as a
-  // Plaid account), so a sold property must not also appear as a property asset —
-  // that would double-count the same cash.
-  return PROPERTIES.filter(prop => !isPropertyClosed(prop)).map(prop => {
+  // Keep a finalized, future-dated sale as a receivable through settlement day.
+  // Afterward the proceeds belong in linked checking, so the property drops out
+  // to avoid counting the same cash twice.
+  return PROPERTIES.filter(prop => !isPropertyClosed(prop) || !cfSaleProceedsAlreadyInChecking(prop)).map(prop => {
     // A build that has not settled is worth the cash actually put in — the
     // deposit. Its cash to close is still in the bank (counted there) and its
     // mortgage has not been drawn, so neither belongs in net worth yet.
@@ -16987,9 +16943,9 @@ function tpYearFractionRemaining(isoDate) {
 // when the user expects to park a different amount or move money out sooner.
 function tpAutoSaleProceedsForChecking() {
   const prop = CF_SCENARIO_SALE_PROP; // '6AL'
-  // A finalized sale's proceeds have already landed and are reflected in the live
-  // checking balance, so there's nothing extra to project.
-  if (state.data[prop]?.investment?.saleCloseout?.closedAt) return { amount: 0, date: '' };
+  // Once the settlement date has passed, the linked checking balance is assumed
+  // to contain the proceeds. Through settlement day, keep projecting the new cash.
+  if (cfSaleProceedsAlreadyInChecking(prop)) return { amount: 0, date: '' };
   const item = cfPropertySaleProceedsItem(prop);
   return { amount: Math.max(0, tpN(item.amount)), date: (item.date || '').slice(0, 10) };
 }

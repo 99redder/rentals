@@ -1566,7 +1566,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeNoticeModal()">Cancel</button>
-      <button class="btn btn-danger" id="notice-modal-confirm-btn" onclick="noticeModalConfirm()" style="background:#991b1b">Confirm</button>
+      <button class="btn btn-primary" id="notice-modal-confirm-btn" onclick="noticeModalConfirm()">Confirm</button>
     </div>
   </div>
 </div>
@@ -2835,10 +2835,13 @@ function showBrandedNotice({ title, message, type = 'info', onConfirm, confirmLa
   document.getElementById('notice-modal-title').textContent = title;
   document.getElementById('notice-modal-message').textContent = message;
   document.getElementById('notice-modal-subtitle').textContent = type === 'danger' ? 'This cannot be undone.' : '';
-  document.getElementById('notice-modal-icon').textContent = type === 'danger' ? '⚠️' : 'ℹ️';
+  document.getElementById('notice-modal-icon').textContent = type === 'danger' ? '⚠️' : type === 'success' ? '✓' : 'ℹ️';
   document.getElementById('notice-modal-icon').className = 'modal-icon ' + (type === 'danger' ? 'danger' : 'primary');
   const btn = document.getElementById('notice-modal-confirm-btn');
-  if (btn) btn.textContent = confirmLabel || (type === 'danger' ? 'Yes, Delete' : 'Confirm');
+  if (btn) {
+    btn.textContent = confirmLabel || (type === 'danger' ? 'Yes, Delete' : 'Confirm');
+    btn.className = `btn ${type === 'danger' ? 'btn-danger' : type === 'success' ? 'btn-success' : 'btn-primary'}`;
+  }
   document.getElementById('notice-modal').classList.remove('hidden');
 }
 function closeNoticeModal() {
@@ -12419,9 +12422,10 @@ async function nwRefreshPlaid(btn){
     }else{
       const notes=state.netWorth?.refreshNotes||[];
       showBrandedNotice({
+        type:'success',
         title:'Accounts refreshed',
         message:`Linked balances were updated successfully${state.netWorth.plaidRefreshedAt?` at ${fmtDateTime(state.netWorth.plaidRefreshedAt)}`:''}.${notes.length?'\n\n'+notes.map(note=>note.message).join('\n\n'):''}`,
-        confirmLabel:'OK'
+        confirmLabel:'Done'
       });
     }
   }catch(e){

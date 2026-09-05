@@ -1454,11 +1454,11 @@
       Red's <span>STUFF</span>
     </a>
     <div class="property-tabs" id="property-tabs" style="display:none">
-      <button class="prop-tab active" data-prop="6AL">6AL</button>
-      <button class="prop-tab" data-prop="95EB">95EB</button>
+      <button class="prop-tab active" data-prop="4781MC">4781MC</button>
       <button class="prop-tab" data-prop="446BB">446BB</button>
       <button class="prop-tab" data-prop="731WO">731WO</button>
-      <button class="prop-tab" data-prop="4781MC">4781MC</button>
+      <button class="prop-tab" data-prop="95EB">95EB</button>
+      <button class="prop-tab" data-prop="6AL">6AL</button>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
       <button class="tp-header-btn health-btn" id="health-btn" onclick="switchView('health')">❤️ Health</button>
@@ -1813,7 +1813,7 @@
  *
  * HTML SECTIONS  (search <!-- ── to jump)
  *   <style>          CSS variables, reset, component classes, print styles
- *   <header>         Property tabs (6AL/95EB/446BB/731WO/4781MC) + view tabs + utility buttons
+ *   <header>         Property tabs (4781MC/446BB/731WO/95EB/6AL) + view tabs + utility buttons
  *   <main #app>      View container — empty shell filled by renderView()
  *   Modals:          delete (2-step confirm), edit transaction,
  *                    property income worksheet (#budget-worksheet-modal),
@@ -1849,7 +1849,7 @@
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const API = 'https://rentals-api.99redder.workers.dev';
-const PROPERTIES = ['6AL', '95EB', '446BB', '731WO', '4781MC'];
+const PROPERTIES = ['4781MC', '446BB', '731WO', '95EB', '6AL'];
 const PRIMARY_PROPERTIES = new Set(['731WO', '4781MC']); // primary residences: Investment Return + Maintenance only
 const MAINTENANCE_BASIS_PROPERTIES = new Set(['6AL', '95EB', ...PRIMARY_PROPERTIES]); // Maintenance entries marked Improvement increase Investment Return basis
 const MOVE_IN_PURCHASE_PROPERTY = '4781MC';
@@ -2193,7 +2193,7 @@ const MAINT_SEED_COUNTS = Object.freeze({
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const state = {
-  currentProperty: '6AL',
+  currentProperty: '4781MC',
   currentView: 'cash-flow',   // Cash Flow is the landing view; Properties button opens the per-property tabs
   password: '', // legacy only; runtime auth uses HttpOnly session cookie
   data: {

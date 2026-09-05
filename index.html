@@ -12417,9 +12417,10 @@ async function nwRefreshPlaid(btn){
         confirmLabel:'OK'
       });
     }else{
+      const notes=state.netWorth?.refreshNotes||[];
       showBrandedNotice({
         title:'Accounts refreshed',
-        message:`Linked balances were updated successfully${state.netWorth.plaidRefreshedAt?` at ${fmtDateTime(state.netWorth.plaidRefreshedAt)}`:''}.`,
+        message:`Linked balances were updated successfully${state.netWorth.plaidRefreshedAt?` at ${fmtDateTime(state.netWorth.plaidRefreshedAt)}`:''}.${notes.length?'\n\n'+notes.map(note=>note.message).join('\n\n'):''}`,
         confirmLabel:'OK'
       });
     }

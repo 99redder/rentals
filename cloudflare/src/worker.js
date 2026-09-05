@@ -3923,6 +3923,7 @@ const BANK_SYNC_RECONNECT_CODES = new Set([
   'ITEM_LOGIN_REQUIRED', 'PENDING_EXPIRATION', 'ITEM_LOCKED',
   'INVALID_CREDENTIALS', 'INVALID_MFA', 'INVALID_UPDATED_USERNAME',
 ]);
+const OPTIONAL_INVESTMENT_REFRESH_CODES = new Set(['PRODUCT_NOT_SUPPORTED', 'PRODUCT_NOT_ENABLED']);
 const BANK_SYNC_REASONS = {
   ITEM_LOGIN_REQUIRED: 'the saved sign-in has expired',
   PENDING_EXPIRATION: 'the saved sign-in is about to expire',
@@ -4094,7 +4095,8 @@ async function fetchNetWorthPlaidItem(env, accessToken, forceLive) {
   const institutionId = String(baseline.payload.item?.institution_id || '');
   let accounts = Array.isArray(baseline.payload.accounts) ? baseline.payload.accounts : [];
   const partialFailures = [];
-  if (!forceLive) return { itemId, institutionId, accounts, partialFailures };
+  const informationalFailures = [];
+  if (!forceLive) return { itemId, institutionId, accounts, partialFailures, informationalFailures };
 
   const balanceAccountIds = accounts
     .filter(account => account?.type !== 'investment')
@@ -4129,21 +4131,22 @@ async function fetchNetWorthPlaidItem(env, accessToken, forceLive) {
     .map(account => String(account.account_id || ''))
     .filter(Boolean);
   if (investmentAccountIds.length) {
+    let investmentRefreshFailure = null;
     try {
       const investmentRefresh = await plaidPost(env, '/investments/refresh', { access_token: accessToken });
       if (!investmentRefresh.ok) {
-        partialFailures.push({
+        investmentRefreshFailure = {
           code: String(investmentRefresh.payload.error_code || investmentRefresh.payload.error_type || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
           itemId,
           accessToken,
-        });
+        };
       }
     } catch (error) {
-      partialFailures.push({
+      investmentRefreshFailure = {
         code: String(error?.code || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
         itemId,
         accessToken,
-      });
+      };
     }
 
     try {
@@ -4153,7 +4156,13 @@ async function fetchNetWorthPlaidItem(env, accessToken, forceLive) {
       });
       if (holdings.ok) {
         accounts = mergePlaidAccountsById(accounts, holdings.payload.accounts);
+        if (investmentRefreshFailure) {
+          (OPTIONAL_INVESTMENT_REFRESH_CODES.has(investmentRefreshFailure.code)
+            ? informationalFailures
+            : partialFailures).push(investmentRefreshFailure);
+        }
       } else {
+        if (investmentRefreshFailure) partialFailures.push(investmentRefreshFailure);
         partialFailures.push({
           code: String(holdings.payload.error_code || holdings.payload.error_type || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
           itemId,
@@ -4161,6 +4170,7 @@ async function fetchNetWorthPlaidItem(env, accessToken, forceLive) {
         });
       }
     } catch (error) {
+      if (investmentRefreshFailure) partialFailures.push(investmentRefreshFailure);
       partialFailures.push({
         code: String(error?.code || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
         itemId,
@@ -4169,7 +4179,7 @@ async function fetchNetWorthPlaidItem(env, accessToken, forceLive) {
     }
   }
 
-  return { itemId, institutionId, accounts, partialFailures };
+  return { itemId, institutionId, accounts, partialFailures, informationalFailures };
 }
 
 async function refreshNetWorthPlaid(env, forceLive = false) {
@@ -4205,6 +4215,17 @@ async function refreshNetWorthPlaid(env, forceLive = false) {
       other.itemId === failure.itemId && other.code === failure.code) === index);
   const syncWarnings = await Promise.all(warningFailures.map(async failure =>
     bankSyncWarning(failure, await resolveLinkedAccountInfo(env, failure.accessToken, failure.itemId))));
+  const informationalFailures = responses.flatMap(entry => entry.informationalFailures || [])
+    .filter((failure, index, list) => list.findIndex(other =>
+      other.itemId === failure.itemId && other.code === failure.code) === index);
+  const refreshNotes = await Promise.all(informationalFailures.map(async failure => {
+    const info = await resolveLinkedAccountInfo(env, failure.accessToken, failure.itemId);
+    const label = String(info?.label || '').trim() || 'A linked account';
+    return {
+      label: label.slice(0, 100),
+      message: `${label} investment balances were loaded from the latest available holdings data; instant investment refresh is not enabled for this connection.`,
+    };
+  }));
   if (!responses.length) {
     throw new Error(syncWarnings.map(w => w.message).join(' ') || 'Account balances could not be refreshed.');
   }
@@ -4305,7 +4326,7 @@ async function refreshNetWorthPlaid(env, forceLive = false) {
   data.plaidRefreshedAt = new Date().toISOString();
   addNetWorthSnapshot(data);
   await env.RENTALS.put(NET_WORTH_KEY, JSON.stringify(data));
-  return { data, syncWarnings };
+  return { data, syncWarnings, refreshNotes };
 }
 
 async function handleRefreshNetWorthPlaid(env, forceLive = false) {
@@ -4313,12 +4334,13 @@ async function handleRefreshNetWorthPlaid(env, forceLive = false) {
     if (forceLive && !(await plaidRefreshAllowed(env, 'net-worth-live-refresh'))) {
       return jsonResponse({ error: 'Accounts were refreshed too recently. Wait a minute and try again.' }, 429, { 'Retry-After': '60' });
     }
-    const { syncWarnings } = await refreshNetWorthPlaid(env, forceLive);
+    const { syncWarnings, refreshNotes } = await refreshNetWorthPlaid(env, forceLive);
     let data;
     try { data = await refreshTreasuryPortfolio(env); }
     catch { data = normalizeNetWorth(await env.RENTALS.get(NET_WORTH_KEY, 'json')); }
     // normalizeNetWorth drops unknown keys, so attach warnings to the response.
     if (syncWarnings.length) data.syncWarnings = syncWarnings;
+    if (refreshNotes.length) data.refreshNotes = refreshNotes;
     return jsonResponse({ data });
   } catch (error) {
     return jsonResponse({ error: error instanceof Error ? error.message : 'Account balances could not be refreshed.' }, 502);

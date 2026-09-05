@@ -475,6 +475,7 @@ The Net Worth view combines manual items, vehicles, property equity, a treasury 
 
 **Resilient refresh (`refreshNetWorthPlaid`).** Each Item is fetched independently and settled rather than thrown, so one broken connection cannot wipe out the others:
 - The explicit **Refresh Accounts** button sends `forceLive:true`: non-investment accounts use `/accounts/balance/get`, while investment accounts request `/investments/refresh` and then load `/investments/holdings/get`. Background/automatic refreshes remain cache-based so they do not trigger paid on-demand calls.
+- If the optional instant investment refresh product is unavailable but `/investments/holdings/get` succeeds, the response uses those latest available holdings and returns an informational `refreshNotes` entry instead of falsely flagging the account as out of date.
 - Successful institutions refresh normally.
 - Failed ones keep their **last known accounts** (merged back in by id) so balances don't vanish from net worth.
 - Failures become `syncWarnings: [{ label, itemId, reason, needsReconnect, message }]`, built by `bankSyncWarning()` from `BANK_SYNC_REASONS` / `BANK_SYNC_RECONNECT_CODES`.

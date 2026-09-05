@@ -307,7 +307,7 @@ async function handleDataApi(request, env) {
   if (action === 'get_robinhood_brokerage_balance') return handleGetRobinhoodBalance(env, body.refresh === true, 'client', ROBINHOOD_ACCOUNTS.brokerage);
   if (action === 'get_net_worth') return handleGetNetWorth(env);
   if (action === 'save_net_worth') return handleSaveNetWorth(env, body.data);
-  if (action === 'refresh_net_worth_plaid') return handleRefreshNetWorthPlaid(env);
+  if (action === 'refresh_net_worth_plaid') return handleRefreshNetWorthPlaid(env, body.forceLive === true);
   if (action === 'create_plaid_link_token') return handleCreatePlaidLinkToken(env, body.itemId, body.institution, body.accountSelection);
   if (action === 'get_vehicle_trims') return handleGetVehicleTrims(body);
   if (action === 'value_net_worth_vehicle') return handleValueNetWorthVehicle(env, body.vehicle);
@@ -3934,6 +3934,9 @@ const BANK_SYNC_REASONS = {
   INSTITUTION_NOT_RESPONDING: 'the bank is temporarily unavailable',
   INSTITUTION_NO_LONGER_SUPPORTED: 'this bank is no longer supported',
   RATE_LIMIT_EXCEEDED: 'it was refreshed too many times just now',
+  PRODUCT_NOT_SUPPORTED: 'live investment refresh is not supported by this institution',
+  PRODUCT_NOT_ENABLED: 'live investment refresh is not enabled for this connection',
+  LIVE_BALANCE_UNAVAILABLE: 'a live balance could not be retrieved',
 };
 
 // Confirmed production Item IDs. Metadata lookup remains the fallback for any
@@ -4064,7 +4067,112 @@ async function handleCreatePlaidLinkToken(env, itemId, institution, accountSelec
   return jsonResponse({ linkToken: String(payload.link_token || ''), expiration: String(payload.expiration || '') });
 }
 
-async function refreshNetWorthPlaid(env) {
+function mergePlaidAccountsById(baseAccounts, refreshedAccounts) {
+  const refreshedById = new Map(
+    (Array.isArray(refreshedAccounts) ? refreshedAccounts : [])
+      .filter(account => account?.account_id)
+      .map(account => [String(account.account_id), account])
+  );
+  return (Array.isArray(baseAccounts) ? baseAccounts : []).map(account =>
+    refreshedById.get(String(account?.account_id || '')) || account
+  );
+}
+
+async function fetchNetWorthPlaidItem(env, accessToken, forceLive) {
+  const baseline = await plaidPost(env, '/accounts/get', { access_token: accessToken });
+  if (!baseline.ok) {
+    return {
+      failure: {
+        code: String(baseline.payload.error_code || baseline.payload.error_type || 'UNKNOWN_ERROR').slice(0, 80),
+        itemId: String(baseline.payload.item_id || ''),
+        accessToken,
+      },
+    };
+  }
+
+  const itemId = String(baseline.payload.item?.item_id || '');
+  const institutionId = String(baseline.payload.item?.institution_id || '');
+  let accounts = Array.isArray(baseline.payload.accounts) ? baseline.payload.accounts : [];
+  const partialFailures = [];
+  if (!forceLive) return { itemId, institutionId, accounts, partialFailures };
+
+  const balanceAccountIds = accounts
+    .filter(account => account?.type !== 'investment')
+    .map(account => String(account.account_id || ''))
+    .filter(Boolean);
+  if (balanceAccountIds.length) {
+    try {
+      const liveBalances = await plaidPost(env, '/accounts/balance/get', {
+        access_token: accessToken,
+        options: { account_ids: balanceAccountIds },
+      });
+      if (liveBalances.ok) {
+        accounts = mergePlaidAccountsById(accounts, liveBalances.payload.accounts);
+      } else {
+        partialFailures.push({
+          code: String(liveBalances.payload.error_code || liveBalances.payload.error_type || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
+          itemId,
+          accessToken,
+        });
+      }
+    } catch (error) {
+      partialFailures.push({
+        code: String(error?.code || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
+        itemId,
+        accessToken,
+      });
+    }
+  }
+
+  const investmentAccountIds = accounts
+    .filter(account => account?.type === 'investment')
+    .map(account => String(account.account_id || ''))
+    .filter(Boolean);
+  if (investmentAccountIds.length) {
+    try {
+      const investmentRefresh = await plaidPost(env, '/investments/refresh', { access_token: accessToken });
+      if (!investmentRefresh.ok) {
+        partialFailures.push({
+          code: String(investmentRefresh.payload.error_code || investmentRefresh.payload.error_type || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
+          itemId,
+          accessToken,
+        });
+      }
+    } catch (error) {
+      partialFailures.push({
+        code: String(error?.code || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
+        itemId,
+        accessToken,
+      });
+    }
+
+    try {
+      const holdings = await plaidPost(env, '/investments/holdings/get', {
+        access_token: accessToken,
+        options: { account_ids: investmentAccountIds },
+      });
+      if (holdings.ok) {
+        accounts = mergePlaidAccountsById(accounts, holdings.payload.accounts);
+      } else {
+        partialFailures.push({
+          code: String(holdings.payload.error_code || holdings.payload.error_type || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
+          itemId,
+          accessToken,
+        });
+      }
+    } catch (error) {
+      partialFailures.push({
+        code: String(error?.code || 'LIVE_BALANCE_UNAVAILABLE').slice(0, 80),
+        itemId,
+        accessToken,
+      });
+    }
+  }
+
+  return { itemId, institutionId, accounts, partialFailures };
+}
+
+async function refreshNetWorthPlaid(env, forceLive = false) {
   if (!env.PLAID_CLIENT_ID || !env.PLAID_SECRET) throw new Error('Account syncing is not set up yet.');
   const tokens = plaidAccessTokens(env);
   if (!tokens.length) throw new Error('No bank accounts are linked yet.');
@@ -4072,28 +4180,15 @@ async function refreshNetWorthPlaid(env) {
   // item is settled independently and failures are reported as warnings.
   const settled = await Promise.all(tokens.map(async accessToken => {
     try {
-      const response = await fetch('https://production.plaid.com/accounts/get', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'PLAID-CLIENT-ID': env.PLAID_CLIENT_ID,
-          'PLAID-SECRET': env.PLAID_SECRET,
-          'Plaid-Version': '2020-09-14',
-        },
-        body: JSON.stringify({ access_token: accessToken }),
-      });
-      const payload = await readJsonLimited(response, MAX_UPSTREAM_JSON_BYTES);
-      if (!response.ok) {
-        const code = String(payload.error_code || payload.error_type || 'UNKNOWN_ERROR').slice(0, 80);
-        const itemId = String(payload.item_id || '');
-        console.error(JSON.stringify({ event: 'plaid_net_worth_item_error', status: response.status, code, itemId }));
-        return { failure: { code, itemId, accessToken } };
+      const result = await fetchNetWorthPlaidItem(env, accessToken, forceLive);
+      if (result.failure) {
+        console.error(JSON.stringify({
+          event: 'plaid_net_worth_item_error',
+          code: result.failure.code,
+          itemId: result.failure.itemId,
+        }));
       }
-      return {
-        itemId: String(payload.item?.item_id || ''),
-        institutionId: String(payload.item?.institution_id || ''),
-        accounts: Array.isArray(payload.accounts) ? payload.accounts : [],
-      };
+      return result;
     } catch (error) {
       console.error(JSON.stringify({
         event: 'plaid_net_worth_item_error',
@@ -4104,7 +4199,11 @@ async function refreshNetWorthPlaid(env) {
   }));
   const responses = settled.filter(entry => !entry.failure);
   const failures = settled.filter(entry => entry.failure).map(entry => entry.failure);
-  const syncWarnings = await Promise.all(failures.map(async failure =>
+  const partialFailures = responses.flatMap(entry => entry.partialFailures || []);
+  const warningFailures = [...failures, ...partialFailures]
+    .filter((failure, index, list) => list.findIndex(other =>
+      other.itemId === failure.itemId && other.code === failure.code) === index);
+  const syncWarnings = await Promise.all(warningFailures.map(async failure =>
     bankSyncWarning(failure, await resolveLinkedAccountInfo(env, failure.accessToken, failure.itemId))));
   if (!responses.length) {
     throw new Error(syncWarnings.map(w => w.message).join(' ') || 'Account balances could not be refreshed.');
@@ -4209,9 +4308,12 @@ async function refreshNetWorthPlaid(env) {
   return { data, syncWarnings };
 }
 
-async function handleRefreshNetWorthPlaid(env) {
+async function handleRefreshNetWorthPlaid(env, forceLive = false) {
   try {
-    const { syncWarnings } = await refreshNetWorthPlaid(env);
+    if (forceLive && !(await plaidRefreshAllowed(env, 'net-worth-live-refresh'))) {
+      return jsonResponse({ error: 'Accounts were refreshed too recently. Wait a minute and try again.' }, 429, { 'Retry-After': '60' });
+    }
+    const { syncWarnings } = await refreshNetWorthPlaid(env, forceLive);
     let data;
     try { data = await refreshTreasuryPortfolio(env); }
     catch { data = normalizeNetWorth(await env.RENTALS.get(NET_WORTH_KEY, 'json')); }

@@ -12260,7 +12260,7 @@ async function nwReconnectBank(itemId,btn){
         // Update mode repairs the existing token, so a normal refresh is all
         // that's needed to pull fresh balances.
         try{
-          state.netWorth=(await callApi({action:'refresh_net_worth_plaid'})).data;
+          state.netWorth=(await callApi({action:'refresh_net_worth_plaid',forceLive:true})).data;
           _renderNetWorthHtml();
           const remaining=state.netWorth?.syncWarnings||[];
           showBrandedNotice({
@@ -12304,7 +12304,7 @@ async function nwUpdateRobinhood(btn){
       token:linkToken,
       onSuccess:async()=>{
         try{
-          state.netWorth=(await callApi({action:'refresh_net_worth_plaid'})).data;
+          state.netWorth=(await callApi({action:'refresh_net_worth_plaid',forceLive:true})).data;
           _renderNetWorthHtml();
           showBrandedNotice({title:'Robinhood updated',message:'Any newly shared Robinhood accounts should now appear in Net Worth. If the new custodial account is still missing, run this again and make sure you check its box in the Robinhood sign-in.',confirmLabel:'OK'});
         }catch(e){
@@ -12369,7 +12369,7 @@ async function bankReconnect(itemId,btn){
       onSuccess:async()=>{
         try{
           // Update mode repaired the token in place; re-pull balances everywhere.
-          try{ const r=await callApi({action:'refresh_net_worth_plaid'}); if(state.netWorth!==null) state.netWorth=r.data; }catch(_){}
+          try{ const r=await callApi({action:'refresh_net_worth_plaid',forceLive:true}); if(state.netWorth!==null) state.netWorth=r.data; }catch(_){}
           await Promise.all([
             startRobinhoodBalanceRefreshFor(ROBINHOOD_BALANCE_KINDS.checking,true),
             startRobinhoodBalanceRefreshFor(ROBINHOOD_BALANCE_KINDS.brokerage,true),
@@ -12406,7 +12406,7 @@ async function nwRefreshPlaid(btn){
   btn.disabled=true;
   btn.textContent='Refreshing…';
   try{
-    state.netWorth=(await callApi({action:'refresh_net_worth_plaid'})).data;
+    state.netWorth=(await callApi({action:'refresh_net_worth_plaid',forceLive:true})).data;
     _renderNetWorthHtml();
     const warnings=state.netWorth?.syncWarnings||[];
     if(warnings.length){
@@ -12414,6 +12414,12 @@ async function nwRefreshPlaid(btn){
         title:'Some accounts need attention',
         message:warnings.map(w=>w.message).join('\n\n')
           +'\n\nEverything else refreshed normally. The affected balances are the last known values.',
+        confirmLabel:'OK'
+      });
+    }else{
+      showBrandedNotice({
+        title:'Accounts refreshed',
+        message:`Linked balances were updated successfully${state.netWorth.plaidRefreshedAt?` at ${fmtDateTime(state.netWorth.plaidRefreshedAt)}`:''}.`,
         confirmLabel:'OK'
       });
     }

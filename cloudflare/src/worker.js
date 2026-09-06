@@ -1320,19 +1320,20 @@ async function handleSaveCashFlow(env, year, data) {
     return jsonResponse({ error: 'Missing data object' }, 400);
   }
 
-  const sanitizeItems = items => Array.isArray(items) ? items.map(item => ({
+  const sanitizeItems = (items, type) => Array.isArray(items) ? items.map(item => ({
     id: item.id || crypto.randomUUID(),
     date: String(item.date || '').trim().slice(0, 10),
     name: String(item.name || '').trim().slice(0, 160),
     amount: (typeof item.amount === 'number' && isFinite(item.amount) && item.amount >= 0) ? item.amount : 0,
     note: String(item.note || '').trim().slice(0, 300),
+    expected: type === 'income' && item.expected === true,
   })).filter(item => item.name || item.amount > 0) : [];
   const sanitizeDismissed = arr => Array.isArray(arr)
     ? [...new Set(arr.filter(x => typeof x === 'string').map(x => x.slice(0, 80)))].slice(0, 100)
     : [];
   const sanitizeScenario = s => ({
-    income: sanitizeItems(s?.income),
-    expenses: sanitizeItems(s?.expenses),
+    income: sanitizeItems(s?.income, 'income'),
+    expenses: sanitizeItems(s?.expenses, 'expenses'),
     dismissedAuto: sanitizeDismissed(s?.dismissedAuto),
   });
 

@@ -11002,16 +11002,17 @@ function cfSetExpenseSort(sort) {
 }
 
 function normalizeCashFlow(raw) {
-  const normalizeItems = items => Array.isArray(items) ? items.map(item => ({
+  const normalizeItems = (items, type) => Array.isArray(items) ? items.map(item => ({
     id: item.id || cfNewId(),
     date: String(item.date || '').slice(0, 10),
     name: String(item.name || '').trim(),
     amount: tpN(item.amount),
-    note: String(item.note || '').trim()
+    note: String(item.note || '').trim(),
+    expected: type === 'income' && item.expected === true
   })).filter(item => item.name || item.amount) : [];
   const normalizeScenario = s => ({
-    income: normalizeItems(s?.income),
-    expenses: normalizeItems(s?.expenses),
+    income: normalizeItems(s?.income, 'income'),
+    expenses: normalizeItems(s?.expenses, 'expenses'),
     dismissedAuto: Array.isArray(s?.dismissedAuto) ? s.dismissedAuto.filter(x => typeof x === 'string') : []
   });
 
@@ -11331,6 +11332,7 @@ function cfPropertySaleProceedsItem(prop) {
   const base = {
     id: `auto-sale-${prop}`,
     auto: true,
+    expected: prop === '731WO',
     date,
     name: `${prop} Sale Net Proceeds ${preTax ? 'Before Taxes' : 'After Taxes'}${mortgagePayoff ? ' & Mortgage Payoff' : ''}`,
     amount: 0,
@@ -11529,7 +11531,7 @@ function cfAutoRow(item, color) {
     <td style="padding:.32rem .6rem;border-bottom:${bb}">
       <div style="display:flex;align-items:flex-start;gap:.3rem">
         <button class="btn btn-ghost btn-sm" style="padding:0 .1rem;font-size:.7rem;line-height:1.35;color:var(--text-muted);flex-shrink:0" onclick="cfToggleIncomeDetails('${escAttr(item.id)}')" title="${expanded ? 'Hide details' : 'Show details'}">${expanded ? '▾' : '▸'}</button>
-        <div style="min-width:0;font-weight:650;line-height:1.35">${escHtml(item.name || 'Untitled')} <span style="display:inline-block;padding:.01rem .3rem;border-radius:999px;background:rgba(37,99,235,.10);color:var(--primary);font-size:.58rem;font-weight:750;text-transform:uppercase;vertical-align:.08em;white-space:nowrap">Auto</span></div>
+        <div style="min-width:0;font-weight:650;line-height:1.35">${escHtml(item.name || 'Untitled')} ${cfExpectedBadge(item)}<span style="display:inline-block;padding:.01rem .3rem;border-radius:999px;background:rgba(37,99,235,.10);color:var(--primary);font-size:.58rem;font-weight:750;text-transform:uppercase;vertical-align:.08em;white-space:nowrap">Auto</span></div>
       </div>
     </td>
     <td style="padding:.32rem .6rem;border-bottom:${bb};white-space:nowrap;color:var(--text-muted);font-size:.8rem;vertical-align:top">${item.date ? fmtDate(item.date) : '—'}</td>
@@ -11572,6 +11574,10 @@ function cfItemAmount(item) {
   return tpN(item?.amount);
 }
 
+function cfExpectedBadge(item) {
+  return item?.expected ? `<span style="display:inline-block;padding:.01rem .3rem;border-radius:999px;background:rgba(245,158,11,.16);color:#b45309;font-size:.58rem;font-weight:750;vertical-align:.08em;white-space:nowrap">Expected</span>` : '';
+}
+
 function cfDisplayRow(type, item, color) {
   if (type === 'income') {
     const expanded = cfIncomeExpanded(item.id);
@@ -11579,7 +11585,7 @@ function cfDisplayRow(type, item, color) {
       <td colspan="2" style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'}">
         <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" style="padding:.05rem .25rem;font-size:.75rem;line-height:1" onclick="cfToggleIncomeDetails('${escAttr(item.id)}')" title="${expanded ? 'Hide details' : 'Show details'}">${expanded ? '▾' : '▸'}</button>
-          <span style="font-weight:650">${escHtml(item.name || 'Untitled')}</span>
+          <span style="font-weight:650">${escHtml(item.name || 'Untitled')} ${cfExpectedBadge(item)}</span>
         </div>
       </td>
       <td style="padding:.55rem .6rem;border-bottom:${expanded ? 'none' : '1px solid var(--border)'};text-align:right;white-space:nowrap;font-weight:700;color:${color}">${fmt(item.amount || 0)}</td>
@@ -11615,10 +11621,16 @@ function cfDisplayRow(type, item, color) {
 }
 
 function cfEditRow(type, item) {
+  const expectedControl = type === 'income' ? `
+      <label style="display:flex;align-items:center;gap:.35rem;font-size:.76rem;color:var(--text-muted);margin-top:.35rem;cursor:pointer">
+        <input type="checkbox" id="cf-edit-expected" ${item.expected ? 'checked' : ''} style="width:auto;margin:0">
+        Expected — cash has not arrived yet
+      </label>` : '';
   return `<tr style="background:var(--bg)">
     <td style="padding:.45rem .6rem;border-bottom:1px solid var(--border)">
       <input id="cf-edit-name" class="form-input" type="text" placeholder="Event name" value="${escAttr(item.name || '')}" style="width:100%;font-size:.84rem;margin-bottom:.3rem">
       <input id="cf-edit-note" class="form-input" type="text" placeholder="Note (optional)" value="${escAttr(item.note || '')}" style="width:100%;font-size:.76rem">
+      ${expectedControl}
     </td>
     <td style="padding:.45rem .6rem;border-bottom:1px solid var(--border);min-width:140px">
       <input id="cf-edit-date" class="form-input" type="date" value="${escAttr(item.date || '')}" style="width:100%;font-size:.84rem">
@@ -11656,15 +11668,16 @@ async function cfSave(type, id) {
   const note = (document.getElementById('cf-edit-note')?.value || '').trim();
   const date = (document.getElementById('cf-edit-date')?.value || '').trim();
   const amount = parseMoney(document.getElementById('cf-edit-amount')?.value);
+  const expected = type === 'income' && !!document.getElementById('cf-edit-expected')?.checked;
   if (!name) { alert('Event name is required.'); return; }
   if (!isFinite(amount) || amount < 0) { alert('Amount must be zero or greater.'); return; }
 
   const active = cfActive();
   if (id === 'new') {
-    active[type].push({ id: cfNewId(), date, name, amount, note });
+    active[type].push({ id: cfNewId(), date, name, amount, note, expected });
   } else {
     const item = active[type].find(x => x.id === id);
-    if (item) Object.assign(item, { date, name, amount, note });
+    if (item) Object.assign(item, { date, name, amount, note, expected });
   }
   _cfEdit = null;
   await saveCashFlow();
